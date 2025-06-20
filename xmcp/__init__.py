@@ -8,7 +8,7 @@ Public API surface. Import *only* from here in downstream projects:
 """
 
 from xmcp.client import AIClient, ChatChunk  # noqa: F401
-from xmcp.server.runtime import XMCP  # noqa: F401
+from xmcp.server import XMCP, FastXMCP  # noqa: F401
 from xmcp.models.envelope import DisplayEnvelope  # noqa: F401
 
 __all__: list[str] = [
@@ -16,4 +16,5 @@ __all__: list[str] = [
     "ChatChunk",
     "XMCP",
     "DisplayEnvelope",
+    "FastXMCP",
 ] 

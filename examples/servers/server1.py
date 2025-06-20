@@ -1,54 +1,42 @@
-"""Example XMCP server 1: Basic Tools.
+"""Example FastXMCP server 1: Basic Tools using the lean FastAPI backend.
 
-This server demonstrates:
-- A standard `@mcp.tool` (`roll_dice`) that returns data for the LLM.
-- A `@mcp.display_tool` (`change_color`) with hybrid LLM/UI return paths.
-- A display-only tool (`flash_screen`).
-- A tool that raises a structured, retryable `XMCPError` (`flaky_service`).
+Demonstrates:
+- Standard @tool (roll_dice)
+- Hybrid @display_tool (change_color)
+- Display-only tool (flash_screen)
+- Structured error handling (flaky_service)
 """
 
+from __future__ import annotations
+
 import random
-import time
-from xmcp import DisplayEnvelope
-from xmcp.server.runtime import XMCP
+
+from xmcp.models.envelope import DisplayEnvelope
 from xmcp.models.errors import XMCPError
+from xmcp.server.fastxmcp import FastXMCP
 
-# Example XMCP server demonstrating standard and display tools.
+# ------------------------------------------------------------------
+# Instantiate FastXMCP application
+# ------------------------------------------------------------------
 
-mcp = XMCP(name="Agentic Tools Server", strict_mode=True)
+app = FastXMCP(title="Agentic Tools Server")
 
+# ------------------------------------------------------------------
+# Tool definitions
+# ------------------------------------------------------------------
 
-@mcp.tool
+@app.tool()
 def roll_dice(n_dice: int) -> list[int]:
-    """Roll `n_dice` 6-sided dice and return the results.
+    """Roll *n_dice* 6-sided dice and return the results."""
 
-    Parameters
-    ----------
-    n_dice : int
-        The number of dice to roll. Must be between 1 and 100.
-
-    Returns
-    -------
-    list[int]
-        A list of integers representing the result of each die roll.
-    
-    Raises
-    ------
-    XMCPError
-        If `n_dice` is not a positive integer or exceeds 100.
-    """
     if n_dice <= 0:
-        raise XMCPError(code="INVALID_ARG", detail="n_dice must be a positive integer", retryable=False)
+        raise XMCPError(code="INVALID_ARG", detail="n_dice must be >0", retryable=False)
     if n_dice > 100:
-        raise XMCPError(code="LIMIT_EXCEEDED", detail="Cannot roll more than 100 dice", retryable=False)
+        raise XMCPError(code="LIMIT_EXCEEDED", detail="Cannot roll >100 dice", retryable=False)
     return [random.randint(1, 6) for _ in range(n_dice)]
 
 
-# ------------------------------------------------------------------
-# Colour helper mapping (basic)
-# ------------------------------------------------------------------
-
-_COLOR_HEX: dict[str, str] = {
+_COLOR_HEX = {
     "white": "#FFFFFF",
     "black": "#000000",
     "red": "#FF0000",
@@ -61,19 +49,13 @@ _COLOR_HEX: dict[str, str] = {
 }
 
 
-@mcp.display_tool
+@app.display_tool()
 def change_color(color: str, show_user: bool = False):
-    """Change the (imaginary) UI background colour or return its HEX code.
-
-    If ``show_user`` is ``True`` the caller/client intends this as a *display*
-    action and we therefore return a :class:`DisplayEnvelope` so the
-    front-end can react instantly. Otherwise we simply return the hex code so
-    the LLM can embed it in its textual answer.
-    """
+    """Hybrid tool that either returns a HEX code or sends a UI notification."""
 
     hex_code = _COLOR_HEX.get(color.lower())
     if hex_code is None:
-        raise XMCPError(code="UNKNOWN_COLOR", detail=f"Colour '{color}' not recognised", retryable=False)
+        raise XMCPError(code="UNKNOWN_COLOR", detail=f"Unknown colour '{color}'", retryable=False)
 
     if show_user:
         return DisplayEnvelope(
@@ -85,9 +67,9 @@ def change_color(color: str, show_user: bool = False):
     return hex_code
 
 
-@mcp.display_tool
+@app.display_tool()
 def flash_screen(color: str, times: int = 3, show_user: bool = False):
-    """Flash the screen *times* with *color* (display-only)."""
+    """Display-only tool that flashes the screen."""
 
     return DisplayEnvelope(
         type="notification",
@@ -97,9 +79,9 @@ def flash_screen(color: str, times: int = 3, show_user: bool = False):
     )
 
 
-@mcp.tool
+@app.tool()
 def flaky_service() -> str:
-    """Simulate a transient service failure to demonstrate `retryable` errors."""
+    """Randomly fails to demonstrate retryable errors."""
 
     if random.random() < 0.5:
         raise XMCPError(
@@ -108,9 +90,12 @@ def flaky_service() -> str:
             retryable=True,
             meta={"service": "flaky"},
         )
-
     return "Flaky service responded successfully"
 
 
+# ------------------------------------------------------------------
+# Entry-point
+# ------------------------------------------------------------------
+
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=8005, path="/mcp") 
+    app.run(host="127.0.0.1", port=8004) 

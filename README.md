@@ -13,7 +13,7 @@ The core idea is to treat *tool calls, LLM reasoning, and UI display components*
 
 xmcp is built on three pillars:
 
-1.  **`XMCP` Server**: A high-performance server, built on `FastMCP`, that exposes your Python functions as tools for an AI to use. It adds critical features like structured error handling, custom output formatting, and a special decorator (`@display_tool`) for functions that generate UI components.
+1.  **`XMCP` Server**: A high-performance server powered by the *official* [MCP Python SDK](https://pypi.org/project/mcp/) (`mcp.server.fastmcp.FastMCP`). It exposes your Python functions as tools for an AI to use and adds critical features like structured error handling, custom output formatting, and a special decorator (`@display_tool`) for functions that generate UI components.
 
 2.  **`AIClient`**: An intelligent, asynchronous client that acts as the brain of your application. It connects to one or more `XMCP` servers, manages the conversation state, invokes an LLM to decide on the next action, and executes the chosen tools—in parallel where possible. It's stateless, scalable, and packed with production-ready features like caching, retries, and streaming.
 
@@ -33,13 +33,15 @@ xmcp is built on three pillars:
 
 ## Installation
 
-It is recommended to install xmcp in a virtual environment.
+> **Prerequisite**   `xmcp` now depends on the official **MCP SDK**. If you install `xmcp` with `pip`, the correct `mcp[cli]` version is pulled in automatically—no extra steps required.
 
 ```bash
-# Install the core library
+# Create & activate a virtual environment (optional, but recommended)
+
+# Install the core library (brings in MCP automatically)
 pip install xmcp
 
-# To include development and documentation dependencies
+# Development & docs extras
 pip install 'xmcp[dev,docs]'
 ```
 

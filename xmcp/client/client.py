@@ -6,14 +6,18 @@ from contextlib import asynccontextmanager
 from typing import Any, Iterable, List, NamedTuple, Optional, Union, Literal, AsyncGenerator, Callable
 import logging
 
+# NOTE: Replaced the heavy MCP StreamableHTTPTransport with a lean internal
+# implementation that supports the subset of methods AIClient needs.
+from .simple_http_transport import SimpleHTTPTransport as _HTTPTransport
+
+from mcp.types import Content
+
 # Try to import structlog for structured logging. Fallback to stdlib logger.
 try:
     import structlog  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover – structlog optional
     structlog = None
 
-from fastmcp import Client
-from fastmcp.utilities.types import MCPContent
 
 # Provider abstraction layer
 from xmcp.providers.base_provider import BaseProvider
@@ -36,7 +40,7 @@ from .cache import CacheProtocol, DictCache, NullCache, build_cache_key
 # Helper class for managing connections
 class _ClientConnection(NamedTuple):
     """A container for an active FastMCP client and its URL."""
-    client: Client
+    client: _HTTPTransport
     url: str
 
 
@@ -160,7 +164,7 @@ class AIClient:
         self._client_kwargs = kwargs
 
         self._connections: list[_ClientConnection] = []
-        self._tool_map: dict[str, Client] = {}
+        self._tool_map: dict[str, _HTTPTransport] = {}
         self._llm_tools: list[dict] = []
         # Track tools that can trigger an immediate display response
         self._display_tools: set[str] = set()
@@ -223,7 +227,7 @@ class AIClient:
         return self
 
     async def _connect_to_server(self, url: str) -> _ClientConnection | None:
-        client = Client(transport=url, **self._client_kwargs)
+        client = _HTTPTransport(url=url, **self._client_kwargs)
         try:
             await client.__aenter__()
             self._logger.info("Connected to MCP server", url=url)
@@ -368,7 +372,7 @@ class AIClient:
 
     async def call_mcp_tool(
         self, name: str, arguments: dict[str, Any], **kwargs
-    ) -> list[MCPContent]:
+    ) -> list[Content]:
         """Call a specific tool on an MCP server with retry and circuit-breaker logic.
 
         This is a low-level method for directly invoking a tool. In most cases,
@@ -387,9 +391,9 @@ class AIClient:
 
         Returns
         -------
-        list[MCPContent]
+        list[Content]
             The result from the tool, typically a list containing a single
-            `MCPContent` object.
+            `Content` object.
 
         Raises
         ------

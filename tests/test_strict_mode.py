@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from xmcp.models.envelope import DisplayEnvelope
-from xmcp.server.runtime import XMCP
+from xmcp.server import XMCP
 
 
 def _error_code(xml_str: str) -> str:

@@ -1,6 +1,6 @@
 """Interactive command-line client for demonstrating the xmcp AIClient.
 
-This script connects to the example servers (`server1.py`, `server2.py`),
+This script connects to the example **FastXMCP** servers (`server1.py`, `server2.py`),
 initializes an `AIClient` with multiple LLM providers, and enters an
 interactive loop where the user can issue commands.
 
@@ -15,8 +15,8 @@ To run this demo:
 1. Make sure you have an OpenAI or Anthropic API key set as an
    environment variable (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`).
 2. Run the example servers in separate terminals:
-   `uvicorn examples.servers.server1:mcp --port 8005`
-   `uvicorn examples.servers.server2:mcp --port 8004`
+   `uvicorn examples.servers.server1:app --reload --port 8004`
+   `uvicorn examples.servers.server2:app --reload --port 8005`
 3. Run this script:
    `python examples/clients/demo.py`
 """
@@ -39,8 +39,8 @@ load_dotenv()
 # ------------------------------------------------------------------
 
 servers = [
-    "http://localhost:8005/mcp",
     "http://localhost:8004/mcp",
+    "http://localhost:8005/mcp",
 ]
 
 # ------------------------------------------------------------------
@@ -143,8 +143,8 @@ async def main():
 
     except RuntimeError as e:
         print(f"❌ A critical error occurred: {e}")
-        logger.error("Critical error in demo", error=str(e))
+        logger.error("Critical error in demo", error=str(object=e))
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main=main()) 

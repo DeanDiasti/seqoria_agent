@@ -1,19 +1,27 @@
-"""Example XMCP server 2: Math and Time Tools.
+"""Example FastXMCP server 2: Math and Time Tools.
 
 This server provides simple utility tools:
 - `current_time`: Returns the current server time.
-- `divide`: A tool that can raise a structured `XMCPError`.
+- `divide`: Demonstrates structured `XMCPError` handling.
 """
+
+from __future__ import annotations
+
 from datetime import datetime
 import logging
-from xmcp.server.runtime import XMCP
+
+from xmcp.server.fastxmcp import FastXMCP
 from xmcp.models.errors import XMCPError
 
-mcp = XMCP(name="Dice Roller", strict_mode=True)
+# ------------------------------------------------------------------
+# Application instance
+# ------------------------------------------------------------------
+
+app = FastXMCP(title="Utility Server")
 logger = logging.getLogger(__name__)
 
 
-@mcp.tool
+@app.tool()
 def current_time() -> str:
     """Return the current server time as a formatted string.
 
@@ -27,7 +35,7 @@ def current_time() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-@mcp.tool
+@app.tool()
 def divide(a: float, b: float) -> float:
     """Divide two numbers, `a` by `b`.
 
@@ -61,4 +69,4 @@ def divide(a: float, b: float) -> float:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=8004, path="/mcp") 
+    app.run(host="127.0.0.1", port=8005) 

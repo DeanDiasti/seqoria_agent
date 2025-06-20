@@ -1,35 +1,59 @@
 [project]
-name = "openrouter"
+name = "xmcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "eXtended Model Context Protocol for robust tool-augmented AI applications."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "your@email.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 dependencies = [
-    "anthropic>=0.54.0",
-    "fastmcp>=2.8.1",
-    "openai>=1.86.0",
-    "requests>=2.32.4",
-    "pydantic>=2.7.0",
-    "structlog>=25.4.0",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.0.0",
+    "mcp[cli]>=0.5.0",
+    "pydantic>=2.0",
+    "anthropic>=0.25.0",
+    "openai>=1.25.0",
+    "structlog>=24.1.0",
+    "redis>=5.0.1",
+    "build>=1.2.2.post1",
+    "twine>=6.1.0",
+    "fastapi>=0.115.13",
 ]
 
-[tool.black]
-line-length = 100
-skip-string-normalization = true
+[project.urls]
+Homepage = "https://github.com/deandiasti/xmcp"
+Documentation = "https://deandiasti.github.io/xmcp/"
+Repository = "https://github.com/deandiasti/xmcp"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.1",
+]
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.18",
+    "mkdocstrings[python]>=0.25.1",
+    "pymdown-extensions>=10.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
-select = [
-    "E",  # pycodestyle errors
-    "F",  # pyflakes
-    "I",  # isort-style import sort
-    "N",  # pep8-naming
-    "D",  # pydocstyle
-    "B",  # flake8-bugbear
-]
-ignore = ["D401", "ANN101", "ANN001"]
+select = ["E", "F", "I", "N", "D", "B"]
+ignore = ["D401", "ANN101", "ANN001", "D205", "D212"]
 
 [tool.ruff.pydocstyle]
 convention = "numpy"
+
+[tool.ruff.isort]
+known-first-party = ["xmcp"]

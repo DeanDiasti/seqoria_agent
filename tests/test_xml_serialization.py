@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from xmcp.server.runtime import XMCP
+from xmcp.server import XMCP
 from xmcp.server.formatters import DeclarativeXMLFormatter
 from xmcp.models.envelope import DisplayEnvelope
 
