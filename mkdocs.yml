@@ -1,0 +1,73 @@
+site_name: MCPx Documentation
+site_url: https://your-username.github.io/mcpx/
+repo_url: https://github.com/your-username/mcpx
+repo_name: your-username/mcpx
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-username
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_style: solarized-light
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - admonition
+  - toc:
+      permalink: true
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            show_root_heading: true
+            show_root_toc_entry: true
+            docstring_style: numpy
+            merge_init_into_class: true
+            show_source: true
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Server (XMCP): servers.md
+  - Client (AIClient): client.md
+  - DisplayEnvelope: display_envelope.md
+  - API Reference:
+    - reference/client.md
+    - reference/server.md
+    - reference/models.md
+    - reference/providers.md
+  - Coming Soon:
+    - Token Accounting: future/token_accounting.md
+    - Multi-Tenancy: future/multi_tenancy.md
+    - Frontend Guide: future/frontend_guide.md 

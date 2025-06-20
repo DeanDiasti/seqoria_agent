@@ -1,0 +1,35 @@
+[project]
+name = "openrouter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.54.0",
+    "fastmcp>=2.8.1",
+    "openai>=1.86.0",
+    "requests>=2.32.4",
+    "pydantic>=2.7.0",
+    "structlog>=25.4.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.black]
+line-length = 100
+skip-string-normalization = true
+
+[tool.ruff]
+line-length = 100
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "I",  # isort-style import sort
+    "N",  # pep8-naming
+    "D",  # pydocstyle
+    "B",  # flake8-bugbear
+]
+ignore = ["D401", "ANN101", "ANN001"]
+
+[tool.ruff.pydocstyle]
+convention = "numpy"
