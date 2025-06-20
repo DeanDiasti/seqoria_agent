@@ -1,7 +1,7 @@
-"""Unit tests for low-level value objects in *mcpx.models*."""
+"""Unit tests for low-level value objects in *xmcp.models*."""
 
-from mcpx.models.envelope import DisplayEnvelope
-from mcpx.models.chunk import ChatChunk
+from xmcp.models.envelope import DisplayEnvelope
+from xmcp.models.chunk import ChatChunk
 
 
 def test_display_envelope_roundtrip():

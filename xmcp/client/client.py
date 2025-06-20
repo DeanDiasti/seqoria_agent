@@ -16,14 +16,14 @@ from fastmcp import Client
 from fastmcp.utilities.types import MCPContent
 
 # Provider abstraction layer
-from mcpx.providers.base_provider import BaseProvider
-from mcpx.providers.schemas import LLMResponse, ToolCall
-from mcpx.providers.errors import LLMError
+from xmcp.providers.base_provider import BaseProvider
+from xmcp.providers.schemas import LLMResponse, ToolCall
+from xmcp.providers.errors import LLMError
 
-from mcpx.models.envelope import DisplayEnvelope
-from mcpx.models.errors import ToolRemoteError, CircuitOpenError
+from xmcp.models.envelope import DisplayEnvelope
+from xmcp.models.errors import ToolRemoteError, CircuitOpenError
 
-from mcpx.models.chunk import ChatChunk
+from xmcp.models.chunk import ChatChunk
 
 # NEW: Synthetic tool names
 THINK_TOOL_NAME = "__think__"
@@ -46,20 +46,20 @@ class _ClientConnection(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# ChatChunk is now defined in ``mcpx.models.chunk`` to avoid duplication
+# ChatChunk is now defined in ``xmcp.models.chunk`` to avoid duplication
 # across modules.  Import at module-top so type annotations resolve.
 # ---------------------------------------------------------------------------
 
 
 # NOTE: This class used to rely on the OpenAI SDK directly.  It has been
 # refactored to use the generic *provider* abstraction defined in
-# ``mcpx.providers`` so that any compatible back-end (OpenAI, Anthropic, …)
+# ``xmcp.providers`` so that any compatible back-end (OpenAI, Anthropic, …)
 # can be plugged in without modifying the client.
 
 class AIClient:
-    """A unified AI client that orchestrates calls between LLMs and MCPx servers.
+    """A unified AI client that orchestrates calls between LLMs and xmcp servers.
 
-    This client connects to one or more MCPx/FastMCP servers, discovers the
+    This client connects to one or more xmcp/FastMCP servers, discovers the
     available tools, and uses a Large Language Model (LLM) to intelligently
     decide which tools to call based on a user's query. It supports iterative
     multi-turn conversations, parallel tool execution, response streaming,

@@ -1,6 +1,6 @@
 # Using the AIClient
 
-The `mcpx.AIClient` is a powerful, asynchronous client for orchestrating interactions between an LLM and one or more `XMCP` servers.
+The `xmcp.AIClient` is a powerful, asynchronous client for orchestrating interactions between an LLM and one or more `XMCP` servers.
 
 ## Initialization
 
@@ -8,8 +8,8 @@ You initialize the client with a list of server URLs and a list of LLM providers
 
 ```python
 import asyncio
-from mcpx import AIClient
-from mcpx.providers import OpenAIProvider, AnthropicProvider
+from xmcp import AIClient
+from xmcp.providers import OpenAIProvider, AnthropicProvider
 
 # A list of providers to try in order
 providers = [
@@ -90,7 +90,7 @@ The client provides hooks to integrate with your application's logic:
 -   `logger`: A standard or `structlog` logger for observability.
 
 ```python
-from mcpx.client.cache import RedisCache
+from xmcp.client.cache import RedisCache
 
 def my_display_handler(envelope, history):
     print("Rendering UI for:", envelope['title'])

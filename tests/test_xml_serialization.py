@@ -4,9 +4,9 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from mcpx.server.runtime import XMCP
-from mcpx.server.formatters import DeclarativeXMLFormatter
-from mcpx.models.envelope import DisplayEnvelope
+from xmcp.server.runtime import XMCP
+from xmcp.server.formatters import DeclarativeXMLFormatter
+from xmcp.models.envelope import DisplayEnvelope
 
 
 class _KeepFormatter(DeclarativeXMLFormatter):

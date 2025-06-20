@@ -4,9 +4,9 @@ import asyncio
 
 import pytest
 
-from mcpx.client.client import AIClient
-from mcpx.providers.base_provider import BaseProvider
-from mcpx.providers.schemas import LLMResponse
+from xmcp.client.client import AIClient
+from xmcp.providers.base_provider import BaseProvider
+from xmcp.providers.schemas import LLMResponse
 
 
 class _DummyProvider(BaseProvider):

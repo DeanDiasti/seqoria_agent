@@ -1,13 +1,13 @@
 # Building an XMCP Server
 
-The `mcpx.XMCP` class is the heart of your tool server. It's a specialized subclass of `fastmcp.FastMCP` that adds support for display-oriented tools and structured data formats.
+The `xmcp.XMCP` class is the heart of your tool server. It's a specialized subclass of `fastmcp.FastMCP` that adds support for display-oriented tools and structured data formats.
 
 ## Basic Usage
 
 You create an `XMCP` instance and decorate your Python functions to expose them as tools.
 
 ```python
-from mcpx import XMCP
+from xmcp import XMCP
 
 mcp = XMCP()
 
@@ -24,7 +24,7 @@ For tools that can generate rich UI outputs, use the `@mcp.display_tool` decorat
 The decision is controlled by the `show_user: bool` parameter, which is automatically injected into your function's signature if you include it.
 
 ```python
-from mcpx import XMCP, DisplayEnvelope
+from xmcp import XMCP, DisplayEnvelope
 
 mcp = XMCP()
 
@@ -53,7 +53,7 @@ def get_user_profile(user_id: str, show_user: bool = False):
 `XMCP` automatically catches `XMCPError` exceptions and converts them into a structured XML response that the `AIClient` and LLM can understand, enabling graceful failure handling.
 
 ```python
-from mcpx.models import XMCPError
+from xmcp.models import XMCPError
 
 @mcp.tool
 def get_sensitive_data(user_id: str):
@@ -70,10 +70,10 @@ def get_sensitive_data(user_id: str):
 
 For regular `@tool`s, you can control the XML representation of the output that the LLM sees by providing an `xml_formatter`.
 
-See the API reference for `mcpx.server.formatters` for more details.
+See the API reference for `xmcp.server.formatters` for more details.
 
 ```python
-from mcpx.server.formatters import DeclarativeXMLFormatter
+from xmcp.server.formatters import DeclarativeXMLFormatter
 
 class SimpleFormatter(DeclarativeXMLFormatter):
     top_level_fields = ["id", "name"]

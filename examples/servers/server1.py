@@ -9,9 +9,9 @@ This server demonstrates:
 
 import random
 import time
-from mcpx import DisplayEnvelope
-from mcpx.server.runtime import XMCP
-from mcpx.models.errors import XMCPError
+from xmcp import DisplayEnvelope
+from xmcp.server.runtime import XMCP
+from xmcp.models.errors import XMCPError
 
 # Example XMCP server demonstrating standard and display tools.
 

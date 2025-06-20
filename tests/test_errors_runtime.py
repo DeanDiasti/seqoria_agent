@@ -1,11 +1,11 @@
-"""Tests for structured error handling in `mcpx.server.runtime.XMCP`."""
+"""Tests for structured error handling in `xmcp.server.runtime.XMCP`."""
 
 import xml.etree.ElementTree as ET
 
 import pytest
 
-from mcpx.server.runtime import XMCP
-from mcpx.models.errors import XMCPError
+from xmcp.server.runtime import XMCP
+from xmcp.models.errors import XMCPError
 
 
 def _extract_error_detail(xml_str: str):

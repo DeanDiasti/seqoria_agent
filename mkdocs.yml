@@ -1,7 +1,8 @@
-site_name: MCPx Documentation
-site_url: https://your-username.github.io/mcpx/
-repo_url: https://github.com/your-username/mcpx
-repo_name: your-username/mcpx
+site_name: xmcp Documentation
+# site_url: https://deandiasti.github.io/xmcp/
+repo_url: https://github.com/deandiasti/xmcp
+repo_name: deandiasti/xmcp
+site_description: xmcp is a next-generation orchestration layer for building robust, tool-augmented AI applications. It provides a unified protocol and a set of powerful components to seamlessly manage interactions between Large Language Models (LLMs), your custom tools, and rich user interfaces.
 edit_uri: edit/main/docs/
 
 theme:

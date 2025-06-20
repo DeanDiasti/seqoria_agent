@@ -1,11 +1,11 @@
-"""Unit tests for *mcpx.client.cache* helpers."""
+"""Unit tests for *xmcp.client.cache* helpers."""
 
 import asyncio
 import time
 
 import pytest
 
-from mcpx.client.cache import DictCache, NullCache, build_cache_key
+from xmcp.client.cache import DictCache, NullCache, build_cache_key
 
 
 @pytest.mark.asyncio

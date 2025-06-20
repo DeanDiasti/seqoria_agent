@@ -4,7 +4,7 @@ from __future__ import annotations
 """Display envelope schema – shared between client and server.
 
 This file is copied from the original ``xmcp.envelope`` module so that the new
-``mcpx`` package can evolve independently without breaking existing imports.
+``xmcp`` package can evolve independently without breaking existing imports.
 """
 
 from typing import Any, Dict, List, Literal, Union

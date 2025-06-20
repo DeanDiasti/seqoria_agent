@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide will get you up and running with MCPx in just a few minutes.
+This guide will get you up and running with xmcp in just a few minutes.
 
 ## Installation
 
@@ -10,7 +10,7 @@ First, install the library from source. It's recommended to do this in a virtual
 pip install -e .
 ```
 
-This will install `mcpx` along with its core dependencies, including `fastmcp` and `pydantic`.
+This will install `xmcp` along with its core dependencies, including `fastmcp` and `pydantic`.
 
 To use the full feature set including documentation generation and testing, install the optional extras:
 
@@ -25,7 +25,7 @@ An `XMCP` server exposes your Python functions as tools that an AI can call. The
 Here's a simple server, which you can find in `examples/servers/server1.py`:
 
 ```python
-from mcpx import XMCP, DisplayEnvelope
+from xmcp import XMCP, DisplayEnvelope
 
 mcp = XMCP()
 
@@ -73,8 +73,8 @@ This example is available in `examples/clients/demo.py`:
 
 ```python
 import asyncio
-from mcpx import AIClient
-from mcpx.providers import OpenAIProvider # Or AnthropicProvider, etc.
+from xmcp import AIClient
+from xmcp.providers import OpenAIProvider # Or AnthropicProvider, etc.
 
 # A dummy renderer for demonstration purposes
 def render(display_data: dict):

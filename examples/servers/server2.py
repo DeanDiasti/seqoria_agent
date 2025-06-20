@@ -6,8 +6,8 @@ This server provides simple utility tools:
 """
 from datetime import datetime
 import logging
-from mcpx.server.runtime import XMCP
-from mcpx.models.errors import XMCPError
+from xmcp.server.runtime import XMCP
+from xmcp.models.errors import XMCPError
 
 mcp = XMCP(name="Dice Roller", strict_mode=True)
 logger = logging.getLogger(__name__)

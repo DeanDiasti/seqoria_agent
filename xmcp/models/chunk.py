@@ -1,4 +1,4 @@
-"""Streaming chunk value object – used by :pymeth:`mcpx.client.core.AIClient.stream_chat`."""
+"""Streaming chunk value object – used by :pymeth:`xmcp.client.core.AIClient.stream_chat`."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ class ChatChunk:  # noqa: D101 – simple container
     ----------
     type:
         Either ``"llm_delta"`` for partial LLM output or ``"tool_display"``
-        when a *display tool* emits a :class:`mcpx.models.envelope.DisplayEnvelope`.
+        when a *display tool* emits a :class:`xmcp.models.envelope.DisplayEnvelope`.
     text:
         Token delta from the LLM (only set when ``type == 'llm_delta'``).
     envelope:
-        Serialized :class:`mcpx.models.envelope.DisplayEnvelope` when
+        Serialized :class:`xmcp.models.envelope.DisplayEnvelope` when
         ``type == 'tool_display'``.
     """
 

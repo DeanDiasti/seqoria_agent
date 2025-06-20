@@ -1,7 +1,7 @@
-"""Caching utilities for *mcpx* client package.
+"""Caching utilities for *xmcp* client package.
 
 This file is largely copied from the original `xmcp.cache` module but split
-under the ``mcpx.client.cache`` namespace so that different back-ends can live
+under the ``xmcp.client.cache`` namespace so that different back-ends can live
 side-by-side.
 """
 
@@ -23,7 +23,7 @@ __all__: list[str] = [
 
 
 class CacheProtocol(Protocol):
-    """Minimal async cache contract accepted by :class:`mcpx.client.core.AIClient`."""
+    """Minimal async cache contract accepted by :class:`xmcp.client.core.AIClient`."""
 
     async def get(self, key: str) -> Any | None:  # noqa: D401 – single-line docstring
         """Return the cached value or ``None`` when missing/expired."""

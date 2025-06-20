@@ -11,8 +11,8 @@ Usage (server side)
 -------------------
 
 ```python
-from mcpx.server.runtime import XMCP
-from mcpx.server.formatters import DeclarativeXMLFormatter
+from xmcp.server.runtime import XMCP
+from xmcp.server.formatters import DeclarativeXMLFormatter
 
 mcp = XMCP()
 

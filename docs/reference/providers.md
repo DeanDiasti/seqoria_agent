@@ -4,7 +4,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Base Provider
 
-::: mcpx.providers.base_provider.BaseProvider
+::: xmcp.providers.base_provider.BaseProvider
     handler: python
     options:
       show_root_heading: true
@@ -13,7 +13,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Provider Schemas
 
-::: mcpx.providers.schemas
+::: xmcp.providers.schemas
     handler: python
     options:
       show_root_heading: true
@@ -22,7 +22,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## OpenAI Provider
 
-::: mcpx.providers.openai_provider.OpenAIProvider
+::: xmcp.providers.openai_provider.OpenAIProvider
     handler: python
     options:
       show_root_heading: true
@@ -31,7 +31,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Anthropic Provider
 
-::: mcpx.providers.anthropic_provider.AnthropicProvider
+::: xmcp.providers.anthropic_provider.AnthropicProvider
     handler: python
     options:
       show_root_heading: true
@@ -40,7 +40,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Provider Errors
 
-::: mcpx.providers.errors
+::: xmcp.providers.errors
     handler: python
     options:
       show_root_heading: true

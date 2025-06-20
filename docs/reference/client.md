@@ -1,10 +1,10 @@
 # AIClient API Reference
 
-This page provides an auto-generated API reference for the `mcpx.client` module.
+This page provides an auto-generated API reference for the `xmcp.client` module.
 
 ## AIClient
 
-::: mcpx.client.AIClient
+::: xmcp.client.AIClient
     handler: python
     options:
       show_root_heading: true
@@ -14,7 +14,7 @@ This page provides an auto-generated API reference for the `mcpx.client` module.
 
 ## ChatChunk
 
-::: mcpx.models.chunk.ChatChunk
+::: xmcp.models.chunk.ChatChunk
     handler: python
     options:
       show_root_heading: true
@@ -23,7 +23,7 @@ This page provides an auto-generated API reference for the `mcpx.client` module.
 
 ## Caching
 
-::: mcpx.client.cache
+::: xmcp.client.cache
     handler: python
     options:
       show_root_heading: true

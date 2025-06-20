@@ -1,6 +1,6 @@
 # The DisplayEnvelope
 
-The `DisplayEnvelope` is a simple, frontend-agnostic JSON contract that allows tools to send rich UI components directly to the user. It's the core of MCPx's display capabilities.
+The `DisplayEnvelope` is a simple, frontend-agnostic JSON contract that allows tools to send rich UI components directly to the user. It's the core of xmcp's display capabilities.
 
 ## Schema
 

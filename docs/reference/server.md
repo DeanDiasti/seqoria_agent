@@ -1,10 +1,10 @@
 # Server API Reference
 
-This page provides an auto-generated API reference for the `mcpx.server` module.
+This page provides an auto-generated API reference for the `xmcp.server` module.
 
 ## XMCP
 
-::: mcpx.server.runtime.XMCP
+::: xmcp.server.runtime.XMCP
     handler: python
     options:
       show_root_heading: true
@@ -14,7 +14,7 @@ This page provides an auto-generated API reference for the `mcpx.server` module.
 
 ## Formatters
 
-::: mcpx.server.formatters
+::: xmcp.server.formatters
     handler: python
     options:
       show_root_heading: true

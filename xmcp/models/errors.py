@@ -1,4 +1,4 @@
-"""Error types shared between *mcpx* client and server layers."""
+"""Error types shared between *xmcp* client and server layers."""
 
 
 class ToolRemoteError(Exception):

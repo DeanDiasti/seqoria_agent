@@ -1,10 +1,10 @@
-"""MCPx server runtime - enhanced wrapper around :class:`fastmcp.FastMCP`.
+"""xmcp server runtime - enhanced wrapper around :class:`fastmcp.FastMCP`.
 
 This class replaces the legacy ``xmcp.fastxmcp.XMCP`` while keeping the public
 behaviour intact.  It adds specialised decorators (``@display_tool``) and
-structured error handling that converts :class:`mcpx.models.errors.XMCPError`
+structured error handling that converts :class:`xmcp.models.errors.XMCPError`
 into the canonical `<error>` XML envelope understood by
-``mcpx.client.AIClient``.
+``xmcp.client.AIClient``.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ import inspect
 from typing import Any, Callable, Dict, List, Optional
 
 from fastmcp import FastMCP
-from mcpx.models.envelope import DisplayEnvelope
+from xmcp.models.envelope import DisplayEnvelope
 import json as _json
 
-from mcpx.models.errors import XMCPError
+from xmcp.models.errors import XMCPError
 
 __all__: list[str] = [
     "XMCP",
@@ -226,7 +226,7 @@ class XMCP(FastMCP):
         interception point for structured error handling.
         """
 
-        from mcpx.server.formatters import DeclarativeXMLFormatter  # local import
+        from xmcp.server.formatters import DeclarativeXMLFormatter  # local import
 
         formatter_instance = None
         if formatter_cls is not None:
@@ -274,7 +274,7 @@ class XMCP(FastMCP):
     def _validate_payload(self, value: Any) -> Any:
         """Ensure *value* is DisplayEnvelope/compatible or valid XML."""
 
-        from mcpx.models.envelope import DisplayEnvelope  # local import to avoid cycle
+        from xmcp.models.envelope import DisplayEnvelope  # local import to avoid cycle
 
         # 1️⃣ DisplayEnvelope instance or dict-like
         if isinstance(value, DisplayEnvelope):
@@ -350,7 +350,7 @@ class XMCP(FastMCP):
         else:
             # Format value via formatter or default fall-back
             if formatter is None:
-                from mcpx.server.formatters import DeclarativeXMLFormatter  # local import
+                from xmcp.server.formatters import DeclarativeXMLFormatter  # local import
                 formatter = DeclarativeXMLFormatter()
 
             formatted = formatter(value, indent_level=2)

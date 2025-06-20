@@ -1,4 +1,4 @@
-"""Interactive command-line client for demonstrating the MCPx AIClient.
+"""Interactive command-line client for demonstrating the xmcp AIClient.
 
 This script connects to the example servers (`server1.py`, `server2.py`),
 initializes an `AIClient` with multiple LLM providers, and enters an
@@ -28,9 +28,9 @@ import json
 
 from dotenv import load_dotenv
 
-from mcpx import AIClient, ChatChunk
-from mcpx.client.cache import DictCache
-from mcpx.providers import OpenAIProvider, AnthropicProvider
+from xmcp import AIClient, ChatChunk
+from xmcp.client.cache import DictCache
+from xmcp.providers import OpenAIProvider, AnthropicProvider
 
 load_dotenv()
 

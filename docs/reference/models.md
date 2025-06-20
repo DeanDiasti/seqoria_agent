@@ -1,10 +1,10 @@
 # Models API Reference
 
-This page provides an auto-generated API reference for the shared data models in `mcpx.models`.
+This page provides an auto-generated API reference for the shared data models in `xmcp.models`.
 
 ## DisplayEnvelope
 
-::: mcpx.models.envelope.DisplayEnvelope
+::: xmcp.models.envelope.DisplayEnvelope
     handler: python
     options:
       show_root_heading: true
@@ -13,7 +13,7 @@ This page provides an auto-generated API reference for the shared data models in
 
 ## ChatChunk
 
-::: mcpx.models.chunk.ChatChunk
+::: xmcp.models.chunk.ChatChunk
     handler: python
     options:
       show_root_heading: true
@@ -22,7 +22,7 @@ This page provides an auto-generated API reference for the shared data models in
 
 ## Errors
 
-::: mcpx.models.errors
+::: xmcp.models.errors
     handler: python
     options:
       show_root_heading: true

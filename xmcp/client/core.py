@@ -1,4 +1,4 @@
-"""Core *mcpx* client API.
+"""Core *xmcp* client API.
 
 For the initial refactor we *wrap* the proven implementation from the legacy
 ``xmcp`` package so that external callers can immediately switch their import
@@ -6,13 +6,13 @@ paths while we incrementally extract the logic into smaller modules.
 
 This keeps backwards-compatibility and avoids a huge, risky copy-paste move in
 one go.  Future commits will replace this shim with a native implementation
-that lives fully inside the ``mcpx.client`` namespace.
+that lives fully inside the ``xmcp.client`` namespace.
 """
 
 from __future__ import annotations
 
-from mcpx.client.client import AIClient
-from mcpx.models.chunk import ChatChunk  # noqa: F401
+from xmcp.client.client import AIClient
+from xmcp.models.chunk import ChatChunk  # noqa: F401
 
 # Public re-exports -----------------------------------------------------------
 

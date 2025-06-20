@@ -1,4 +1,4 @@
-"""Shared value objects and error types used across *mcpx*.
+"""Shared value objects and error types used across *xmcp*.
 
 Nothing in here should depend on higher-level client or server logic to avoid
 import cycles.

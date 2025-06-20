@@ -1,8 +1,8 @@
-# Welcome to MCPx
+# Welcome to xmcp
 
-MCPx (**eXtended Multi-Channel Protocol**) is a next-generation orchestration layer that makes tool-augmented AI applications easier to author, faster to run, and richer to present.
+xmcp (**eXtended Multi-Channel Protocol**) is a next-generation orchestration layer that makes tool-augmented AI applications easier to author, faster to run, and richer to present.
 
-This site provides comprehensive documentation for developers building with MCPx.
+This site provides comprehensive documentation for developers building with xmcp.
 
 **Key Features:**
 
