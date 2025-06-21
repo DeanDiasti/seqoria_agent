@@ -1,4 +1,4 @@
-# XMCP Overview
+# Seqoria Agent Framework Overview
 
 XMCP *(eXtended Multi-Channel Protocol)* builds on the **Model Context Protocol (MCP)** to let a Large-Language-Model call your Python functions and ship rich UI artefacts in one round-trip.
 
@@ -20,21 +20,22 @@ flowchart TD
 
 | Layer | Purpose | Key Module |
 |-------|---------|------------|
-| **AIClient** | Decides which tool(s) to run, handles retries, caching, streaming | `xmcp.client.AIClient` |
-| **XMCP Server** | Expose Python functions as tools, wraps results in XML | `xmcp.server.XMCP` |
-| **Transport** | Streamable-HTTP JSON-RPC | `xmcp.client.simple_http_transport` |
-| **Providers** | OpenAI, Anthropic, local Llama 3 … | `xmcp.providers.*` |
+| **AIClient** | Decides which tool(s) to run, handles retries, caching, streaming | `seqoria_agent.client.AIClient` |
+| **XMCP Server** | Expose Python functions as tools, wraps results in XML | `seqoria_agent.server.fastxmcp.FastXMCP` |
+| **Transport** | Streamable-HTTP JSON-RPC | `seqoria_agent.client.simple_http_transport` |
+| **Providers** | OpenAI, Anthropic, local Llama 3 … | `seqoria_agent.providers.*` |
 
 ---
 
 ### Hello World in 20 Lines
 
 ```python
-from xmcp import XMCP, AIClient, DisplayEnvelope
-from xmcp.providers import OpenAIProvider
+from seqoria_agent.server.fastxmcp import FastXMCP
+from seqoria_agent import AIClient, DisplayEnvelope
+from seqoria_agent.providers import OpenAIProvider
 import asyncio
 
-mcp = XMCP()
+mcp = FastXMCP()
 
 @mcp.display_tool
 def greet(name: str, show_user: bool = False):

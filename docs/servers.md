@@ -13,8 +13,9 @@
 ## 1. Regular vs Display Tools
 
 ```python
-from xmcp import XMCP, DisplayEnvelope
-mcp = XMCP()
+from seqoria_agent.server.fastxmcp import FastXMCP
+from seqoria_agent.models.envelope import DisplayEnvelope
+mcp = FastXMCP()
 
 @mcp.tool
 def add(a: int, b: int) -> int:

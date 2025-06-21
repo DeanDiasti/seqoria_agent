@@ -1,4 +1,4 @@
-# XMCP – eXtended Multi-Channel Protocol
+# Seqoria Agent
 
 ## Overview
 
@@ -48,7 +48,6 @@ the UI without a second LLM round-trip.
 pip install -e .  # Or poetry install, etc.
 ```
 
-XMCP relies on **FastMCP** (installed automatically) and `pydantic>=2`.
 
 ---
 

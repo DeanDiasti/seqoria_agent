@@ -1,7 +1,7 @@
-"""Caching utilities for *qutie* client package.
+"""Caching utilities for *seqoria_agent* client package.
 
-This file is largely copied from the original `qutie.cache` module but split
-under the ``qutie.client.cache`` namespace so that different back-ends can live
+This file is largely copied from the original `seqoria_agent.cache` module but split
+under the ``seqoria_agent.client.cache`` namespace so that different back-ends can live
 side-by-side.
 """
 
@@ -23,7 +23,7 @@ __all__: list[str] = [
 
 
 class CacheProtocol(Protocol):
-    """Minimal async cache contract accepted by :class:`qutie.client.core.AIClient`."""
+    """Minimal async cache contract accepted by :class:`seqoria_agent.client.core.AIClient`."""
 
     async def get(self, key: str) -> Any | None:  # noqa: D401 – single-line docstring
         """Return the cached value or ``None`` when missing/expired."""

@@ -20,15 +20,15 @@ except ModuleNotFoundError:  # pragma: no cover – structlog optional
 
 
 # Provider abstraction layer
-from qutie.providers.base_provider import BaseProvider
-from qutie.providers.schemas import LLMResponse, ToolCall
-from qutie.providers.errors import LLMError
+from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.schemas import LLMResponse, ToolCall
+from seqoria_agent.providers.errors import LLMError
 
-from qutie.models.envelope import DisplayEnvelope
-from qutie.models.errors import ToolRemoteError, CircuitOpenError, DependencyError
-from qutie.client.parameters import ParameterProvider
+from seqoria_agent.models.envelope import DisplayEnvelope
+from seqoria_agent.models.errors import ToolRemoteError, CircuitOpenError, DependencyError
+from seqoria_agent.client.parameters import ParameterProvider
 
-from qutie.models.chunk import ChatChunk
+from seqoria_agent.models.chunk import ChatChunk
 
 # NEW: Synthetic tool names
 THINK_TOOL_NAME = "__think__"
@@ -45,26 +45,10 @@ class _ClientConnection(NamedTuple):
     url: str
 
 
-# ---------------------------------------------------------------------------
-# Streaming support data structure (defined early so type annotations work)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# ChatChunk is now defined in ``qutie.models.chunk`` to avoid duplication
-# across modules.  Import at module-top so type annotations resolve.
-# ---------------------------------------------------------------------------
-
-
-# NOTE: This class used to rely on the OpenAI SDK directly.  It has been
-# refactored to use the generic *provider* abstraction defined in
-# ``qutie.providers`` so that any compatible back-end (OpenAI, Anthropic, …)
-# can be plugged in without modifying the client.
-
 class AIClient:
-    """A unified AI client that orchestrates calls between LLMs and qutie servers.
+    """A unified AI client that orchestrates calls between LLMs and seqoria_agent servers.
 
-    This client connects to one or more qutie/FastMCP servers, discovers the
+    This client connects to one or more seqoria_agent/FastMCP servers, discovers the
     available tools, and uses a Large Language Model (LLM) to intelligently
     decide which tools to call based on a user's query. It supports iterative
     multi-turn conversations, parallel tool execution, response streaming,
@@ -182,7 +166,7 @@ class AIClient:
         # Server-populated parameter providers (client side) -----------------
         # ------------------------------------------------------------------
 
-        from qutie.client.parameters import ParameterProvider  # local import to avoid top-level cycles
+        from seqoria_agent.client.parameters import ParameterProvider  # local import to avoid top-level cycles
 
         self._param_providers: list[ParameterProvider] = list(param_providers or [])  # type: ignore[arg-type]
 
@@ -202,14 +186,14 @@ class AIClient:
             "\nIf you need additional information from the user, call the `__clarify__` tool with a concise question."
         )
 
-        # Structured logger – default to stdlib logger under 'qutie'
+        # Structured logger – default to stdlib logger under 'seqoria_agent'
         if logger is not None:
             self._logger = logger
         else:
             if structlog is not None:
-                self._logger = structlog.get_logger("qutie")  # type: ignore[assignment]
+                self._logger = structlog.get_logger("seqoria_agent")  # type: ignore[assignment]
             else:
-                self._logger = logging.getLogger(name="qutie")
+                self._logger = logging.getLogger(name="seqoria_agent")
 
         # Holds reference to *current* conversation history during a single
         # chat()/stream_chat() call. Reset to None immediately afterwards so
@@ -872,7 +856,7 @@ class AIClient:
 
         spp_fields = self._server_params.get(tool_name, [])
         if spp_fields:
-            from qutie.client.parameters import ParamContext
+            from seqoria_agent.client.parameters import ParamContext
 
             # Remove AI-provided values when override disallowed
             if not self._allow_override:
@@ -1233,7 +1217,7 @@ class AIClient:
         """
 
         from collections import defaultdict, deque
-        from qutie.models.errors import DependencyError
+        from seqoria_agent.models.errors import DependencyError
 
         call_map: dict[str, ToolCall] = {
             (tc.function or {}).get("name"): tc for tc in tool_calls

@@ -11,15 +11,15 @@ from __future__ import annotations
 
 import random
 
-from qutie.models.envelope import DisplayEnvelope
-from qutie.models.errors import QutieError
-from qutie.server.fastqutie import FastQutie
+from seqoria_agent.models.envelope import DisplayEnvelope
+from seqoria_agent.models.errors import XMCPError
+from seqoria_agent.server.fastxmcp import FastXMCP
 
 # ------------------------------------------------------------------
-# Instantiate FastQutie application
+# Instantiate FastXMCP application
 # ------------------------------------------------------------------
 
-app = FastQutie(title="Agentic Tools Server")
+app = FastXMCP(title="Agentic Tools Server")
 
 # ------------------------------------------------------------------
 # Tool definitions
@@ -33,12 +33,12 @@ def roll_dice(n_dice: int) -> list[int]:
     try:
         n_dice = int(n_dice)
     except Exception:
-        raise QutieError(code="INVALID_ARG", detail="n_dice must be an integer", retryable=False)
+        raise XMCPError(code="INVALID_ARG", detail="n_dice must be an integer", retryable=False)
 
     if n_dice <= 0:
-        raise QutieError(code="INVALID_ARG", detail="n_dice must be >0", retryable=False)
+        raise XMCPError(code="INVALID_ARG", detail="n_dice must be >0", retryable=False)
     if n_dice > 100:
-        raise QutieError(code="LIMIT_EXCEEDED", detail="Cannot roll >100 dice", retryable=False)
+        raise XMCPError(code="LIMIT_EXCEEDED", detail="Cannot roll >100 dice", retryable=False)
     return [random.randint(1, 6) for _ in range(n_dice)]
 
 
@@ -61,7 +61,7 @@ def change_color(color: str, show_user: bool = False):
 
     hex_code = _COLOR_HEX.get(color.lower())
     if hex_code is None:
-        raise QutieError(code="UNKNOWN_COLOR", detail=f"Unknown colour '{color}'", retryable=False)
+        raise XMCPError(code="UNKNOWN_COLOR", detail=f"Unknown colour '{color}'", retryable=False)
 
     if show_user:
         return DisplayEnvelope(
@@ -90,7 +90,7 @@ def flaky_service() -> str:
     """Randomly fails to demonstrate retryable errors."""
 
     if random.random() < 0.5:
-        raise QutieError(
+        raise XMCPError(
             code="SERVICE_UNAVAILABLE",
             detail="Upstream service timed out",
             retryable=True,
@@ -128,7 +128,7 @@ def dice_sum(n_dice: int) -> int:
     try:
         n_dice = int(n_dice)
     except Exception:
-        raise QutieError(code="INVALID_ARG", detail="n_dice must be an integer", retryable=False)
+        raise XMCPError(code="INVALID_ARG", detail="n_dice must be an integer", retryable=False)
 
     return sum(random.randint(1, 6) for _ in range(n_dice))
 

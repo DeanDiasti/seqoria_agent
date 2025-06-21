@@ -1,4 +1,4 @@
-"""Interactive command-line client for demonstrating the qutie AIClient.
+"""Interactive command-line client for demonstrating the seqoria_agent AIClient.
 
 This script connects to the example **FastXMCP** servers (`server1.py`, `server2.py`),
 initializes an `AIClient` with multiple LLM providers, and enters an
@@ -28,10 +28,10 @@ import json
 
 from dotenv import load_dotenv
 
-from qutie import AIClient, ChatChunk
-from qutie.client.cache import DictCache
-from qutie.providers import OpenAIProvider, AnthropicProvider
-from qutie.client.parameters import ParameterProvider, ParamContext
+from seqoria_agent import AIClient, ChatChunk
+from seqoria_agent.client.cache import DictCache
+from seqoria_agent.providers import OpenAIProvider, AnthropicProvider
+from seqoria_agent.client.parameters import ParameterProvider, ParamContext
 
 load_dotenv()
 
@@ -60,7 +60,7 @@ servers = [
 #     ],
 # )
 
-logger = structlog.get_logger("qutie_demo")
+logger = structlog.get_logger("seqoria_agent_demo")
 
 # ------------------------------------------------------------------
 # Client-side parameter provider example
@@ -119,7 +119,7 @@ async def main():
     try:
         async with client:
             print("===================================================")
-            print("Welcome to the AI Multi-Tool Client!")
+            print("Welcome to the Seqoria-Agent Multi-Tool Client!")
             print("I have discovered tools from the connected MCP server.")
             print("\n--- Try out the HYBRID tool! ---")
             print("  - Ask me to 'change the color to pink' (Display Mode)")

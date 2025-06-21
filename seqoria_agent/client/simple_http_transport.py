@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-"""Lightweight HTTP transport for qutie/FastMCP servers.
+"""Lightweight HTTP transport for seqoria_agent/FastMCP servers.
 
 This wrapper speaks the *streamable-http* JSON-RPC dialect directly via
 ``httpx`` and provides only the two calls the higher-level ``AIClient``
 needs today:  ``tools/list`` and ``tools/call``.
 
-It intentionally does **not** try to implement the full MCP spec – we can
+It intentionally does **not** try to implement the full MCP spec - we can
 expand it incrementally as our client grows.
 """
 

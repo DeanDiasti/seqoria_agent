@@ -1,7 +1,7 @@
 """Unit tests for low-level value objects in *xmcp.models*."""
 
-from qutie.models.envelope import DisplayEnvelope
-from qutie.models.chunk import ChatChunk
+from seqoria_agent.models.envelope import DisplayEnvelope
+from seqoria_agent.models.chunk import ChatChunk
 
 
 def test_display_envelope_roundtrip():

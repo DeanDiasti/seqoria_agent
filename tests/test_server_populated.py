@@ -3,13 +3,13 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from qutie.server.fastqutie import FastQutie
+from seqoria_agent.server.fastxmcp import FastXMCP
 from fastapi import Request
 
 
 @pytest.fixture()
 def app():
-    app = FastQutie(title="SPP Test Server")
+    app = FastXMCP(title="SPP Test Server")
 
     # Provider that injects user_id from header
     @app.register_param_provider  # type: ignore[arg-type]

@@ -1,12 +1,6 @@
 from __future__ import annotations
 
 
-"""Display envelope schema - shared between client and server.
-
-This file is copied from the original ``qutie.envelope`` module so that the new
-``qutie`` package can evolve independently without breaking existing imports.
-"""
-
 from typing import Any, Dict, List, Literal, Union
 
 from pydantic import BaseModel, Field

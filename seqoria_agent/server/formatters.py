@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""XML formatter plug-in system for qutie tools.
+"""XML formatter plug-in system for seqoria_agent tools.
 
 This implements a minimal but extensible mechanism to convert arbitrary Python
 values returned by **regular** `@tool` functions into an XML snippet that is
@@ -11,10 +11,10 @@ Usage (server side)
 -------------------
 
 ```python
-from qutie.server.runtime import qutie
-from qutie.server.formatters import DeclarativeXMLFormatter
+from seqoria_agent.server.runtime import function_server
+from seqoria_agent.server.formatters import DeclarativeXMLFormatter
 
-mcp = qutie()
+mcp = function_server()
 
 class WeatherFormatter(DeclarativeXMLFormatter):
     top_level_fields = ["city", "temperature", "condition"]

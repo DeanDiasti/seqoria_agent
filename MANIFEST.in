@@ -1,7 +1,7 @@
 include LICENSE.txt
 include README.md
 include CHANGELOG.md
-recursive-include qutie py.typed
+recursive-include seqoria_agent py.typed
 
 # Exclude unnecessary directories from source distribution
 prune docs

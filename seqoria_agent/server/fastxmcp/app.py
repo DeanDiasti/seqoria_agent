@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""FastQutie FastAPI application."""
+"""FastXMCP FastAPI application."""
 
 from typing import Any, Callable, Dict
 import inspect
@@ -11,11 +11,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from qutie.server.formatters import DeclarativeXMLFormatter  # formatter helpers
-from qutie.models.envelope import DisplayEnvelope
-from qutie.models.errors import QutieError
+from seqoria_agent.server.formatters import DeclarativeXMLFormatter  # formatter helpers
+from seqoria_agent.models.envelope import DisplayEnvelope
+from seqoria_agent.models.errors import XMCPError
 
-__all__ = ["FastQutie"]
+__all__ = ["FastXMCP"]
 
 # ---------------------------------------------------------------------------
 # Registries & helper model
@@ -38,23 +38,23 @@ class _ToolInfo(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Fastqutie main application class
+# FastXMCP main application class
 # ---------------------------------------------------------------------------
 
 
-class FastQutie(FastAPI):
-    """A minimal FastAPI app that speaks the MCP Streamable-HTTP dialect."""
+class FastXMCP(FastAPI):
+    """A minimal FastAPI app (branded as FastXMCP) that speaks the MCP Streamable-HTTP dialect."""
 
     def __init__(
         self,
         *,
-        title: str = "FastQutie",
+        title: str = "FastXMCP",
         version: str = "0.1.0",
         strict_mode: bool = False,
         strict_server_params: bool = True,
         **kw,
     ):
-        """Create a FastQutie application.
+        """Create a FastXMCP application.
 
         Parameters
         ----------
@@ -230,7 +230,7 @@ class FastQutie(FastAPI):
                     params = rpc.params or {}
                     tool_name: str = params.get("name")
                     if tool_name not in self._tools:
-                        raise QutieError(code="UNKNOWN_TOOL", detail=tool_name, retryable=False)
+                        raise XMCPError(code="UNKNOWN_TOOL", detail=tool_name, retryable=False)
                     arguments: dict = params.get("arguments", {})
                     server_args: dict = params.get("serverArgs", {})
 
@@ -238,10 +238,10 @@ class FastQutie(FastAPI):
                     if server_args:
                         for k in server_args:
                             if k not in self._tools[tool_name].server_params:
-                                raise QutieError(code="UNKNOWN_SERVER_PARAM", detail=k, retryable=False)
+                                raise XMCPError(code="UNKNOWN_SERVER_PARAM", detail=k, retryable=False)
 
                             if k in arguments and self._strict_server_params:
-                                raise QutieError(code="FORBIDDEN_PARAM_OVERRIDE", detail=k, retryable=False)
+                                raise XMCPError(code="FORBIDDEN_PARAM_OVERRIDE", detail=k, retryable=False)
 
                         # Merge – values from serverArgs win over arguments (they shouldn't overlap unless override allowed)
                         arguments = {**arguments, **server_args}
@@ -276,8 +276,8 @@ class FastQutie(FastAPI):
                     return _RPCRes(id=rpc.id, result={"contents": [{"type": "text", "text": xml}]})
 
                 case _:
-                    raise QutieError(code="METHOD_NOT_FOUND", detail=rpc.method, retryable=False)
-        except QutieError as xe:
+                    raise XMCPError(code="METHOD_NOT_FOUND", detail=rpc.method, retryable=False)
+        except XMCPError as xe:
             return _RPCRes(id=rpc.id, error={"code": xe.code, "message": xe.detail})
         except Exception as exc:
             return _RPCRes(id=rpc.id, error={"code": "SERVER_ERROR", "message": str(exc)})
@@ -295,7 +295,7 @@ class FastQutie(FastAPI):
 
         self._tool_formatters[tool_name] = formatter_instance
 
-        from qutie.models.envelope import DisplayEnvelope  # local import to avoid cycle
+        from seqoria_agent.models.envelope import DisplayEnvelope  # local import to avoid cycle
 
         async def _async_impl(*args: Any, **kwargs: Any) -> str:  # noqa: ANN401
             try:
@@ -303,7 +303,7 @@ class FastQutie(FastAPI):
                 if self._strict_mode:
                     self._validate_payload(value=result)
                 return self._serialize_success(tool_name=tool_name, value=result, formatter=formatter_instance)
-            except QutieError as exc:
+            except XMCPError as exc:
                 return self._build_error_xml(tool_name=tool_name, exc=exc)
 
         def _sync_impl(*args: Any, **kwargs: Any):  # noqa: ANN401
@@ -312,7 +312,7 @@ class FastQutie(FastAPI):
                 if self._strict_mode:
                     self._validate_payload(value=result)
                 return self._serialize_success(tool_name=tool_name, value=result, formatter=formatter_instance)
-            except QutieError as exc:
+            except XMCPError as exc:
                 return self._build_error_xml(tool_name=tool_name, exc=exc)
 
         wrapper = _async_impl if inspect.iscoroutinefunction(obj=func) else _sync_impl
@@ -323,7 +323,7 @@ class FastQutie(FastAPI):
     def _validate_payload(self, value: Any):  # noqa: D401, ANN001
         """Strict-mode payload validation copied from legacy qutie."""
 
-        from qutie.models.envelope import DisplayEnvelope  # local import
+        from seqoria_agent.models.envelope import DisplayEnvelope  # local import
 
         if isinstance(value, DisplayEnvelope):
             return value
@@ -333,7 +333,7 @@ class FastQutie(FastAPI):
             try:
                 DisplayEnvelope.model_validate(value)
             except Exception as exc:
-                raise QutieError(code="INVALID_PAYLOAD", retryable=False, detail=str(exc))
+                raise XMCPError(code="INVALID_PAYLOAD", retryable=False, detail=str(exc))
             return value
 
         if isinstance(value, str):
@@ -344,13 +344,13 @@ class FastQutie(FastAPI):
                     _ET.fromstring(xml_s)
                     return value
                 except Exception as exc:
-                    raise QutieError(code="INVALID_XML", retryable=False, detail=str(exc))
+                    raise XMCPError(code="INVALID_XML", retryable=False, detail=str(exc))
 
-        raise QutieError(code="INVALID_PAYLOAD", retryable=False, detail="Return value must be DisplayEnvelope or <tool_response> XML")
+        raise XMCPError(code="INVALID_PAYLOAD", retryable=False, detail="Return value must be DisplayEnvelope or <tool_response> XML")
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _build_error_xml(tool_name: str, exc: QutieError) -> str:  # noqa: D401
+    def _build_error_xml(tool_name: str, exc: XMCPError) -> str:  # noqa: D401
         cddata = (exc.detail or exc.code).strip()
         meta_block = ""
         if exc.meta:
@@ -370,7 +370,7 @@ class FastQutie(FastAPI):
 
     # ------------------------------------------------------------------
     def _serialize_success(self, tool_name: str, value: Any, formatter: Any | None):  # noqa: ANN001
-        from qutie.models.envelope import DisplayEnvelope  # local
+        from seqoria_agent.models.envelope import DisplayEnvelope  # local
         import json as _json
 
         if isinstance(value, str) and value.lstrip().startswith("<tool_response"):
@@ -406,7 +406,7 @@ class FastQutie(FastAPI):
 
         The function observes the ``strict_server_params`` flag:
         if the LLM/client tries to supply a value for a protected field and
-        *strict* is True, we raise ``qutieError``. Otherwise, we overwrite.
+        *strict* is True, we raise ``XMCPError``. Otherwise, we overwrite.
         """
 
         injected: dict[str, Any] = dict(arguments)  # shallow copy
@@ -431,7 +431,7 @@ class FastQutie(FastAPI):
                     break
 
             if not value_found:
-                raise QutieError(code="MISSING_SERVER_PARAM", detail=param, retryable=False)
+                raise XMCPError(code="MISSING_SERVER_PARAM", detail=param, retryable=False)
 
         return injected
 

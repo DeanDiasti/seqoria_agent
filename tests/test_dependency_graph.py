@@ -1,10 +1,10 @@
 import asyncio
 import pytest
 
-from qutie.client.client import AIClient
-from qutie.providers.base_provider import BaseProvider
-from qutie.providers.schemas import ToolCall
-from qutie.models.errors import DependencyError
+from seqoria_agent.client.client import AIClient
+from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.schemas import ToolCall
+from seqoria_agent.models.errors import DependencyError
 
 
 class DummyProvider(BaseProvider):

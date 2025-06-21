@@ -1,8 +1,9 @@
-site_name: qutie Documentation
-# site_url: https://deandiasti.github.io/qutie/
-repo_url: https://github.com/deandiasti/qutie
-repo_name: qutie
-site_description: qutie is a next-generation orchestration layer for building robust, tool-augmented AI applications. It provides a unified protocol and a set of powerful components to seamlessly manage interactions between Large Language Models (LLMs), your custom tools, and rich user interfaces.
+site_name: saaf Documentation
+site_name: seqoria_agent Documentation
+# site_url: https://deandiasti.github.io/seqoria_agent/
+repo_url: https://github.com/deandiasti/seqoria_agent
+repo_name: seqoria_agent
+site_description: seqoria_agent is a next-generation orchestration layer for building robust, tool-augmented AI applications. It provides a unified protocol and a set of powerful components to seamlessly manage interactions between Large Language Models (LLMs), your custom tools, and rich user interfaces.
 edit_uri: edit/main/docs/
 
 theme:
