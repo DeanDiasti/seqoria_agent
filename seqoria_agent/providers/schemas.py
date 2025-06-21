@@ -5,8 +5,9 @@ These models define a canonical structure for LLM responses, including
 text content, tool calls, and token usage, ensuring that the AIClient
 can interact with any provider in a uniform way.
 """
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
 
 
 class ToolCall(BaseModel):
@@ -17,6 +18,7 @@ class ToolCall(BaseModel):
     de-facto standard. Providers are responsible for mapping their native
     tool-call format to this structure.
     """
+
     id: str
     type: str = "function"
     function: Dict[str, Any] = Field(default=..., description='e.g., {"name": "get_weather", "arguments": \'{"location": "Boston"}\'}')
@@ -24,6 +26,7 @@ class ToolCall(BaseModel):
 
 class LLMUsage(BaseModel):
     """Standardized token usage information."""
+
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
@@ -36,6 +39,7 @@ class LLMResponse(BaseModel):
     This object is returned by a provider's `async_generate` method and
     is the final object yielded by the `async_stream` method.
     """
+
     model_id: str = Field(..., description="The actual model ID used for the response.")
     text: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None

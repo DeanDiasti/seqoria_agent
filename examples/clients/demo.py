@@ -21,17 +21,16 @@ To run this demo:
    `python examples/clients/demo.py`
 """
 import asyncio
-import os
-import logging
-import structlog
 import json
+import os
 
+import structlog
 from dotenv import load_dotenv
 
-from seqoria_agent import AIClient, ChatChunk
+from seqoria_agent import AIClient
 from seqoria_agent.client.cache import DictCache
-from seqoria_agent.providers import OpenAIProvider, AnthropicProvider
-from seqoria_agent.client.parameters import ParameterProvider, ParamContext
+from seqoria_agent.client.parameters import ParamContext
+from seqoria_agent.providers import AnthropicProvider, OpenAIProvider
 
 load_dotenv()
 
@@ -79,7 +78,6 @@ async def main():
     no HTTP headers are used; the AIClient injects ``user_id`` into the
     JSON-RPC body under the ``serverArgs`` key.
     """
-
     # ------------------------------------------------------------------
     # Build provider list – primary plus optional *backup* provider
     # ------------------------------------------------------------------

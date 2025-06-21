@@ -1,10 +1,9 @@
-import json
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from seqoria_agent.server.fastxmcp import FastXMCP
-from fastapi import Request
 
 
 @pytest.fixture()

@@ -10,11 +10,11 @@ It intentionally does **not** try to implement the full MCP spec - we can
 expand it incrementally as our client grows.
 """
 
-from types import SimpleNamespace
-from typing import Any, List, Sequence, Optional
 import itertools
+from types import SimpleNamespace
+from typing import Any, List, Optional, Sequence
+
 import httpx
-import asyncio
 
 __all__: list[str] = ["SimpleHTTPTransport"]
 
@@ -93,8 +93,8 @@ class SimpleHTTPTransport:
                 t = SimpleNamespace(**t)
             # Older servers may use "parameters" instead of "inputSchema"
             if not hasattr(t, "inputSchema") and hasattr(t, "parameters"):
-                setattr(t, "inputSchema", getattr(t, "parameters"))
-            setattr(t, "annotations", getattr(t, "annotations", None))
+                t.inputSchema = t.parameters
+            t.annotations = getattr(t, "annotations", None)
             tools.append(t)
         return tools
 

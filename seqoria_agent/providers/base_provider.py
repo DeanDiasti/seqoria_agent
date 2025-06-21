@@ -7,7 +7,7 @@ like OpenAI, Anthropic, Bedrock, and SambaNova.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Any, List, AsyncGenerator, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from .schemas import LLMResponse
 
@@ -29,7 +29,8 @@ class BaseProvider(ABC):
             model_id: Identifier for the model to use. If None, should fall back to a default.
             **kwargs: Additional parameters for model generation and client configuration.
         
-        Raises:
+        Raises
+        ------
             EnvironmentError: If required environment variables are not set.
             ConnectionError: If the client cannot be initialized.
         """
@@ -51,11 +52,13 @@ class BaseProvider(ABC):
             tool_choice: Optional tool choice configuration. Format may vary by provider.
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
             
-        Returns:
+        Returns
+        -------
             LLMResponse: A standardized response object containing the generated content,
                          tool calls, usage data, and other metadata.
             
-        Raises:
+        Raises
+        ------
             Various LLMError subclasses depending on the API response or connection issues.
         """
         pass
@@ -79,11 +82,13 @@ class BaseProvider(ABC):
             tool_choice: Optional tool choice configuration.
             **kwargs: Generation parameters overriding defaults.
             
-        Yields:
+        Yields
+        ------
             str: Text chunks of the generated completion.
             LLMResponse: The final, complete response object.
 
-        Raises:
+        Raises
+        ------
             Same exceptions as async_generate() method, potentially during iteration.
         """
         pass
@@ -99,7 +104,6 @@ class BaseProvider(ABC):
         ``self._handle_error(error: Exception) -> Exception`` that converts
         provider-specific exceptions into the canonical :class:`LLMError` tree.
         """
-
         retries = 0
         last_error: Exception | None = None
 
@@ -128,7 +132,8 @@ class BaseProvider(ABC):
 
                 # Exponential back-off with ±10 % jitter
                 base = 0.1 * (2 ** (retries - 1))
-                import random, asyncio  # local to minimise cold-start cost
+                import asyncio  # local to minimise cold-start cost
+                import random
 
                 await asyncio.sleep(base + random.uniform(0, base * 0.1))
 

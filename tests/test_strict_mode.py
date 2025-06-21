@@ -2,8 +2,6 @@
 
 import xml.etree.ElementTree as ET
 
-import pytest
-
 from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.server import XMCP
 

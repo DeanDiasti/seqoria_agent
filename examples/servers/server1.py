@@ -28,7 +28,6 @@ app = FastXMCP(title="Agentic Tools Server")
 @app.tool()
 def roll_dice(n_dice: int) -> list[int]:
     """Roll *n_dice* 6-sided dice and return the results."""
-
     # Coerce potential string inputs coming from the LLM
     try:
         n_dice = int(n_dice)
@@ -58,7 +57,6 @@ _COLOR_HEX = {
 @app.display_tool()
 def change_color(color: str, show_user: bool = False):
     """Hybrid tool that either returns a HEX code or sends a UI notification."""
-
     hex_code = _COLOR_HEX.get(color.lower())
     if hex_code is None:
         raise XMCPError(code="UNKNOWN_COLOR", detail=f"Unknown colour '{color}'", retryable=False)
@@ -76,7 +74,6 @@ def change_color(color: str, show_user: bool = False):
 @app.display_tool()
 def flash_screen(color: str, times: int = 3, show_user: bool = False):
     """Display-only tool that flashes the screen."""
-
     return DisplayEnvelope(
         type="notification",
         title="Screen flash",
@@ -88,7 +85,6 @@ def flash_screen(color: str, times: int = 3, show_user: bool = False):
 @app.tool()
 def flaky_service() -> str:
     """Randomly fails to demonstrate retryable errors."""
-
     if random.random() < 0.5:
         raise XMCPError(
             code="SERVICE_UNAVAILABLE",
@@ -124,7 +120,6 @@ def dice_sum(n_dice: int) -> int:
     rolled *before* this function runs when both are requested in the same
     turn.
     """
-
     try:
         n_dice = int(n_dice)
     except Exception:

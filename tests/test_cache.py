@@ -1,7 +1,6 @@
 """Unit tests for *xmcp.client.cache* helpers."""
 
 import asyncio
-import time
 
 import pytest
 

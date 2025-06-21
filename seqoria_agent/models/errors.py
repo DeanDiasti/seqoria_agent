@@ -72,4 +72,5 @@ class DependencyError(Exception):
     dependency requirements expressed via the ``depends_on`` annotation cannot
     be satisfied (e.g. because of a cycle like *A → B → A*).
     """
+
     pass 

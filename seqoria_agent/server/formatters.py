@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+import html
+from typing import Any, Sequence
 """XML formatter plug-in system for seqoria_agent tools.
 
 This implements a minimal but extensible mechanism to convert arbitrary Python
@@ -27,9 +28,6 @@ async def get_weather(city: str):
 The formatter will emit only the declared fields in the `<llm_output>` section
 so the LLM sees a concise, deterministic structure.
 """
-
-from typing import Any, List, Sequence
-import html
 
 __all__: list[str] = [
     "BaseXMLFormatter",
@@ -81,7 +79,6 @@ class BaseXMLFormatter:
         NotImplementedError
             If the method is not overridden by a sub-class.
         """
-
         raise NotImplementedError
 
     # --------------------------------------------------------------

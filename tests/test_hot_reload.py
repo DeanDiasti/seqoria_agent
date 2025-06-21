@@ -1,6 +1,5 @@
 """Tests for AIClient.manual hot-reload behaviour."""
 
-import asyncio
 
 import pytest
 

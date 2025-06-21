@@ -1,16 +1,24 @@
 import asyncio
 import json
-import os
+import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Iterable, List, NamedTuple, Optional, Union, Literal, AsyncGenerator, Callable
-import logging
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Union,
+)
+
+from mcp.types import Content
 
 # NOTE: Replaced the heavy MCP StreamableHTTPTransport with a lean internal
 # implementation that supports the subset of methods AIClient needs.
 from .simple_http_transport import SimpleHTTPTransport as _HTTPTransport
-
-from mcp.types import Content
 
 # Try to import structlog for structured logging. Fallback to stdlib logger.
 try:
@@ -20,15 +28,13 @@ except ModuleNotFoundError:  # pragma: no cover – structlog optional
 
 
 # Provider abstraction layer
-from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.schemas import LLMResponse, ToolCall
-from seqoria_agent.providers.errors import LLMError
-
-from seqoria_agent.models.envelope import DisplayEnvelope
-from seqoria_agent.models.errors import ToolRemoteError, CircuitOpenError, DependencyError
 from seqoria_agent.client.parameters import ParameterProvider
-
 from seqoria_agent.models.chunk import ChatChunk
+from seqoria_agent.models.envelope import DisplayEnvelope
+from seqoria_agent.models.errors import CircuitOpenError, DependencyError, ToolRemoteError
+from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.errors import LLMError
+from seqoria_agent.providers.schemas import LLMResponse, ToolCall
 
 # NEW: Synthetic tool names
 THINK_TOOL_NAME = "__think__"
@@ -36,11 +42,13 @@ SUMMARIZE_TOOL_NAME = "__summarize__"
 CLARIFY_TOOL_NAME = "__clarify__"
 
 # Caching utilities
-from .cache import CacheProtocol, DictCache, NullCache, build_cache_key
+from .cache import CacheProtocol, NullCache, build_cache_key
+
 
 # Helper class for managing connections
 class _ClientConnection(NamedTuple):
     """A container for an active FastMCP client and its URL."""
+
     client: _HTTPTransport
     url: str
 
@@ -166,7 +174,9 @@ class AIClient:
         # Server-populated parameter providers (client side) -----------------
         # ------------------------------------------------------------------
 
-        from seqoria_agent.client.parameters import ParameterProvider  # local import to avoid top-level cycles
+        from seqoria_agent.client.parameters import (
+            ParameterProvider,  # local import to avoid top-level cycles
+        )
 
         self._param_providers: list[ParameterProvider] = list(param_providers or [])  # type: ignore[arg-type]
 
@@ -268,7 +278,6 @@ class AIClient:
 
     async def _update_llm_tools(self):
         """Fetch and merge tools from all servers (thread-safe)."""
-
         async with self._tool_lock:
             self._tool_map.clear()
             self._display_tools.clear()
@@ -312,7 +321,7 @@ class AIClient:
                             # Attempt attribute access; fall back to ``model_dump`` if available.
                             is_display = False
                             if hasattr(tool.annotations, "is_display_tool"):
-                                is_display = bool(getattr(tool.annotations, "is_display_tool"))
+                                is_display = bool(tool.annotations.is_display_tool)
                             elif hasattr(tool.annotations, "model_dump"):
                                 try:
                                     is_display = bool(tool.annotations.model_dump().get("is_display_tool"))
@@ -325,7 +334,7 @@ class AIClient:
                             # Try to extract server_populated field list
                             sp_list: list[str] | None = None
                             if hasattr(tool.annotations, "server_populated"):
-                                sp_list = getattr(tool.annotations, "server_populated")
+                                sp_list = tool.annotations.server_populated
                             elif hasattr(tool.annotations, "model_dump"):
                                 try:
                                     sp_list = tool.annotations.model_dump().get("server_populated")
@@ -338,7 +347,7 @@ class AIClient:
                             # Attempt to extract depends_on from pydantic annotation model
                             dep_list: list[str] | None = None
                             if hasattr(tool.annotations, "depends_on"):
-                                dep_list = getattr(tool.annotations, "depends_on")
+                                dep_list = tool.annotations.depends_on
                             elif hasattr(tool.annotations, "model_dump"):
                                 try:
                                     dep_list = tool.annotations.model_dump().get("depends_on")
@@ -456,7 +465,6 @@ class AIClient:
         ToolRemoteError
             If the tool call fails after all retry attempts.
         """
-
         client = self._tool_map.get(name)
         if not client:
             raise ValueError(f"Tool '{name}' not found on any connected server.")
@@ -552,7 +560,6 @@ class AIClient:
         RuntimeError
             If the method is called re-entrantly.
         """
-
         if history is None:  # Defensive (typing promises non-None)
             raise ValueError("'history' must be provided to AIClient.chat().")
 
@@ -562,11 +569,11 @@ class AIClient:
 
         self._current_history = history
 
-        # 1️⃣ Ensure system prompt at index 0
+        # Ensure system prompt at index 0
         if not history or history[0].get("role") != "system":
             history.insert(0, {"role": "system", "content": self._system_prompt})
 
-        # 2️⃣ Append the user message for this turn
+        # Append the user message for this turn
         history.append({"role": "user", "content": user_query})
 
         # ------------------------------------------------------------------
@@ -589,16 +596,16 @@ class AIClient:
 
                 history.append(assistant_msg)
 
-                # 🤔 LLM produced a plain message (no tool calls). We treat this as the final answer and exit.
+                # LLM produced a plain message (no tool calls). We treat this as the final answer and exit.
                 if not llm_resp.tool_calls:
                     self._logger.info("LLM responded directly - conversation resolved without tool calls.")
                     return {"answer": llm_resp.text, "display": None, "history": history}
 
-                # 🛠️ LLM requested one or more tool calls.
+                # LLM requested one or more tool calls.
                 tool_calls = llm_resp.tool_calls
 
                 # ------------------------------------------------------------------
-                # 3. Dependency-aware Tool Execution 🚀
+                # Dependency-aware Tool Execution
                 # ------------------------------------------------------------------
                 try:
                     layers = self._compute_execution_layers(tool_calls)
@@ -639,7 +646,7 @@ class AIClient:
             self._current_history = None
 
     # ------------------------------------------------------------------
-    # 🚀 NEW – Streaming chat API
+    # Streaming chat API
     # ------------------------------------------------------------------
 
     async def stream_chat(
@@ -679,7 +686,6 @@ class AIClient:
         RuntimeError
             If the method is called re-entrantly or if all LLM providers fail.
         """
-
         if history is None:
             raise ValueError("'history' must be provided to AIClient.stream_chat().")
 
@@ -704,7 +710,6 @@ class AIClient:
                 # Select first provider that starts streaming successfully
                 # ----------------------------------------------------------
                 stream_gen: Optional[AsyncGenerator[Union[str, LLMResponse], None]] = None
-                chosen_provider: Optional[BaseProvider] = None
                 last_err: Optional[Exception] = None
 
                 for provider in self._providers:
@@ -714,8 +719,6 @@ class AIClient:
                             tools=self._llm_tools,
                             tool_choice="auto",
                         )
-                        # Try to aclose later; assume success
-                        chosen_provider = provider
                         break
                     except LLMError as e:
                         self._logger.warning(
@@ -833,7 +836,6 @@ class AIClient:
         mirrors the structure returned by :meth:`chat` when a display-only or
         hybrid display path is taken.
         """
-
         func_dict = tool_call.function or {}
         tool_name = func_dict.get("name")
         try:
@@ -849,7 +851,7 @@ class AIClient:
             self._logger.warning("Could not parse arguments for tool", tool=tool_name, error=str(e))
 
         # ------------------------------------------------------------------
-        # 🔄  Client-side server-populated parameter injection -------------
+        # Client-side server-populated parameter injection -------------
         # ------------------------------------------------------------------
 
         server_args: dict[str, Any] = {}
@@ -1005,7 +1007,7 @@ class AIClient:
                     self._logger.warning("Cache set error (ignored)", error=str(e))
 
         # ------------------------------------------------------------------
-        # 🛑 Structured error detection (NEW)
+        # Structured error detection
         # ------------------------------------------------------------------
         error_payload: Optional[dict[str, Any]] = None
         if isinstance(raw_output, str):
@@ -1057,7 +1059,6 @@ class AIClient:
         the *last* error is raised inside a :class:`RuntimeError` to preserve
         backwards-compatible semantics.
         """
-
         last_err: Optional[Exception] = None
 
         for provider in self._providers:
@@ -1098,25 +1099,24 @@ class AIClient:
                 )
                 last_err = e
                 continue
-            except Exception as e:  # pragma: no cover – unexpected
+            except Exception:  # pragma: no cover – unexpected
                 # Don't hide non-LLM errors; re-raise immediately.
                 raise
 
         raise RuntimeError(f"All LLM providers failed. Last error: {last_err}")
 
     # ------------------------------------------------------------------
-    # NEW – Structured error XML parsing helper
+    # Structured error XML parsing helper
     # ------------------------------------------------------------------
     @staticmethod
     def _extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D401
         """Parse *xml_str* and return error payload dict or ``None`` if not an error."""
-
         if "<error" not in xml_str:
             return None
 
         try:
-            import xml.etree.ElementTree as ET
             import json as _json
+            import xml.etree.ElementTree as ET
 
             root = ET.fromstring(xml_str.strip())
             error_el = root.find("error")
@@ -1147,9 +1147,7 @@ class AIClient:
             # Malformed XML – ignore
             return None
 
-    # ------------------------------------------------------------------
-    # 🚧  Placeholder – Conversation summarisation helper
-    # ------------------------------------------------------------------
+
     async def _summarize_history(self) -> str:
         """Return a lightweight summary of the current conversation history.
 
@@ -1160,7 +1158,6 @@ class AIClient:
         prevents attribute errors until a more sophisticated approach is
         re-implemented.
         """
-
         if not self._current_history:
             return "(no history)"
 
@@ -1184,14 +1181,12 @@ class AIClient:
         This method connects to all configured servers, fetches their current
         list of tools, and updates the client's internal tool registry.
         """
-
         await self._update_llm_tools()
 
     # Background refresher task -----------------------------------------
 
     async def _periodic_refresh(self) -> None:
         """Run :pyfunc:`refresh_tools` every :attr:`_refresh_interval` seconds."""
-
         try:
             while True:
                 await asyncio.sleep(self._refresh_interval)
@@ -1215,8 +1210,8 @@ class AIClient:
         predecessor is not part of *tool_calls* we assume it was executed in
         a previous turn and treat it as already satisfied.
         """
-
         from collections import defaultdict, deque
+
         from seqoria_agent.models.errors import DependencyError
 
         call_map: dict[str, ToolCall] = {

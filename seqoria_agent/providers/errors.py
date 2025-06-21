@@ -2,6 +2,7 @@
 
 class LLMError(Exception):
     """Base class for all LLM-related errors."""
+
     def __init__(self, message="An error occurred", provider=None):
         self.provider = provider
         super().__init__(message)

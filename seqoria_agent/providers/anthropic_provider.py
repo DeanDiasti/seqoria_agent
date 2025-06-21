@@ -1,35 +1,37 @@
-import os
-from dotenv import load_dotenv
-import time
-from typing import Dict, Optional, Any, List, AsyncGenerator, Union
-import anthropic
 import asyncio
-import random # Import random for jitter in backoff
+import os
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+
+import anthropic
 
 # Import specific exceptions from the anthropic library for better error handling
-from anthropic import (APIConnectionError, 
-                      RateLimitError, 
-                      APIStatusError, 
-                      BadRequestError, 
-                      AuthenticationError,
-                      NotFoundError,
-                      InternalServerError,
-                      PermissionDeniedError,
-                      APIError)
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    AuthenticationError,
+    BadRequestError,
+    InternalServerError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+)
+from dotenv import load_dotenv
+
+from .base_provider import BaseProvider
+from .errors import (
+    ConnectionError,
+    ContentFilterError,
+    ContextLengthExceededError,
+    EnvironmentError,
+    InvalidRequestError,
+    LLMError,
+    ModelNotFoundError,
+    QuotaExceededError,
+    ServerError,
+)
 
 # Use a relative import since we're in the same directory
-from .schemas import LLMResponse, ToolCall, LLMUsage
-from .errors import (LLMError, 
-                    EnvironmentError, 
-                    ConnectionError, 
-                    ModelNotFoundError, 
-                    ContextLengthExceededError, 
-                    ContentFilterError, 
-                    MaxRetriesExceededError, 
-                    InvalidRequestError, 
-                    QuotaExceededError, 
-                    ServerError)
-from .base_provider import BaseProvider
+from .schemas import LLMResponse, LLMUsage, ToolCall
 
 load_dotenv()
 
@@ -68,11 +70,11 @@ class AnthropicProvider(BaseProvider):
                     - timeout (float): Request timeout in seconds (default: 30.0)
                     - max_retries (int): Maximum number of retries for retryable errors (default: 3)
         
-        Raises:
+        Raises
+        ------
             EnvironmentError: If ANTHROPIC_API_KEY environment variable is not set.
             ConnectionError: If the async client cannot be initialized.
         """
-
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise EnvironmentError(message="Anthropic API key not found in environment variables",
                                    missing_vars=["ANTHROPIC_API_KEY"])
@@ -113,7 +115,8 @@ class AnthropicProvider(BaseProvider):
         Args:
             **kwargs: Parameter overrides provided to async_generate/async_stream.
             
-        Returns:
+        Returns
+        -------
             Dictionary of parameters ready for the Anthropic API request.
         """
         params = self.default_params.copy()
@@ -128,7 +131,8 @@ class AnthropicProvider(BaseProvider):
         Args:
             error: Original error from Anthropic client.
             
-        Returns:
+        Returns
+        -------
             Mapped error instance inheriting from LLMError.
         """
         # Check specific Anthropic error types first
@@ -143,9 +147,12 @@ class AnthropicProvider(BaseProvider):
                  try:
                     parts = error_message.split(sep=' ')
                     for i, part in enumerate(iterable=parts):
-                        if part == 'tokens': tokens = int(parts[i-1])
-                        if part == 'limit': max_tokens = int(parts[i-1])
-                 except (ValueError, IndexError): pass
+                        if part == 'tokens': 
+                            tokens = int(parts[i-1])
+                        if part == 'limit': 
+                            max_tokens = int(parts[i-1])
+                 except (ValueError, IndexError):
+                     pass
                  return ContextLengthExceededError(model_id=self.model_id, tokens=tokens, max_tokens=max_tokens)
             elif "content_policy_violation" in error_message or "safety" in error_message.lower():
                  return ContentFilterError(provider="Anthropic", filter_reason=error_message)
@@ -205,14 +212,16 @@ class AnthropicProvider(BaseProvider):
                         - {"type": "tool", "name": "tool_name"}: Force Claude to use a specific tool
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
             
-        Returns:
+        Returns
+        -------
             LLMResponse: Response containing:
                 - text (str | None): Generated text string. None if generation fails or is empty.
                 - usage (LLMUsage): Token usage information
                 - tool_calls (List[ToolCall] | None): List of tool calls made by the model, if any.
                 - stop_reason (str): Reason why generation stopped ("end_turn", "tool_use", etc.)
             
-        Raises:
+        Raises
+        ------
             Various LLMError subclasses depending on the API response or connection issues.
         """
         params = self._prepare_params(**kwargs)
@@ -287,7 +296,8 @@ class AnthropicProvider(BaseProvider):
             tool_choice: Optional tool choice configuration.
             **kwargs: Generation parameters overriding defaults.
             
-        Yields:
+        Yields
+        ------
             str: Text chunks of the generated completion.
             LLMResponse: Final LLMResponse with "text" (full content), "usage" info, "tool_calls", and "stop_reason".
                 Example: {
@@ -297,7 +307,8 @@ class AnthropicProvider(BaseProvider):
                     "stop_reason": "tool_use"
                 }
 
-        Raises:
+        Raises
+        ------
             Same exceptions as async_generate() method, potentially during iteration.
         """
         params = self._prepare_params(**kwargs)

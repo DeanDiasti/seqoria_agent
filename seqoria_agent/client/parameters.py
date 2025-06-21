@@ -8,7 +8,7 @@ know or set.  AIClient will iterate through the list of providers until a
 non-None value is returned.
 """
 
-from typing import Any, Protocol, TypedDict, Optional, List
+from typing import Any, Optional, Protocol, TypedDict
 
 __all__: list[str] = [
     "ParamContext",

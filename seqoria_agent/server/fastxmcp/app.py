@@ -2,18 +2,18 @@ from __future__ import annotations
 
 """FastXMCP FastAPI application."""
 
-from typing import Any, Callable, Dict
+import functools as _ft
 import inspect
 import itertools
-import functools as _ft
+from typing import Any, Callable, Dict
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from seqoria_agent.server.formatters import DeclarativeXMLFormatter  # formatter helpers
 from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.models.errors import XMCPError
+from seqoria_agent.server.formatters import DeclarativeXMLFormatter  # formatter helpers
 
 __all__ = ["FastXMCP"]
 
@@ -63,7 +63,6 @@ class FastXMCP(FastAPI):
             or XML). Invalid payloads are transformed into a structured error
             envelope to keep the protocol stable.
         """
-
         super().__init__(title=title, version=version, **kw)
 
         self._strict_mode = strict_mode
@@ -85,7 +84,7 @@ class FastXMCP(FastAPI):
         # --------------------------------------------------------------
 
         def _json_schema_for_type(tp):  # noqa: ANN001
-            from typing import get_origin, get_args
+            from typing import get_origin
 
             origin = get_origin(tp) or tp
             mapping = {
@@ -288,14 +287,12 @@ class FastXMCP(FastAPI):
 
     def _wrap_tool_with_error_handling(self, func: Callable, tool_name: str, formatter_cls: Any | None = None):  # noqa: ANN001
         """Return a wrapper that adds XML wrapping & structured error handling."""
-
         formatter_instance = None
         if formatter_cls is not None:
             formatter_instance = formatter_cls() if isinstance(formatter_cls, type) else formatter_cls
 
         self._tool_formatters[tool_name] = formatter_instance
 
-        from seqoria_agent.models.envelope import DisplayEnvelope  # local import to avoid cycle
 
         async def _async_impl(*args: Any, **kwargs: Any) -> str:  # noqa: ANN401
             try:
@@ -322,7 +319,6 @@ class FastXMCP(FastAPI):
     # ------------------------------------------------------------------
     def _validate_payload(self, value: Any):  # noqa: D401, ANN001
         """Strict-mode payload validation copied from legacy qutie."""
-
         from seqoria_agent.models.envelope import DisplayEnvelope  # local import
 
         if isinstance(value, DisplayEnvelope):
@@ -365,13 +361,14 @@ class FastXMCP(FastAPI):
             f"<tool_response tool_name=\"{tool_name}\">\n"
             f"  <error code=\"{exc.code}\" retryable=\"{'true' if exc.retryable else 'false'}\">\n"
             f"    <![CDATA[{cddata}]]>" + meta_block + "\n  </error>\n"
-            f"</tool_response>"
+            "</tool_response>"
         )
 
     # ------------------------------------------------------------------
     def _serialize_success(self, tool_name: str, value: Any, formatter: Any | None):  # noqa: ANN001
-        from seqoria_agent.models.envelope import DisplayEnvelope  # local
         import json as _json
+
+        from seqoria_agent.models.envelope import DisplayEnvelope  # local
 
         if isinstance(value, str) and value.lstrip().startswith("<tool_response"):
             return value
@@ -408,7 +405,6 @@ class FastXMCP(FastAPI):
         if the LLM/client tries to supply a value for a protected field and
         *strict* is True, we raise ``XMCPError``. Otherwise, we overwrite.
         """
-
         injected: dict[str, Any] = dict(arguments)  # shallow copy
 
         for param in info.server_params:
@@ -445,7 +441,6 @@ class FastXMCP(FastAPI):
         This mirrors FastAPI's recommended production entry-point but avoids
         repetitive boilerplate in small example scripts.
         """
-
         import uvicorn
 
         uvicorn.run(self, host=host, port=port, **uvicorn_kwargs)
@@ -461,7 +456,6 @@ class FastXMCP(FastAPI):
         ``(request, tool_name, param_name)``.  The first provider that returns
         a non-None value wins.
         """
-
         self._param_providers.append(fn)
         return fn
 

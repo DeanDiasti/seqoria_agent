@@ -4,8 +4,8 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from seqoria_agent.server import XMCP
 from seqoria_agent.models.errors import XMCPError
+from seqoria_agent.server import XMCP
 
 
 def _extract_error_detail(xml_str: str):

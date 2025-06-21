@@ -7,11 +7,11 @@ This server provides simple utility tools:
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
+from datetime import datetime
 
-from seqoria_agent.server.fastxmcp import FastXMCP
 from seqoria_agent.models.errors import XMCPError
+from seqoria_agent.server.fastxmcp import FastXMCP
 
 # ------------------------------------------------------------------
 # Application instance
@@ -30,7 +30,6 @@ def current_time() -> str:
     str
         The current time in "YYYY-MM-DD HH:MM:SS" format.
     """
-
     logger.info("Getting current time")
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -56,7 +55,6 @@ def divide(a: float, b: float) -> float:
     XMCPError
         If `b` is zero, a structured error with code "DIV_BY_ZERO" is raised.
     """
-
     try:
         a = float(a)
         b = float(b)
@@ -86,7 +84,6 @@ def timestamped_divide(a: float, b: float) -> str:
     Demonstrates a simple dependency so that `current_time` is guaranteed to
     execute before this tool when both are requested together.
     """
-
     try:
         a = float(a)
         b = float(b)

@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import json
 import time
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Dict, Protocol
 
 __all__: list[str] = [
     "CacheProtocol",
@@ -170,7 +170,6 @@ def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str
         Optional namespace prefix for multi-tenant deployments. When given,
         the resulting key is ``tenant:{tenant_id}:tool:{tool_name}:{hash}``.
     """
-
     canonical_json = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
     args_hash = hashlib.sha256(canonical_json.encode()).hexdigest()
 

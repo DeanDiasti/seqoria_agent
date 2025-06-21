@@ -9,7 +9,6 @@ This sub-package provides the `FastXMCP` runtime::
 
 from .app import FastXMCP  # noqa: F401
 
-
 __all__: list[str] = [
     "FastXMCP",
 ] 

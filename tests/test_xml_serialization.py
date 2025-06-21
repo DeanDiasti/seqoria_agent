@@ -2,11 +2,9 @@
 
 import xml.etree.ElementTree as ET
 
-import pytest
-
+from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.server import XMCP
 from seqoria_agent.server.formatters import DeclarativeXMLFormatter
-from seqoria_agent.models.envelope import DisplayEnvelope
 
 
 class _KeepFormatter(DeclarativeXMLFormatter):

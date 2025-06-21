@@ -19,8 +19,6 @@ dependencies = [
     "openai>=1.25.0",
     "structlog>=24.1.0",
     "redis>=5.0.1",
-    "build>=1.2.2.post1",
-    "twine>=6.1.0",
     "fastapi>=0.115.13",
 ]
 
@@ -49,10 +47,15 @@ build-backend = "hatchling.build"
 [tool.ruff]
 line-length = 100
 select = ["E", "F", "I", "N", "D", "B"]
-ignore = ["D401", "ANN101", "ANN001", "D205", "D212"]
+ignore = [
+    "D401", "ANN101", "ANN001", "D205", "D212",  
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D202", "D407", "D406", "D204",
+    "E501", "I001",
+    "B904", "N814", "F541", "E402", "N806"
+]
 
 [tool.ruff.pydocstyle]
 convention = "numpy"
 
 [tool.ruff.isort]
-known-first-party = ["xmcp"]
+known-first-party = ["seqoria_agent"]

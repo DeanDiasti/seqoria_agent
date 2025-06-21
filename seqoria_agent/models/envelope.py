@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from typing import Any, Dict, List, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -66,5 +65,4 @@ class DisplayEnvelope(BaseModel):
     # ------------------------------------------------------------------
     def dict_for_transport(self) -> Dict[str, Any]:
         """Return a JSON-serialisable dict (alias for ``model_dump``)."""
-
         return self.model_dump() 

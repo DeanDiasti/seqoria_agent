@@ -1,10 +1,9 @@
-import asyncio
 import pytest
 
 from seqoria_agent.client.client import AIClient
+from seqoria_agent.models.errors import DependencyError
 from seqoria_agent.providers.base_provider import BaseProvider
 from seqoria_agent.providers.schemas import ToolCall
-from seqoria_agent.models.errors import DependencyError
 
 
 class DummyProvider(BaseProvider):
@@ -33,7 +32,6 @@ def _tc(name: str) -> ToolCall:
 
 def test_topological_order(ai_client):
     """A -> B -> C should yield three sequential layers."""
-
     ai_client._tool_deps = {  # type: ignore[attr-defined]
         "b": {"a"},
         "c": {"b"},
@@ -45,7 +43,6 @@ def test_topological_order(ai_client):
 
 def test_parallel_layers(ai_client):
     """A and B independent, C depends on both → two layers: [A,B] then [C]."""
-
     ai_client._tool_deps = {
         "c": {"a", "b"},
     }
@@ -58,7 +55,6 @@ def test_parallel_layers(ai_client):
 
 def test_cycle_detection(ai_client):
     """A<->B cycle should raise DependencyError."""
-
     ai_client._tool_deps = {
         "a": {"b"},
         "b": {"a"},

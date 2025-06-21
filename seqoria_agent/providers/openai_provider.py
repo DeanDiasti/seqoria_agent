@@ -1,36 +1,40 @@
-import os
-from dotenv import load_dotenv
-from typing import Dict, Optional, Any, List, AsyncGenerator, Union
-import openai
 import asyncio
-import random # Import random for jitter in backoff
+import os
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+
+import openai
+from dotenv import load_dotenv
 
 # Import specific exceptions from the openai library for better error handling
-from openai import (APIConnectionError, 
-                    RateLimitError, 
-                    APIStatusError, 
-                    BadRequestError, 
-                    AuthenticationError,
-                    NotFoundError,
-                    ConflictError,
-                    InternalServerError,
-                    PermissionDeniedError,
-                    UnprocessableEntityError)
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    AuthenticationError,
+    BadRequestError,
+    ConflictError,
+    InternalServerError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+    UnprocessableEntityError,
+)
 from openai.types.chat import ChatCompletionChunk
 
-# Use a relative import since we're in the same directory
-from .schemas import LLMResponse, ToolCall, LLMUsage
-from .errors import (LLMError, 
-                    EnvironmentError, 
-                    ConnectionError, 
-                    ModelNotFoundError, 
-                    ContextLengthExceededError, 
-                    ContentFilterError, 
-                    MaxRetriesExceededError, 
-                    InvalidRequestError, 
-                    QuotaExceededError, 
-                    ServerError)
 from .base_provider import BaseProvider
+from .errors import (
+    ConnectionError,
+    ContentFilterError,
+    ContextLengthExceededError,
+    EnvironmentError,
+    InvalidRequestError,
+    LLMError,
+    ModelNotFoundError,
+    QuotaExceededError,
+    ServerError,
+)
+
+# Use a relative import since we're in the same directory
+from .schemas import LLMResponse, LLMUsage, ToolCall
 
 load_dotenv()
 
@@ -69,11 +73,11 @@ class OpenAIProvider(BaseProvider):
                     - max_retries (int): Maximum number of retries for retryable errors (default: 3)
                     - base_url (str): Custom OpenAI-compatible endpoint URL.
         
-        Raises:
+        Raises
+        ------
             EnvironmentError: If OPENAI_API_KEY environment variable is not set.
             ConnectionError: If the async client cannot be initialized.
         """
-
         if not os.environ.get("OPENAI_API_KEY"):
             raise EnvironmentError(message="OpenAI API key not found in environment variables",
                                    missing_vars=["OPENAI_API_KEY"])
@@ -114,7 +118,8 @@ class OpenAIProvider(BaseProvider):
                                "presence_penalty": 0.0}
         
         # Update default_params with any valid query kwargs provided in __init__
-        valid_query_keys = self.default_params.keys() | {"stop", "seed", "response_format", "user", "logit_bias", "logprobs", "top_logprobs"} # Add other valid keys
+        valid_query_keys = self.default_params.keys() | {"stop", "seed", "response_format", "user", 
+                                                         "logit_bias", "logprobs", "top_logprobs"} # Add other valid keys
         for key, value in kwargs.items():
             if key in valid_query_keys:
                 self.default_params[key] = value
@@ -127,7 +132,8 @@ class OpenAIProvider(BaseProvider):
         Args:
             **kwargs: Parameter overrides provided to async_generate/async_stream.
             
-        Returns:
+        Returns
+        -------
             Dictionary of parameters ready for the OpenAI API request.
         """
         params = self.default_params.copy()
@@ -142,7 +148,8 @@ class OpenAIProvider(BaseProvider):
         Args:
             error: Original error from OpenAI client.
             
-        Returns:
+        Returns
+        -------
             Mapped error instance inheriting from LLMError.
         """
         # Check specific OpenAI error types first
@@ -157,9 +164,12 @@ class OpenAIProvider(BaseProvider):
                  try:
                     parts = error_message.split(sep=' ')
                     for i, part in enumerate(iterable=parts):
-                        if part == 'tokens': tokens = int(x=parts[i-1])
-                        if part == 'limit': max_tokens = int(x=parts[i-1])
-                 except (ValueError, IndexError): pass
+                        if part == 'tokens': 
+                            tokens = int(x=parts[i-1])
+                        if part == 'limit': 
+                            max_tokens = int(x=parts[i-1])
+                 except (ValueError, IndexError): 
+                    pass
                  return ContextLengthExceededError(model_id=self.model_id, tokens=tokens, max_tokens=max_tokens)
             elif "content_policy_violation" in error_message:
                  return ContentFilterError(provider="OpenAI", filter_reason=error_message)
@@ -211,7 +221,8 @@ class OpenAIProvider(BaseProvider):
             tool_choice: Dictionary specifying the tool choice (e.g., "auto", "none", or {"type": "function", "function": {"name": "..."}}).
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
             
-        Returns:
+        Returns
+        -------
             LLMResponse: Response containing:
                 - text (str | None): Generated text string. None if generation fails or is empty.
                 - usage (LLMUsage): Token usage information
@@ -219,10 +230,10 @@ class OpenAIProvider(BaseProvider):
                     [{"id": "call_123", "type": "function", "function": {"name": "...", "arguments": "..."}}]
                 - stop_reason (str | None): Reason why generation stopped
             
-        Raises:
+        Raises
+        ------
             Various LLMError subclasses depending on the API response or connection issues.
         """
-
         params = self._prepare_params(**kwargs)
         
         # Add tools and tool_choice to params if provided
@@ -298,15 +309,16 @@ class OpenAIProvider(BaseProvider):
             tool_choice: Dictionary specifying the tool choice (e.g., "auto", "none", or {"type": "function", "function": {"name": "..."}}).
             **kwargs: Generation parameters overriding defaults.
             
-        Yields:
+        Yields
+        ------
             str: Text chunks of the generated completion.
             LLMResponse: Final LLMResponse with "text" (full content), "usage" info, and "tool_calls".
                 Example: LLMResponse(model_id="gpt-4o", text="Full response", tool_calls=[...], usage=LLMUsage(...), stop_reason="...")
 
-        Raises:
+        Raises
+        ------
             Same exceptions as async_generate() method, potentially during iteration.
         """
-
         params = self._prepare_params(**kwargs)
         
         # Add tools and tool_choice to params if provided
