@@ -60,14 +60,23 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
-  - Server (XMCP): servers.md
-  - Client (AIClient): client.md
-  - DisplayEnvelope: display_envelope.md
+  - Guides:
+    - Full Overview: guides/overview.md
+    - Using AIClient: guides/ai_client.md
+    - Server Recipes: guides/server_recipes.md
+    - Testing & CI: guides/testing.md
+    - Server (Legacy): servers.md
+  - Topics:
+    - Streaming Responses: topics/streaming.md
+    - Caching: topics/caching.md
+    - Meta-Tools: topics/meta_tools.md
+    - Structured Error Handling: topics/error_handling.md
+    - DisplayEnvelope: display_envelope.md
   - API Reference:
-    - reference/client.md
-    - reference/server.md
-    - reference/models.md
-    - reference/providers.md
+    - Client: reference/client.md
+    - Server: reference/server.md
+    - Models: reference/models.md
+    - Providers: reference/providers.md
   - Coming Soon:
     - Token Accounting: future/token_accounting.md
     - Multi-Tenancy: future/multi_tenancy.md

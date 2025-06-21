@@ -18,7 +18,7 @@ from xmcp.models.errors import XMCPError
 # ------------------------------------------------------------------
 
 app = FastXMCP(title="Utility Server")
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name=__name__)
 
 
 @app.tool()
@@ -57,6 +57,12 @@ def divide(a: float, b: float) -> float:
         If `b` is zero, a structured error with code "DIV_BY_ZERO" is raised.
     """
 
+    try:
+        a = float(a)
+        b = float(b)
+    except Exception:
+        raise XMCPError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
+
     if b == 0:
         raise XMCPError(
             code="DIV_BY_ZERO",
@@ -66,6 +72,34 @@ def divide(a: float, b: float) -> float:
         )
 
     return a / b
+
+
+# ------------------------------------------------------------------
+# New tool with dependency on current_time -------------------------
+# ------------------------------------------------------------------
+
+
+@app.tool(depends_on=["current_time"])
+def timestamped_divide(a: float, b: float) -> str:
+    """Divide *a* by *b* and attach the server timestamp.
+
+    Demonstrates a simple dependency so that `current_time` is guaranteed to
+    execute before this tool when both are requested together.
+    """
+
+    try:
+        a = float(a)
+        b = float(b)
+    except Exception:
+        raise XMCPError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
+
+    result = divide(a, b)
+    ts = current_time()
+    return f"{ts} → {a} / {b} = {result}"
+
+
+# Provide user_id via request header on this server too
+
 
 
 if __name__ == "__main__":

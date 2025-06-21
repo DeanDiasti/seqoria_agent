@@ -98,8 +98,19 @@ class SimpleHTTPTransport:
             tools.append(t)
         return tools
 
-    async def call_tool(self, *, name: str, arguments: dict[str, Any] | None = None) -> List[Any]:
-        params = {"name": name, "arguments": arguments or {}}
+    async def call_tool(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        server_args: dict[str, Any] | None = None,
+    ) -> List[Any]:
+        params = {
+            "name": name,
+            "arguments": arguments or {},
+        }
+        if server_args:
+            params["serverArgs"] = server_args
         result = await self._rpc(method="tools/call", params=params)
         # ``result`` is usually a dict {"contents": [...]} according to MCP
         contents = result

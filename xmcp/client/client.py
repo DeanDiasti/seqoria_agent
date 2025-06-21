@@ -25,7 +25,8 @@ from xmcp.providers.schemas import LLMResponse, ToolCall
 from xmcp.providers.errors import LLMError
 
 from xmcp.models.envelope import DisplayEnvelope
-from xmcp.models.errors import ToolRemoteError, CircuitOpenError
+from xmcp.models.errors import ToolRemoteError, CircuitOpenError, DependencyError
+from xmcp.client.parameters import ParameterProvider
 
 from xmcp.models.chunk import ChatChunk
 
@@ -80,6 +81,8 @@ class AIClient:
         on_error: Optional[Callable[[dict, list | None], None]] = None,
         on_display: Optional[Callable[[dict, list | None], None]] = None,
         refresh_interval: int | float = 0,
+        param_providers: list["ParameterProvider"] | None = None,
+        allow_override: bool = False,
         **kwargs: Any,
     ):
         """Initialise the AIClient.
@@ -105,6 +108,10 @@ class AIClient:
         refresh_interval : int | float, optional
             Interval in seconds to automatically refresh the tool registry from
             the servers. If 0, auto-refresh is disabled, by default 0.
+        param_providers : list["ParameterProvider"] | None, optional
+            List of parameter providers to use for populating tool parameters.
+        allow_override : bool, optional
+            Whether to allow overriding server-populated parameters with client-side defaults.
         **kwargs : Any
             Additional keyword arguments are passed to the underlying
             `fastmcp.Client` and can also be used to configure client features
@@ -166,8 +173,20 @@ class AIClient:
         self._connections: list[_ClientConnection] = []
         self._tool_map: dict[str, _HTTPTransport] = {}
         self._llm_tools: list[dict] = []
+        # Mapping tool_name -> list[str] of server-populated parameters
+        self._server_params: dict[str, list[str]] = {}
         # Track tools that can trigger an immediate display response
         self._display_tools: set[str] = set()
+
+        # ------------------------------------------------------------------
+        # Server-populated parameter providers (client side) -----------------
+        # ------------------------------------------------------------------
+
+        from xmcp.client.parameters import ParameterProvider  # local import to avoid top-level cycles
+
+        self._param_providers: list[ParameterProvider] = list(param_providers or [])  # type: ignore[arg-type]
+
+        self._allow_override = bool(allow_override)
 
         # ------------------------------------------------------------------
         # Default system prompt – unchanged from original implementation
@@ -208,6 +227,9 @@ class AIClient:
         self._refresh_interval: float = float(refresh_interval)
         self._refresher_task: Optional[asyncio.Task] = None
         self._tool_lock = asyncio.Lock()
+
+        # Added for dependency graph support
+        self._tool_deps: dict[str, set[str]] = {}
 
     async def __aenter__(self):
         connect_tasks = [self._connect_to_server(url) for url in self._urls]
@@ -266,6 +288,8 @@ class AIClient:
         async with self._tool_lock:
             self._tool_map.clear()
             self._display_tools.clear()
+            # Reset dependency mapping each time we refresh the tool catalogue
+            self._tool_deps.clear()
 
         tool_results = await asyncio.gather(
             *(conn.client.list_tools() for conn in self._connections),
@@ -273,7 +297,7 @@ class AIClient:
         )
 
         llm_tools = []
-        for i, result in enumerate(iterable=tool_results):
+        for i, result in enumerate(tool_results):
             conn = self._connections[i]
             if isinstance(result, Exception):
                 self._logger.warning("Could not list tools from server", url=conn.url, error=str(result))
@@ -291,6 +315,15 @@ class AIClient:
                         if isinstance(tool.annotations, dict):
                             if tool.annotations.get("is_display_tool"):
                                 self._display_tools.add(tool.name)
+
+                            sp = tool.annotations.get("server_populated") or []
+                            if isinstance(sp, list):
+                                self._server_params[tool.name] = list(sp)
+
+                            # NEW – dependency graph annotation
+                            dep = tool.annotations.get("depends_on") or []
+                            if isinstance(dep, list):
+                                self._tool_deps[tool.name] = set(dep)
                         else:
                             # Attempt attribute access; fall back to ``model_dump`` if available.
                             is_display = False
@@ -304,6 +337,32 @@ class AIClient:
 
                             if is_display:
                                 self._display_tools.add(tool.name)
+
+                            # Try to extract server_populated field list
+                            sp_list: list[str] | None = None
+                            if hasattr(tool.annotations, "server_populated"):
+                                sp_list = getattr(tool.annotations, "server_populated")
+                            elif hasattr(tool.annotations, "model_dump"):
+                                try:
+                                    sp_list = tool.annotations.model_dump().get("server_populated")
+                                except Exception:
+                                    sp_list = None
+
+                            if sp_list:
+                                self._server_params[tool.name] = list(sp_list)
+
+                            # Attempt to extract depends_on from pydantic annotation model
+                            dep_list: list[str] | None = None
+                            if hasattr(tool.annotations, "depends_on"):
+                                dep_list = getattr(tool.annotations, "depends_on")
+                            elif hasattr(tool.annotations, "model_dump"):
+                                try:
+                                    dep_list = tool.annotations.model_dump().get("depends_on")
+                                except Exception:
+                                    dep_list = None
+
+                            if dep_list:
+                                self._tool_deps[tool.name] = set(dep_list)
 
                     # Format for OpenAI tool-calling
                     llm_tools.append({
@@ -370,8 +429,15 @@ class AIClient:
 
         self._logger.info("AI Client has discovered tools", count=len(llm_tools))
 
+        # Done – dependency info has been captured in ``self._tool_deps``
+
     async def call_mcp_tool(
-        self, name: str, arguments: dict[str, Any], **kwargs
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        server_args: dict[str, Any] | None = None,
+        **kwargs,
     ) -> list[Content]:
         """Call a specific tool on an MCP server with retry and circuit-breaker logic.
 
@@ -385,6 +451,8 @@ class AIClient:
             The name of the tool to call.
         arguments : dict[str, Any]
             The arguments to pass to the tool.
+        server_args : dict[str, Any] | None, optional
+            Additional arguments to pass to the tool on the server side.
         **kwargs : Any
             Additional keyword arguments to pass to the `fastmcp.Client.call_tool`
             method.
@@ -430,7 +498,12 @@ class AIClient:
         while attempt < max_attempts:
             attempt += 1
             try:
-                result = await client.call_tool(name=name, arguments=arguments, **kwargs)
+                result = await client.call_tool(
+                    name=name,
+                    arguments=arguments,
+                    server_args=server_args or {},
+                    **kwargs,
+                )
                 # Success – clear failure count
                 self._fail_log[server_url] = 0
                 return result
@@ -541,28 +614,34 @@ class AIClient:
                 tool_calls = llm_resp.tool_calls
 
                 # ------------------------------------------------------------------
-                # 3. PARALLEL Tool Execution 🚀
+                # 3. Dependency-aware Tool Execution 🚀
                 # ------------------------------------------------------------------
-                coros = [self._run_tool(tool_call=tc) for tc in tool_calls]
-                results = await asyncio.gather(*coros, return_exceptions=False)
+                try:
+                    layers = self._compute_execution_layers(tool_calls)
+                except DependencyError as de:
+                    # Surface dependency errors to user & stop.
+                    self._logger.error("Dependency resolution failed", error=str(de))
+                    return {"answer": f"[DependencyError] {de}", "display": None, "history": history}
 
-                # Append results in original order to keep ID alignment
                 early_exit_payload: Optional[dict[str, Any]] = None
-                for (_, history_entry, maybe_payload) in results:
-                    # ``history_entry`` may be None if run_tool already short-circuited.
-                    if history_entry:
-                        history.append(history_entry)
 
-                    # Capture the first early-exit payload (display-only/hybrid)
-                    if early_exit_payload is None and maybe_payload is not None:
-                        early_exit_payload = maybe_payload
+                for layer in layers:
+                    coros = [self._run_tool(tc) for tc in layer]
+                    results = await asyncio.gather(*coros, return_exceptions=False)
 
-                if early_exit_payload is not None:
-                    # Inject up-to-date history before returning
-                    early_exit_payload["history"] = history
-                    return early_exit_payload
+                    for (_, history_entry, maybe_payload) in results:
+                        if history_entry:
+                            history.append(history_entry)
 
-                # → Loop continues with updated history (LLM will see all tool outputs)
+                        if early_exit_payload is None and maybe_payload is not None:
+                            early_exit_payload = maybe_payload
+
+                    # Early-exit short-circuits remaining layers
+                    if early_exit_payload is not None:
+                        early_exit_payload["history"] = history
+                        return early_exit_payload
+
+                # → Loop continues if no early exit – LLM will see all tool outputs
 
             # Safety guard hit – give up gracefully
             self._logger.warning("Reached max_turns without a final answer.")
@@ -717,26 +796,33 @@ class AIClient:
                 if not final_response.tool_calls:
                     return
 
-                # Execute requested tools ------------------------------------
-                coros = [self._run_tool(tc) for tc in final_response.tool_calls]
-                results = await asyncio.gather(*coros, return_exceptions=False)
+                # Execute requested tools with dependency graph --------------
+                try:
+                    layers = self._compute_execution_layers(final_response.tool_calls)
+                except DependencyError as de:
+                    self._logger.error("Dependency resolution failed (stream mode)", error=str(de))
+                    yield ChatChunk(type="llm_delta", text=f"[DependencyError] {de}")
+                    return
 
                 early_exit_payload: Optional[dict[str, Any]] = None
-                for (_, history_entry, maybe_payload) in results:
-                    if history_entry:
-                        history.append(history_entry)
-                    if early_exit_payload is None and maybe_payload is not None:
-                        early_exit_payload = maybe_payload
 
-                if early_exit_payload is not None:
-                    # Emit display envelope immediately
-                    if early_exit_payload.get("display") is not None:
-                        yield ChatChunk(type="tool_display", envelope=early_exit_payload["display"])
+                for layer in layers:
+                    coros = [self._run_tool(tc) for tc in layer]
+                    results = await asyncio.gather(*coros, return_exceptions=False)
 
-                    if early_exit_payload.get("answer"):
-                        yield ChatChunk(type="llm_delta", text=early_exit_payload["answer"])
+                    for (_, history_entry, maybe_payload) in results:
+                        if history_entry:
+                            history.append(history_entry)
 
-                    return  # Generator ends after early-exit
+                        if early_exit_payload is None and maybe_payload is not None:
+                            early_exit_payload = maybe_payload
+
+                    if early_exit_payload is not None:
+                        if early_exit_payload.get("display") is not None:
+                            yield ChatChunk(type="tool_display", envelope=early_exit_payload["display"])
+                        if early_exit_payload.get("answer"):
+                            yield ChatChunk(type="llm_delta", text=early_exit_payload["answer"])
+                        return
 
                 # → Loop continues with updated history
 
@@ -777,6 +863,49 @@ class AIClient:
         except Exception as e:
             arguments = {}
             self._logger.warning("Could not parse arguments for tool", tool=tool_name, error=str(e))
+
+        # ------------------------------------------------------------------
+        # 🔄  Client-side server-populated parameter injection -------------
+        # ------------------------------------------------------------------
+
+        server_args: dict[str, Any] = {}
+
+        spp_fields = self._server_params.get(tool_name, [])
+        if spp_fields:
+            from xmcp.client.parameters import ParamContext
+
+            # Remove AI-provided values when override disallowed
+            if not self._allow_override:
+                for fld in spp_fields:
+                    arguments.pop(fld, None)
+
+            # Determine which params need injection
+            missing = [fld for fld in spp_fields if fld not in arguments]
+
+            if missing and self._param_providers:
+                ctx: ParamContext = {
+                    "history": self._current_history or [],
+                }
+
+                for fld in list(missing):
+                    for prov in self._param_providers:
+                        try:
+                            res = prov.resolve(fld, tool_name, ctx)  # type: ignore[attr-defined]
+                            if asyncio.iscoroutine(res):
+                                res = await res  # type: ignore[assignment]
+                        except Exception:
+                            continue
+
+                        if res is not None:
+                            server_args[fld] = res
+                            break
+
+            # If still missing after providers, error
+            still_missing = [fld for fld in spp_fields if fld not in arguments and fld not in server_args]
+            if still_missing:
+                raise RuntimeError(
+                    f"Missing server-populated parameters for tool '{tool_name}': {', '.join(still_missing)}"
+                )
 
         # NEW: Handle the synthetic "__think__" tool for internal reasoning
         if tool_name == THINK_TOOL_NAME:
@@ -849,7 +978,7 @@ class AIClient:
 
             try:
                 async with (self._tool_semaphore or _null_async_cm()):
-                    exec_coro = self.call_mcp_tool(name=tool_name, arguments=arguments)
+                    exec_coro = self.call_mcp_tool(name=tool_name, arguments=arguments, server_args=server_args)
                     if self._tool_timeout:
                         exec_coro = asyncio.wait_for(fut=exec_coro, timeout=self._tool_timeout)
                     tool_result = await exec_coro
@@ -1089,6 +1218,61 @@ class AIClient:
         except asyncio.CancelledError:
             # Normal shutdown
             return
+
+    # ------------------------------------------------------------------
+    # Dependency graph utilities
+    # ------------------------------------------------------------------
+
+    def _compute_execution_layers(self, tool_calls: list[ToolCall]) -> list[list[ToolCall]]:
+        """Return topologically-sorted execution layers for *tool_calls*.
+
+        The method raises :class:`DependencyError` when cycles are detected.
+        Only dependencies *within* the current turn are enforced – if a
+        predecessor is not part of *tool_calls* we assume it was executed in
+        a previous turn and treat it as already satisfied.
+        """
+
+        from collections import defaultdict, deque
+        from xmcp.models.errors import DependencyError
+
+        call_map: dict[str, ToolCall] = {
+            (tc.function or {}).get("name"): tc for tc in tool_calls
+        }
+
+        requested: set[str] = set(call_map.keys())
+
+        # Build graph (edges: dep -> tool)
+        graph: dict[str, set[str]] = defaultdict(set)
+        indegree: dict[str, int] = {name: 0 for name in requested}
+
+        for tool_name in requested:
+            deps = self._tool_deps.get(tool_name, set())
+            for dep in deps:
+                if dep in requested:
+                    graph[dep].add(tool_name)
+                    indegree[tool_name] += 1
+
+        # Kahn ‑ produce layers
+        layers: list[list[ToolCall]] = []
+        queue: deque[str] = deque([n for n, d in indegree.items() if d == 0])
+        processed = 0
+
+        while queue:
+            current_layer: list[ToolCall] = []
+            for _ in range(len(queue)):
+                n = queue.popleft()
+                processed += 1
+                current_layer.append(call_map[n])
+                for succ in graph.get(n, []):
+                    indegree[succ] -= 1
+                    if indegree[succ] == 0:
+                        queue.append(succ)
+            layers.append(current_layer)
+
+        if processed != len(requested):
+            raise DependencyError("Cyclic dependency detected between requested tool calls.")
+
+        return layers
 
 # ---------------------------------------------------------------------------
 # Utility – no-op async context manager (used when no semaphore limit set)

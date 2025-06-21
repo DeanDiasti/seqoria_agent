@@ -110,3 +110,20 @@ python examples/clients/demo.py
 ```
 
 You should see the `AIClient` call the `sales_summary` tool and the `render` function printing the display envelope. 
+
+New in **v0.2**: servers can declare `depends_on` between tools, and the client runs them in parallel layers automatically.  The client is completely **stateless**; you must pass `history` each turn.
+
+### 3. Ask the AI
+
+If the LLM decides to call `current_time` **and** `timestamped_divide` in one turn, `AIClient` runs them in order thanks to the dependency graph and returns the final answer.
+
+---
+
+Need richer UX?  Pass `stream_chat()` instead and update your UI as chunks arrive.
+
+```python
+result = await ai.chat(
+    "current_time then divide 10 by 2 and show_user=true",
+    history=history,
+)
+``` 

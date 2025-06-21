@@ -62,4 +62,14 @@ class XMCPError(Exception):
         return (
             f"XMCPError(code={self.code!r}, detail={self.detail!r}, "
             f"retryable={self.retryable}, meta={self.meta!r})"
-        ) 
+        )
+
+
+class DependencyError(Exception):
+    """Raised when a circular or otherwise invalid dependency graph is detected.
+
+    The :class:`AIClient` raises this error as soon as it notices that the
+    dependency requirements expressed via the ``depends_on`` annotation cannot
+    be satisfied (e.g. because of a cycle like *A → B → A*).
+    """
+    pass 

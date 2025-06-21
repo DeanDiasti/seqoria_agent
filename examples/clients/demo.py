@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 from xmcp import AIClient, ChatChunk
 from xmcp.client.cache import DictCache
 from xmcp.providers import OpenAIProvider, AnthropicProvider
+from xmcp.client.parameters import ParameterProvider, ParamContext
 
 load_dotenv()
 
@@ -47,23 +48,37 @@ servers = [
 # Structured logging setup for the demo
 # ------------------------------------------------------------------
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-structlog.configure(
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.dict_tracebacks,
-        structlog.processors.JSONRenderer(),
-    ],
-)
+# logging.basicConfig(level=logging.INFO, format="%(message)s")
+# structlog.configure(
+#     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+#     processors=[
+#         structlog.processors.TimeStamper(fmt="iso"),
+#         structlog.processors.add_log_level,
+#         structlog.processors.StackInfoRenderer(),
+#         structlog.processors.dict_tracebacks,
+#         structlog.processors.JSONRenderer(),
+#     ],
+# )
 
 logger = structlog.get_logger("xmcp_demo")
 
+# ------------------------------------------------------------------
+# Client-side parameter provider example
+# ------------------------------------------------------------------
+
+class DemoUserProvider:  # simple example
+    async def resolve(self, param_name: str, tool_name: str, context: ParamContext):  # type: ignore[override]
+        if param_name == "user_id":
+            return os.getenv("DEMO_USER_ID", "abc123abc123")
+        return None
 
 async def main():
-    """Interactive CLI that streams AI responses and display envelopes."""
+    """Interactive CLI that streams AI responses and display envelopes.
+
+    Demonstrates the *serverArgs* channel for server-populated parameters –
+    no HTTP headers are used; the AIClient injects ``user_id`` into the
+    JSON-RPC body under the ``serverArgs`` key.
+    """
 
     # ------------------------------------------------------------------
     # Build provider list – primary plus optional *backup* provider
@@ -97,6 +112,7 @@ async def main():
         retry_policy={"max_attempts": 3, "backoff_base": 0.5},
         breaker_threshold=5,  # Trip circuit after 5 consecutive failures
         breaker_reset_after=60,  # Auto-reset breaker after 60s
+        param_providers=[DemoUserProvider()],
         # logger=logger,
     )
 
@@ -110,6 +126,9 @@ async def main():
             print("  - Ask me 'what is the hex code for blue?' (Data Mode)")
             print("\n--- Try out the DISPLAY-ONLY tool! ---")
             print("  - Ask me to 'flash the screen 3 times with green'")
+            print("\n--- Dependency-graph demo ---")
+            print("  - Ask me to 'roll 5 dice and give me the sum' → rolls first, then sums (depends_on).")
+            print("  - Ask me to 'what time is it and also divide 10 by 2 with timestamp' → executes in two layers.")
             print("\nType 'exit' or 'quit' to end the session.")
             print("===================================================")
 

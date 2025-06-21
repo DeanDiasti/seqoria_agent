@@ -62,4 +62,29 @@ function renderComponent(envelope) {
     // ... other cases
   }
 }
-``` 
+```
+
+## Strict-Mode Validation
+
+When an `XMCP` server runs with `strict_mode=True`, **every** `@display_tool` return value is validated:
+
+1. Must coerce into `DisplayEnvelope`.
+2. Payload must be JSON-serialisable.
+3. Invalid values raise `XMCPError(code="INVALID_PAYLOAD")` which the client surfaces.
+
+## Toggling UI vs LLM output
+
+Every display tool receives a `show_user: bool` param.  If `True`, return a `DisplayEnvelope`; if `False`, return raw data for further LLM reasoning.
+
+```python
+@mcp.display_tool
+def sales(region: str, show_user: bool = False):
+    data = _query(region)
+    if show_user:
+        return DisplayEnvelope(type="table", payload=data, title=f"Sales {region}")
+    return data  # plain dict for LLM
+```
+
+## Streaming
+
+`AIClient.stream_chat()` yields `ChatChunk(type="tool_display", envelope=…)` **immediately** when a display envelope arrives, enabling real-time UI updates. 

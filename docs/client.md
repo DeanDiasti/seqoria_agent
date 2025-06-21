@@ -101,4 +101,23 @@ ai = AIClient(
     on_display=my_display_handler,
     cache=RedisCache(url="redis://localhost:6379")
 )
-``` 
+```
+
+## What's new in v0.2+
+
+* **Dependency-graph execution** – automatic parallel layers respecting `depends_on`.
+* **Structured error & display callbacks** – `on_error`, `on_display`.
+* **Meta-tools** – `__think__`, `__summarize__`, `__clarify__`.
+* **Retry / circuit-breaker** & **adaptive concurrency** (`max_concurrency`, `tool_timeout`).
+* **Pluggable cache backend** – `DictCache`, `RedisCache`.
+
+## Quick Example (stateless)
+```python
+history = []
+async with AIClient(urls=["http://localhost:3333"],
+                    providers=[OpenAIProvider(model_id="gpt-4o")]) as ai:
+    res = await ai.chat("Current time + divide 10 by 2", history)
+    print(res["answer"], "display?", bool(res["display"]))
+```
+
+> **Heads-up**  This page is a concise primer. A full deep-dive lives in [Guides → Using AIClient](guides/ai_client.md). 

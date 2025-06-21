@@ -126,11 +126,12 @@ Renderers should branch on `type` and ignore unknown keys gracefully.
 | Envelope strict-mode validation (XMCP) | ✅ Done |
 | Auto `show_user` injection             | 🔬 Design |
 | Structured error channel (XMCP & AIClient) | ✅ Done |
-| Dependency graph execution (AIClient)    | 🔬 Design |
+| Dependency graph execution (AIClient)    | ✅ Done |
 | Multi-LLM provider layer (AIClient)      | ✅ Done |
 | Internal meta-tools (`__think__`, `__summarize__`, `__clarify__`) | ✅ Done |
+| Server-populated parameter middleware    | ✅ Done |
 
-*Last updated: 2025-06-19*
+*Last updated: 2025-06-20*
 
 ---
 
@@ -836,11 +837,11 @@ Zero duplication of heavy resources (tool list, HTTP sessions) while maintaining
 | Hot-reload tool registry                 | ✅ Done |
 | Multi-tenant optimisation                | 🧪 Prototype |
 | Structured error channel (XMCP & AIClient)| ✅ Done |
-| Dependency graph execution (AIClient)    | 🔬 Design |
+| Dependency graph execution (AIClient)    | ✅ Done |
 | Multi-LLM provider layer (AIClient)      | ✅ Done |
 | Internal meta-tools (`__think__`, `__summarize__`, `__clarify__`) | ✅ Done |
-| Server-populated parameter middleware    | 🧪 Prototype |
+| Server-populated parameter middleware    | ✅ Done |
 | Front-end reference renderer             | ⏳ Planned |
 | Extensive unit tests                     | 🧪 Prototype |
 
-*Last updated: 2025-06-19*
+*Last updated: 2025-06-20*
