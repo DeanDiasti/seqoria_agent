@@ -3,7 +3,6 @@ import os
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import openai
-from dotenv import load_dotenv
 
 # Import specific exceptions from the openai library for better error handling
 from openai import (
@@ -36,7 +35,9 @@ from .errors import (
 # Use a relative import since we're in the same directory
 from .schemas import LLMResponse, LLMUsage, ToolCall
 
-load_dotenv()
+# NOTE: We intentionally do NOT load environment variables from a .env file here.
+# The API key should be provided explicitly via the `api_key` argument when the
+# provider is instantiated (or be available in the environment already).
 
 class OpenAIProvider(BaseProvider):
     """
@@ -50,13 +51,14 @@ class OpenAIProvider(BaseProvider):
     # Default model to use if requested model is unavailable or none is specified
     DEFAULT_MODEL = "gpt-4o" 
     
-    def __init__(self, model_id: Optional[str] = None, **kwargs) -> None:
+    def __init__(self, model_id: Optional[str] = None, api_key: Optional[str] = None, **kwargs) -> None:
         """
         Initialize the asynchronous OpenAI provider.
         
         Args:
             model_id: Identifier for the model to use (e.g., "gpt-4o", "gpt-3.5-turbo").
                       If None, falls back to DEFAULT_MODEL. Validation occurs during API calls.
+            api_key: Explicit API key for authentication. If None, falls back to environment variable.
             **kwargs: Additional parameters for model generation and client configuration:
                 Query kwargs (passed to OpenAI API):
                     - temperature (float): Sampling temperature (default: 0.7)
@@ -78,9 +80,12 @@ class OpenAIProvider(BaseProvider):
             EnvironmentError: If OPENAI_API_KEY environment variable is not set.
             ConnectionError: If the async client cannot be initialized.
         """
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise EnvironmentError(message="OpenAI API key not found in environment variables",
-                                   missing_vars=["OPENAI_API_KEY"])
+        # Prefer the explicitly supplied API key, otherwise fall back to the environment
+        if api_key is None:
+            api_key = os.environ.get("OPENAI_API_KEY")
+
+        if not api_key:
+            raise EnvironmentError(message="OpenAI API key not provided", missing_vars=["OPENAI_API_KEY"])
         
         # Store max_retries for use in retry logic
         self.max_retries = kwargs.get('max_retries', 3)
@@ -102,7 +107,7 @@ class OpenAIProvider(BaseProvider):
         
         try:
             # Create and assign the async client
-            self.async_client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"), **client_kwargs)
+            self.async_client = openai.AsyncOpenAI(api_key=api_key, **client_kwargs)
         except Exception as e:
             # Catch any exception during initialization
             raise ConnectionError(provider="OpenAI") from e

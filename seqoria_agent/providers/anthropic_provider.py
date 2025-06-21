@@ -15,8 +15,8 @@ from anthropic import (
     PermissionDeniedError,
     RateLimitError,
 )
-from dotenv import load_dotenv
 
+# Internal imports
 from .base_provider import BaseProvider
 from .errors import (
     ConnectionError,
@@ -33,8 +33,6 @@ from .errors import (
 # Use a relative import since we're in the same directory
 from .schemas import LLMResponse, LLMUsage, ToolCall
 
-load_dotenv()
-
 class AnthropicProvider(BaseProvider):
     """
     Asynchronous provider implementation for Anthropic's Claude API.
@@ -48,13 +46,14 @@ class AnthropicProvider(BaseProvider):
     # Default model to use if requested model is unavailable or none is specified
     DEFAULT_MODEL = "claude-sonnet-4-20250514" 
     
-    def __init__(self, model_id: Optional[str] = None, **kwargs) -> None:
+    def __init__(self, model_id: Optional[str] = None, api_key: Optional[str] = None, **kwargs) -> None:
         """
         Initialize the asynchronous Anthropic provider.
         
         Args:
             model_id: Identifier for the model to use (e.g., "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307").
                       If None, falls back to DEFAULT_MODEL. Validation occurs during API calls.
+            api_key: Explicit API key for authentication. If None, falls back to ANTHROPIC_API_KEY environment variable.
             **kwargs: Additional parameters for model generation and client configuration:
                 Query kwargs (passed to Anthropic API):
                     - temperature (float): Sampling temperature (default: 0.7)
@@ -75,9 +74,12 @@ class AnthropicProvider(BaseProvider):
             EnvironmentError: If ANTHROPIC_API_KEY environment variable is not set.
             ConnectionError: If the async client cannot be initialized.
         """
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise EnvironmentError(message="Anthropic API key not found in environment variables",
-                                   missing_vars=["ANTHROPIC_API_KEY"])
+        # Prefer the explicitly supplied API key, otherwise fall back to the environment
+        if api_key is None:
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+        if not api_key:
+            raise EnvironmentError(message="Anthropic API key not provided", missing_vars=["ANTHROPIC_API_KEY"])
         
         # Store max_retries for use in retry logic
         self.max_retries = kwargs.get('max_retries', 3)
@@ -88,7 +90,7 @@ class AnthropicProvider(BaseProvider):
         
         try:
             # Create and assign the async client
-            self.async_client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"), **client_kwargs)
+            self.async_client = anthropic.AsyncAnthropic(api_key=api_key, **client_kwargs)
         except Exception as e:
             # Catch any exception during initialization
             raise ConnectionError(provider="Anthropic") from e

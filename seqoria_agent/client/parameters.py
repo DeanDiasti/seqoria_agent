@@ -19,7 +19,7 @@ __all__: list[str] = [
 class ParamContext(TypedDict, total=False):
     """Context data passed to providers.
 
-    It intentionally stays open-ended – applications can inject whatever
+    It intentionally stays open-ended - applications can inject whatever
     extra metadata they need (e.g. IP address, auth claims, request ID).
     """
 

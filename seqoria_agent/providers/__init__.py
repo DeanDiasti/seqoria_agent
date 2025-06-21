@@ -30,12 +30,6 @@ from .errors import (
 # The provider classes are defined in separate files (e.g., groq.py, bedrock.py)
 # but are made available directly under the llm package for convenience.
 
-try:
-    from .bedrock_provider import BedrockProvider
-except ImportError:
-    # Handle the case where the boto3 library is not installed, allowing
-    # the rest of the system to function without it
-    BedrockProvider = None  # Or a placeholder class/object
 
 try:
     from .openai_provider import OpenAIProvider
@@ -51,11 +45,6 @@ except ImportError:
     # the rest of the system to function without it
     AnthropicProvider = None  # Or a placeholder class/object
 
-try:
-    from .sambanova_provider import SambaNovaProvider
-except ImportError:
-    # Handle the case where required libraries are not installed
-    SambaNovaProvider = None  # Or a placeholder class/object
 
 # Define a list of all exported names from this package. This is used when
 # someone does "from llm import *" to control which names get imported.
@@ -70,9 +59,5 @@ __all__ = ["BaseProvider",
            "InvalidRequestError",
            "QuotaExceededError",
            "ServerError",
-           "GroqProvider",
-           "BedrockProvider",
            "OpenAIProvider",
-           "AnthropicProvider",
-           "SambaNovaProvider",
-           "GeminiProvider"]
+           "AnthropicProvider"]

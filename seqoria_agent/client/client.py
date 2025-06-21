@@ -16,8 +16,6 @@ from typing import (
 
 from mcp.types import Content
 
-# NOTE: Replaced the heavy MCP StreamableHTTPTransport with a lean internal
-# implementation that supports the subset of methods AIClient needs.
 from .simple_http_transport import SimpleHTTPTransport as _HTTPTransport
 
 # Try to import structlog for structured logging. Fallback to stdlib logger.

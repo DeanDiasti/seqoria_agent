@@ -1,4 +1,4 @@
-"""Streaming chunk value object – used by :pymeth:`seqoria_agent.client.core.AIClient.stream_chat`."""
+"""Streaming chunk value object - used by :pymeth:`seqoria_agent.client.core.AIClient.stream_chat`."""
 
 from __future__ import annotations
 
