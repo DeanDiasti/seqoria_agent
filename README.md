@@ -1,9 +1,9 @@
-# xmcp – eXtended Model Context Protocol
+# qutie – eXtended Multi-Channel Protocol
 
-[![CI](https://github.com/deandiasti/xmcp/actions/workflows/docs.yml/badge.svg)](https://github.com/deandiasti/xmcp/actions/workflows/docs.yml)
-[![PyPI](https://img.shields.io/pypi/v/xmcp)](https://pypi.org/project/xmcp/)
+[![CI](https://github.com/deandiasti/qutie/actions/workflows/docs.yml/badge.svg)](https://github.com/deandiasti/qutie/actions/workflows/docs.yml)
+[![PyPI](https://img.shields.io/pypi/v/qutie)](https://pypi.org/project/qutie/)
 
-**xmcp** is a next-generation orchestration layer for building robust, **tool-augmented AI** applications. It provides a unified protocol and a set of powerful components to seamlessly manage interactions between Large Language Models (LLMs), your custom tools, and rich user interfaces.
+**qutie** is a next-generation orchestration layer for building robust, **tool-augmented AI** applications. It provides a unified protocol and a set of powerful components to seamlessly manage interactions between Large Language Models (LLMs), your custom tools, and rich user interfaces.
 
 The core idea is to treat *tool calls, LLM reasoning, and UI display components* as first-class messages in a uniform stream, enabling complex, multi-turn conversations that are easy to build, fast to run, and beautiful to present.
 
@@ -11,11 +11,11 @@ The core idea is to treat *tool calls, LLM reasoning, and UI display components*
 
 ## Core Concepts
 
-xmcp is built on three pillars:
+qutie is built on three pillars:
 
-1.  **`XMCP` Server**: A high-performance server powered by the *official* [MCP Python SDK](https://pypi.org/project/mcp/) (`mcp.server.fastmcp.FastMCP`). It exposes your Python functions as tools for an AI to use and adds critical features like structured error handling, custom output formatting, and a special decorator (`@display_tool`) for functions that generate UI components.
+1.  **`QUTIE` Server**: A high-performance server powered by the *official* [MCP Python SDK](https://pypi.org/project/mcp/) (`mcp.server.fastmcp.FastMCP`). It exposes your Python functions as tools for an AI to use and adds critical features like structured error handling, custom output formatting, and a special decorator (`@display_tool`) for functions that generate UI components.
 
-2.  **`AIClient`**: An intelligent, asynchronous client that acts as the brain of your application. It connects to one or more `XMCP` servers, manages the conversation state, invokes an LLM to decide on the next action, and executes the chosen tools—in parallel where possible. It's stateless, scalable, and packed with production-ready features like caching, retries, and streaming.
+2.  **`AIClient`**: An intelligent, asynchronous client that acts as the brain of your application. It connects to one or more `QUTIE` servers, manages the conversation state, invokes an LLM to decide on the next action, and executes the chosen tools—in parallel where possible. It's stateless, scalable, and packed with production-ready features like caching, retries, and streaming.
 
 3.  **`DisplayEnvelope`**: A simple, frontend-agnostic JSON contract for sending rich UI components directly to the end-user. Instead of having an LLM describe a table or a chart in markdown, a tool can return a `DisplayEnvelope` containing the structured data, which your client application can then render as a native UI element.
 
@@ -33,16 +33,16 @@ xmcp is built on three pillars:
 
 ## Installation
 
-> **Prerequisite**   `xmcp` now depends on the official **MCP SDK**. If you install `xmcp` with `pip`, the correct `mcp[cli]` version is pulled in automatically—no extra steps required.
+> **Prerequisite**   `qutie` now depends on the official **MCP SDK**. If you install `qutie` with `pip`, the correct `mcp[cli]` version is pulled in automatically—no extra steps required.
 
 ```bash
 # Create & activate a virtual environment (optional, but recommended)
 
 # Install the core library (brings in MCP automatically)
-pip install xmcp
+pip install qutie
 
 # Development & docs extras
-pip install 'xmcp[dev,docs]'
+pip install 'qutie[dev,docs]'
 ```
 
 ---
@@ -57,9 +57,9 @@ Save the following as `my_server.py`. It defines a simple tool that can return e
 
 ```python
 # my_server.py
-from xmcp import XMCP, DisplayEnvelope
+from qutie import QUTIE, DisplayEnvelope
 
-mcp = XMCP()
+mcp = QUTIE()
 
 @mcp.display_tool
 def sales_summary(region: str, show_user: bool = False):
@@ -98,8 +98,8 @@ Save the following as `my_client.py`. This client will connect to your server an
 # my_client.py
 import asyncio
 import os
-from xmcp import AIClient
-from xmcp.providers import OpenAIProvider
+from qutie import AIClient
+from qutie.providers import OpenAIProvider
 
 # Dummy function to simulate rendering a UI component
 def render(display_data: dict):
@@ -145,7 +145,7 @@ You will see the `render` function print the structured `DisplayEnvelope` that t
 
 ## Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/your-username/xmcp/issues). Please open an issue first to discuss any substantial changes.
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/your-username/qutie/issues). Please open an issue first to discuss any substantial changes.
 
 ## License
 

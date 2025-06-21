@@ -20,15 +20,15 @@ except ModuleNotFoundError:  # pragma: no cover – structlog optional
 
 
 # Provider abstraction layer
-from xmcp.providers.base_provider import BaseProvider
-from xmcp.providers.schemas import LLMResponse, ToolCall
-from xmcp.providers.errors import LLMError
+from qutie.providers.base_provider import BaseProvider
+from qutie.providers.schemas import LLMResponse, ToolCall
+from qutie.providers.errors import LLMError
 
-from xmcp.models.envelope import DisplayEnvelope
-from xmcp.models.errors import ToolRemoteError, CircuitOpenError, DependencyError
-from xmcp.client.parameters import ParameterProvider
+from qutie.models.envelope import DisplayEnvelope
+from qutie.models.errors import ToolRemoteError, CircuitOpenError, DependencyError
+from qutie.client.parameters import ParameterProvider
 
-from xmcp.models.chunk import ChatChunk
+from qutie.models.chunk import ChatChunk
 
 # NEW: Synthetic tool names
 THINK_TOOL_NAME = "__think__"
@@ -51,20 +51,20 @@ class _ClientConnection(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# ChatChunk is now defined in ``xmcp.models.chunk`` to avoid duplication
+# ChatChunk is now defined in ``qutie.models.chunk`` to avoid duplication
 # across modules.  Import at module-top so type annotations resolve.
 # ---------------------------------------------------------------------------
 
 
 # NOTE: This class used to rely on the OpenAI SDK directly.  It has been
 # refactored to use the generic *provider* abstraction defined in
-# ``xmcp.providers`` so that any compatible back-end (OpenAI, Anthropic, …)
+# ``qutie.providers`` so that any compatible back-end (OpenAI, Anthropic, …)
 # can be plugged in without modifying the client.
 
 class AIClient:
-    """A unified AI client that orchestrates calls between LLMs and xmcp servers.
+    """A unified AI client that orchestrates calls between LLMs and qutie servers.
 
-    This client connects to one or more xmcp/FastMCP servers, discovers the
+    This client connects to one or more qutie/FastMCP servers, discovers the
     available tools, and uses a Large Language Model (LLM) to intelligently
     decide which tools to call based on a user's query. It supports iterative
     multi-turn conversations, parallel tool execution, response streaming,
@@ -182,7 +182,7 @@ class AIClient:
         # Server-populated parameter providers (client side) -----------------
         # ------------------------------------------------------------------
 
-        from xmcp.client.parameters import ParameterProvider  # local import to avoid top-level cycles
+        from qutie.client.parameters import ParameterProvider  # local import to avoid top-level cycles
 
         self._param_providers: list[ParameterProvider] = list(param_providers or [])  # type: ignore[arg-type]
 
@@ -202,14 +202,14 @@ class AIClient:
             "\nIf you need additional information from the user, call the `__clarify__` tool with a concise question."
         )
 
-        # Structured logger – default to stdlib logger under 'xmcp'
+        # Structured logger – default to stdlib logger under 'qutie'
         if logger is not None:
             self._logger = logger
         else:
             if structlog is not None:
-                self._logger = structlog.get_logger("xmcp")  # type: ignore[assignment]
+                self._logger = structlog.get_logger("qutie")  # type: ignore[assignment]
             else:
-                self._logger = logging.getLogger(name="xmcp")
+                self._logger = logging.getLogger(name="qutie")
 
         # Holds reference to *current* conversation history during a single
         # chat()/stream_chat() call. Reset to None immediately afterwards so
@@ -872,7 +872,7 @@ class AIClient:
 
         spp_fields = self._server_params.get(tool_name, [])
         if spp_fields:
-            from xmcp.client.parameters import ParamContext
+            from qutie.client.parameters import ParamContext
 
             # Remove AI-provided values when override disallowed
             if not self._allow_override:
@@ -1233,7 +1233,7 @@ class AIClient:
         """
 
         from collections import defaultdict, deque
-        from xmcp.models.errors import DependencyError
+        from qutie.models.errors import DependencyError
 
         call_map: dict[str, ToolCall] = {
             (tc.function or {}).get("name"): tc for tc in tool_calls

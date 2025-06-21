@@ -1,10 +1,10 @@
 [project]
-name = "xmcp"
+name = "qutie"
 version = "0.1.0"
-description = "eXtended Model Context Protocol for robust tool-augmented AI applications."
+description = "Qutie – eXtended Multi-Channel Protocol for tool-augmented AI applications."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { file = "LICENSE.txt" }
 authors = [
     { name = "Your Name", email = "your@email.com" },
 ]
@@ -20,21 +20,21 @@ dependencies = [
     "openai>=1.25.0",
     "structlog>=24.1.0",
     "redis>=5.0.1",
-    "build>=1.2.2.post1",
-    "twine>=6.1.0",
     "fastapi>=0.115.13",
 ]
 
 [project.urls]
-Homepage = "https://github.com/deandiasti/xmcp"
-Documentation = "https://deandiasti.github.io/xmcp/"
-Repository = "https://github.com/deandiasti/xmcp"
+Homepage = "https://github.com/deandiasti/qutie"
+Documentation = "https://deandiasti.github.io/qutie/"
+Repository = "https://github.com/deandiasti/qutie"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.4.1",
+    "build>=1.2.2.post1",
+    "twine>=6.1.0",
 ]
 docs = [
     "mkdocs>=1.6.0",
@@ -56,4 +56,4 @@ ignore = ["D401", "ANN101", "ANN001", "D205", "D212"]
 convention = "numpy"
 
 [tool.ruff.isort]
-known-first-party = ["xmcp"]
+known-first-party = ["qutie"]

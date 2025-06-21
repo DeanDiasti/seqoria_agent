@@ -1,0 +1,8 @@
+include LICENSE.txt
+include README.md
+include CHANGELOG.md
+recursive-include qutie py.typed
+
+# Exclude unnecessary directories from source distribution
+prune docs
+prune tests 

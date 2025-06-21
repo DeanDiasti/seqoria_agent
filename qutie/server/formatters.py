@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""XML formatter plug-in system for XMCP tools.
+"""XML formatter plug-in system for qutie tools.
 
 This implements a minimal but extensible mechanism to convert arbitrary Python
 values returned by **regular** `@tool` functions into an XML snippet that is
@@ -11,10 +11,10 @@ Usage (server side)
 -------------------
 
 ```python
-from xmcp.server.runtime import XMCP
-from xmcp.server.formatters import DeclarativeXMLFormatter
+from qutie.server.runtime import qutie
+from qutie.server.formatters import DeclarativeXMLFormatter
 
-mcp = XMCP()
+mcp = qutie()
 
 class WeatherFormatter(DeclarativeXMLFormatter):
     top_level_fields = ["city", "temperature", "condition"]

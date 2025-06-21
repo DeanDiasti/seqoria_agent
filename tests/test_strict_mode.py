@@ -4,8 +4,8 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from xmcp.models.envelope import DisplayEnvelope
-from xmcp.server import XMCP
+from qutie.models.envelope import DisplayEnvelope
+from qutie.server import FastQutie
 
 
 def _error_code(xml_str: str) -> str:
@@ -15,7 +15,7 @@ def _error_code(xml_str: str) -> str:
 
 
 def test_display_envelope_passes_strict_mode():
-    mcp = XMCP(name="strict", strict_mode=True)
+    mcp = FastQutie(title="strict", strict_mode=True)
 
     def ok_tool():  # noqa: D401
         return DisplayEnvelope(type="markdown", payload="hi")
@@ -29,7 +29,7 @@ def test_display_envelope_passes_strict_mode():
 
 
 def test_invalid_payload_yields_error():
-    mcp = XMCP(name="strict", strict_mode=True)
+    mcp = FastQutie(title="strict", strict_mode=True)
 
     def bad_tool():  # noqa: D401
         return {"foo": "bar"}  # Not a valid DisplayEnvelope
@@ -40,7 +40,7 @@ def test_invalid_payload_yields_error():
 
 
 def test_malformed_xml_yields_error():
-    mcp = XMCP(name="strict", strict_mode=True)
+    mcp = FastQutie(title="strict", strict_mode=True)
 
     def xml_tool():  # noqa: D401
         return "<tool_response tool_name=\"x\"><invalid></tool_response>"

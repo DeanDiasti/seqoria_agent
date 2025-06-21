@@ -1,10 +1,10 @@
 import asyncio
 import pytest
 
-from xmcp.client.client import AIClient
-from xmcp.providers.base_provider import BaseProvider
-from xmcp.providers.schemas import ToolCall
-from xmcp.models.errors import DependencyError
+from qutie.client.client import AIClient
+from qutie.providers.base_provider import BaseProvider
+from qutie.providers.schemas import ToolCall
+from qutie.models.errors import DependencyError
 
 
 class DummyProvider(BaseProvider):

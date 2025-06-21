@@ -10,14 +10,14 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 
-from xmcp.server.fastxmcp import FastXMCP
-from xmcp.models.errors import XMCPError
+from qutie.server.fastqutie import FastQutie
+from qutie.models.errors import QutieError
 
 # ------------------------------------------------------------------
 # Application instance
 # ------------------------------------------------------------------
 
-app = FastXMCP(title="Utility Server")
+app = FastQutie(title="Utility Server")
 logger = logging.getLogger(name=__name__)
 
 
@@ -61,10 +61,10 @@ def divide(a: float, b: float) -> float:
         a = float(a)
         b = float(b)
     except Exception:
-        raise XMCPError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
+        raise QutieError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
 
     if b == 0:
-        raise XMCPError(
+        raise QutieError(
             code="DIV_BY_ZERO",
             detail="Parameter 'b' cannot be zero",
             retryable=False,
@@ -91,7 +91,7 @@ def timestamped_divide(a: float, b: float) -> str:
         a = float(a)
         b = float(b)
     except Exception:
-        raise XMCPError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
+        raise QutieError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
 
     result = divide(a, b)
     ts = current_time()

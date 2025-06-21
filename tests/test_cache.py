@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from xmcp.client.cache import DictCache, NullCache, build_cache_key
+from qutie.client.cache import DictCache, NullCache, build_cache_key
 
 
 @pytest.mark.asyncio

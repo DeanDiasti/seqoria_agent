@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 
-"""Display envelope schema – shared between client and server.
+"""Display envelope schema - shared between client and server.
 
-This file is copied from the original ``xmcp.envelope`` module so that the new
-``xmcp`` package can evolve independently without breaking existing imports.
+This file is copied from the original ``qutie.envelope`` module so that the new
+``qutie`` package can evolve independently without breaking existing imports.
 """
 
 from typing import Any, Dict, List, Literal, Union
@@ -35,13 +35,13 @@ class DisplayEnvelope(BaseModel):
         renderers should branch on this value.
     payload:
         The actual data to display. Structure depends on ``type``:
-            * ``chart`` – JSON spec from Plotly, ECharts, …
-            * ``table`` – list/record structure (rows or columns)
-            * ``image`` – base64 string or URL
-            * ``markdown`` – markdown formatted string
-            * ``html`` – raw HTML string
-            * ``notification`` – simple message
-            * ``text`` – raw text string (catch-all)
+            * ``chart`` - JSON spec from Plotly, ECharts, …
+            * ``table`` - list/record structure (rows or columns)
+            * ``image`` - base64 string or URL
+            * ``markdown`` - markdown formatted string
+            * ``html`` - raw HTML string
+            * ``notification`` - simple message
+            * ``text`` - raw text string (catch-all)
     title:
         Optional human-readable title.
     meta:

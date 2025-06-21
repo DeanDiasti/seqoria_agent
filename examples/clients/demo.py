@@ -1,4 +1,4 @@
-"""Interactive command-line client for demonstrating the xmcp AIClient.
+"""Interactive command-line client for demonstrating the qutie AIClient.
 
 This script connects to the example **FastXMCP** servers (`server1.py`, `server2.py`),
 initializes an `AIClient` with multiple LLM providers, and enters an
@@ -28,10 +28,10 @@ import json
 
 from dotenv import load_dotenv
 
-from xmcp import AIClient, ChatChunk
-from xmcp.client.cache import DictCache
-from xmcp.providers import OpenAIProvider, AnthropicProvider
-from xmcp.client.parameters import ParameterProvider, ParamContext
+from qutie import AIClient, ChatChunk
+from qutie.client.cache import DictCache
+from qutie.providers import OpenAIProvider, AnthropicProvider
+from qutie.client.parameters import ParameterProvider, ParamContext
 
 load_dotenv()
 
@@ -60,7 +60,7 @@ servers = [
 #     ],
 # )
 
-logger = structlog.get_logger("xmcp_demo")
+logger = structlog.get_logger("qutie_demo")
 
 # ------------------------------------------------------------------
 # Client-side parameter provider example

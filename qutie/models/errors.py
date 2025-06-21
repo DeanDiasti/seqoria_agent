@@ -1,4 +1,4 @@
-"""Error types shared between *xmcp* client and server layers."""
+"""Error types shared between *qutie* client and server layers."""
 
 
 class ToolRemoteError(Exception):
@@ -9,10 +9,10 @@ class CircuitOpenError(Exception):
     """Raised when a circuit breaker is open for a given server and tool calls are blocked."""
 
 
-class XMCPError(Exception):
-    """Structured error raised by XMCP tools.
+class QutieError(Exception):
+    """Structured error raised by qutie tools.
 
-    When a tool raises :class:`XMCPError`, the server intercepts it and returns
+    When a tool raises :class:`qutieError`, the server intercepts it and returns
     a *structured* error envelope instead of propagating the raw stack-trace.
     The attributes mirror the fields that will be encoded in the resulting
     `<error>` XML node defined in the *Structured Error Channel* spec.
@@ -60,7 +60,7 @@ class XMCPError(Exception):
 
     def __repr__(self) -> str:  # noqa: D401 – debug-friendly
         return (
-            f"XMCPError(code={self.code!r}, detail={self.detail!r}, "
+            f"qutieError(code={self.code!r}, detail={self.detail!r}, "
             f"retryable={self.retryable}, meta={self.meta!r})"
         )
 
@@ -72,4 +72,6 @@ class DependencyError(Exception):
     dependency requirements expressed via the ``depends_on`` annotation cannot
     be satisfied (e.g. because of a cycle like *A → B → A*).
     """
-    pass 
+    pass
+
+qutieError = QutieError 

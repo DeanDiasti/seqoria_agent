@@ -4,8 +4,8 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from xmcp.server import XMCP
-from xmcp.models.errors import XMCPError
+from qutie.server import FastQutie
+from qutie.models.errors import QutieError
 
 
 def _extract_error_detail(xml_str: str):
@@ -15,10 +15,10 @@ def _extract_error_detail(xml_str: str):
 
 
 def test_build_error_xml_sync():
-    mcp = XMCP(name="test")
+    mcp = FastQutie(title="test")
 
     def failing_tool():
-        raise XMCPError(code="FOO", detail="bar", retryable=True)
+        raise QutieError(code="FOO", detail="bar", retryable=True)
 
     wrapper = mcp._wrap_tool_with_error_handling(failing_tool, "failing_tool")
     xml_payload = wrapper()
@@ -29,15 +29,15 @@ def test_build_error_xml_sync():
     assert detail == "bar"
 
 
-test_payload = XMCPError(code="ERR", detail="bad", retryable=False)
+test_payload = QutieError(code="ERR", detail="bad", retryable=False)
 
 
 @pytest.mark.asyncio
 async def test_build_error_xml_async():
-    mcp = XMCP(name="test_async")
+    mcp = FastQutie(title="test_async")
 
     async def async_fail():  # noqa: D401
-        raise XMCPError(code="ERR", detail="bad", retryable=False)
+        raise QutieError(code="ERR", detail="bad", retryable=False)
 
     wrapper = mcp._wrap_tool_with_error_handling(async_fail, "async_fail")
     xml_payload = await wrapper()

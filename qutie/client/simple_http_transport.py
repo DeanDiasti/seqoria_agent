@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Lightweight HTTP transport for XMCP/FastMCP servers.
+"""Lightweight HTTP transport for qutie/FastMCP servers.
 
 This wrapper speaks the *streamable-http* JSON-RPC dialect directly via
 ``httpx`` and provides only the two calls the higher-level ``AIClient``

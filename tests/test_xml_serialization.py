@@ -4,9 +4,9 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from xmcp.server import XMCP
-from xmcp.server.formatters import DeclarativeXMLFormatter
-from xmcp.models.envelope import DisplayEnvelope
+from qutie.server import FastQutie
+from qutie.server.formatters import DeclarativeXMLFormatter
+from qutie.models.envelope import DisplayEnvelope
 
 
 class _KeepFormatter(DeclarativeXMLFormatter):
@@ -23,7 +23,7 @@ def _tag_present(xml_str: str, tag: str) -> bool:  # noqa: D401 – helper
 
 
 def test_formatter_whitelist():
-    mcp = XMCP(name="xml_test")
+    mcp = FastQutie(title="xml_test")
 
     def data_tool():  # noqa: D401
         return {"keep": 1, "drop": 2}
@@ -39,7 +39,7 @@ def test_formatter_whitelist():
 
 
 def test_display_envelope_serialization():
-    mcp = XMCP(name="display")
+    mcp = FastQutie(title="display")
 
     def disp_tool():  # noqa: D401
         return DisplayEnvelope(type="notification", payload="hi")
