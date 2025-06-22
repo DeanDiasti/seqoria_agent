@@ -3,8 +3,8 @@
 import xml.etree.ElementTree as ET
 
 from seqoria_agent.models.envelope import DisplayEnvelope
-from seqoria_agent.server import XMCP
 from seqoria_agent.server.formatters import DeclarativeXMLFormatter
+from seqoria_agent.server.fastxmcp import FastXMCP
 
 
 class _KeepFormatter(DeclarativeXMLFormatter):
@@ -21,7 +21,7 @@ def _tag_present(xml_str: str, tag: str) -> bool:  # noqa: D401 – helper
 
 
 def test_formatter_whitelist():
-    mcp = XMCP(name="xml_test")
+    mcp = FastXMCP(name="xml_test")
 
     def data_tool():  # noqa: D401
         return {"keep": 1, "drop": 2}
@@ -37,7 +37,7 @@ def test_formatter_whitelist():
 
 
 def test_display_envelope_serialization():
-    mcp = XMCP(name="display")
+    mcp = FastXMCP(name="display")
 
     def disp_tool():  # noqa: D401
         return DisplayEnvelope(type="notification", payload="hi")

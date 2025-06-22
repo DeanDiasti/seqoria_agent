@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide will get you up and running with xmcp in just a few minutes.
+This guide will get you up and running with **Seqoria-Agent / FastXMCP** in just a few minutes.
 
 ## Installation
 
@@ -10,7 +10,7 @@ First, install the library from source. It's recommended to do this in a virtual
 pip install -e .
 ```
 
-This will install `xmcp` along with its core dependencies, including `fastmcp` and `pydantic`.
+This will install `seqoria-agent` along with its core dependencies, including `fastapi`, `pydantic` and `uvicorn`.
 
 To use the full feature set including documentation generation and testing, install the optional extras:
 
@@ -18,23 +18,24 @@ To use the full feature set including documentation generation and testing, inst
 pip install -e '.[dev,docs]'
 ```
 
-## 1. Create an XMCP Server
+## 1. Create a FastXMCP Server
 
 An `XMCP` server exposes your Python functions as tools that an AI can call. The key is the `@mcp.display_tool` decorator, which can return either data for the LLM or a rich `DisplayEnvelope` for the user.
 
 Here's a simple server, which you can find in `examples/servers/server1.py`:
 
 ```python
-from xmcp import XMCP, DisplayEnvelope
+from seqoria_agent.server.fastxmcp import FastXMCP
+from seqoria_agent.models.envelope import DisplayEnvelope
 
-mcp = XMCP()
+app = FastXMCP(title="Demo Server")
 
-@mcp.display_tool
+@app.display_tool
 def greet(name: str) -> DisplayEnvelope:
     """A simple tool that greets the user."""
     return DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
 
-@mcp.display_tool
+@app.display_tool
 def sales_summary(region: str, show_user: bool = False):
     """
     A tool that returns a sales summary. If show_user is True, it
@@ -56,13 +57,13 @@ def sales_summary(region: str, show_user: bool = False):
     return {"region": region, "sales": summary["sales"]}
 
 # To run this server, save the code and run:
-# uvicorn examples.servers.server1:mcp --port 3333
+# uvicorn examples.servers.server1:app --port 3333
 ```
 
 To run this server, execute the following command from your terminal:
 
 ```bash
-uvicorn examples.servers.server1:mcp --port 3333
+uvicorn examples.servers.server1:app --port 3333
 ```
 
 ## 2. Call Tools with AIClient
@@ -73,8 +74,8 @@ This example is available in `examples/clients/demo.py`:
 
 ```python
 import asyncio
-from xmcp import AIClient
-from xmcp.providers import OpenAIProvider # Or AnthropicProvider, etc.
+from seqoria_agent import AIClient
+from seqoria_agent.providers import OpenAIProvider  # Or AnthropicProvider, etc.
 
 # A dummy renderer for demonstration purposes
 def render(display_data: dict):
@@ -127,3 +128,8 @@ result = await ai.chat(
     history=history,
 )
 ``` 
+
+> **Also new:**
+> * **LocalToolbox** ‑ run tools directly inside the client process.
+> * **FastXMCPRouter** ‑ compose large servers from modular routers.
+> * **LLM-only mode** ‑ skip the tool loop when no tools are available. 

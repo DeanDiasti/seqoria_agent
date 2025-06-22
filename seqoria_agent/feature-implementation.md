@@ -134,6 +134,36 @@ Renderers should branch on `type` and ignore unknown keys gracefully.
 
 ---
 
+## 🚀 Recent Additions (2025-06-21)
+
+### FastXMCP Routers
+
+* You can now group tools into `FastXMCPRouter` instances and mount them on a parent `FastXMCP` app just like FastAPI's `APIRouter`.
+* Router tools are automatically exposed via `tools/list`, participate in dependency graphs, and support server-populated parameters.
+
+### LocalToolbox – Inline Tools Without HTTP
+
+* `LocalToolbox` lets you declare `@tool` / `@display_tool` functions inside any Python module and use them with `AIClient` **without** running an HTTP server.
+
+```python
+from seqoria_agent.toolbox import LocalToolbox
+
+box = LocalToolbox()
+
+@box.tool
+def add(a: int, b: int):
+    return a + b
+
+ai = AIClient(urls=[], providers=[...], local_toolbox=box)
+```
+
+* All decorator options (`server_populated`, `depends_on`, custom `xml_formatter`) work the same as on the server side.
+* Tools return the standard `<tool_response>` XML so no client changes were required.
+
+Both features are fully unit-tested and showcased under `examples/servers/server_router.py` and `examples/clients/inline_tools_demo.py`.
+
+---
+
 ## Contributing
 
 PRs and bug reports are welcome! Please open an issue first if your change is

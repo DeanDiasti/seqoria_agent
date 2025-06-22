@@ -1,4 +1,4 @@
-# Building an XMCP Server
+# Building a FastXMCP Server
 
 `XMCP` is a thin wrapper around FastAPI + Model Context Protocol (MCP) that adds:
 
@@ -7,6 +7,7 @@
 * **Structured error channel** via `<error>` tags
 * Declarative **dependency graph** with `depends_on` annotation
 * **Server-populated parameters** to inject user_id, geo, etc.
+* **Modular routers** with `FastXMCPRouter` for large projects
 
 ---
 
@@ -46,7 +47,7 @@ When the LLM requests both tools in the same turn, `timestamped_divide` waits fo
 Enable at app level to validate every payload.
 
 ```python
-mcp = XMCP(strict_mode=True)
+app = FastXMCP(strict_mode=True)
 ```
 
 Invalid XML or non-DisplayEnvelope returns turn into a structured error with `code="INVALID_PAYLOAD"`.
@@ -58,10 +59,6 @@ Invalid XML or non-DisplayEnvelope returns turn into a structured error with `co
 def get_profile(user_id: str, name: str):
     ...
 
-@mcp.register_param_provider
-async def _hdr(req, tool_name, param_name):
-    if param_name == "user_id":
-        return req.headers.get("X-User-Id")
 ```
 
 The LLM **cannot** override `user_id` unless you set `strict_server_params=False`.
@@ -69,7 +66,37 @@ The LLM **cannot** override `user_id` unless you set `strict_server_params=False
 ## 5. Running the Server
 
 ```bash
-uvicorn my_server:mcp --port 3333
+uvicorn my_server:app --port 3333
 ```
 
-Use `--reload` for hot-reloading during development. 
+Use `--reload` for hot-reloading during development.
+
+## 6. Modular Routers
+
+Use `FastXMCPRouter` (similar to FastAPI's `APIRouter`) to group related tools
+and mount them on a main application.  All router tools are automatically
+merged into the parent registry and exposed via `tools/list` & `tools/call`.
+
+```python
+from seqoria_agent.server.fastxmcp import FastXMCP, FastXMCPRouter
+
+math = FastXMCPRouter(prefix="/math", tags=["math"])
+
+@math.tool()
+def add(a: int, b: int) -> int:
+    return a + b
+
+@math.tool()
+def multiply(a: int, b: int) -> int:
+    return a * b
+
+app = FastXMCP(title="Utility Server")
+app.include_router(math)
+
+if __name__ == "__main__":
+    app.run(port=8000)
+```
+
+If two routers (or the parent app) attempt to register the **same tool name**
+`include_router()` raises `XMCPError(code="DUPLICATE_TOOL")` to prevent
+ambiguous calls. 

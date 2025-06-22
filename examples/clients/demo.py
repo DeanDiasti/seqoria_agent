@@ -41,6 +41,7 @@ load_dotenv()
 servers = [
     "http://localhost:8004/mcp",
     "http://localhost:8005/mcp",
+    "http://localhost:8006/mcp",  # NEW math-router server
 ]
 
 # ------------------------------------------------------------------

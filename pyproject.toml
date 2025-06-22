@@ -20,7 +20,9 @@ dependencies = [
     "mcp>=1.9.4",
     "openai>=1.90.0",
     "pydantic>=2.11.7",
+    "pytest>=8.4.1",
     "redis>=6.2.0",
+    "structlog>=25.4.0",
 ]
 
 [project.urls]

@@ -459,6 +459,37 @@ class FastXMCP(FastAPI):
         self._param_providers.append(fn)
         return fn
 
+    def include_router(self, router, **kwargs):
+        """Mount a router and merge its tool registry if it is a FastXMCPRouter.
+
+        The method preserves FastAPI's normal router inclusion behaviour and
+        augments it by integrating the router's tool catalogue, formatters and
+        parameter providers into the parent application so that they appear in
+        ``tools/list`` and are callable via ``tools/call``.
+        """
+        # First let FastAPI register all HTTP routes.
+        super().include_router(router, **kwargs)
+
+        # If it's an XMCP-aware router, merge internal registries.
+        try:
+            from seqoria_agent.server.fastxmcp.router import FastXMCPRouter  # local import to avoid cycles
+        except Exception:  # pragma: no cover – router module missing
+            FastXMCPRouter = None  # type: ignore
+
+        if FastXMCPRouter is not None and isinstance(router, FastXMCPRouter):  # type: ignore[arg-type]
+            # Merge tools and formatters, checking for name collisions.
+            for name, info in router._tools.items():  # type: ignore[attr-defined]
+                if name in self._tools:
+                    raise XMCPError(code="DUPLICATE_TOOL", detail=name, retryable=False)
+                self._tools[name] = info
+                if name in router._tool_formatters:  # type: ignore[attr-defined]
+                    self._tool_formatters[name] = router._tool_formatters[name]  # type: ignore[index]
+
+            # Extend parameter providers so router-level SPPs work.
+            self._param_providers.extend(router._param_providers)  # type: ignore[attr-defined]
+
+        return router
+
 
 async def _maybe_await(v):  # small helper
     if inspect.isawaitable(v):

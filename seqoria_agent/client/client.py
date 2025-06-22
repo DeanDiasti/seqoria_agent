@@ -33,7 +33,9 @@ from seqoria_agent.models.errors import CircuitOpenError, DependencyError, ToolR
 from seqoria_agent.providers.base_provider import BaseProvider
 from seqoria_agent.providers.errors import LLMError
 from seqoria_agent.providers.schemas import LLMResponse, ToolCall
+from seqoria_agent.toolbox import LocalToolbox
 
+_LocalOrRemoteTransport = Any
 # NEW: Synthetic tool names
 THINK_TOOL_NAME = "__think__"
 SUMMARIZE_TOOL_NAME = "__summarize__"
@@ -70,6 +72,7 @@ class AIClient:
         logger: Optional[logging.Logger] = None,
         on_error: Optional[Callable[[dict, list | None], None]] = None,
         on_display: Optional[Callable[[dict, list | None], None]] = None,
+        local_toolbox: LocalToolbox | list[LocalToolbox] | None = None,
         refresh_interval: int | float = 0,
         param_providers: list["ParameterProvider"] | None = None,
         allow_override: bool = False,
@@ -95,6 +98,8 @@ class AIClient:
             A synchronous callback invoked when a display tool returns a
             `DisplayEnvelope`. This allows for immediate rendering before the
             `chat` method completes, by default None.
+        local_toolbox : LocalToolbox | list[LocalToolbox] | None, optional
+            One or more `LocalToolbox` instances to register inline tools from.
         refresh_interval : int | float, optional
             Interval in seconds to automatically refresh the tool registry from
             the servers. If 0, auto-refresh is disabled, by default 0.
@@ -114,7 +119,8 @@ class AIClient:
             If `urls` or `providers` are empty.
         """
         if not urls:
-            raise ValueError("At least one URL must be provided.")
+            urls = []
+
         self._urls = list(dict.fromkeys(urls))  # Remove duplicates
 
         # Validate providers list -------------------------------------------------
@@ -123,12 +129,22 @@ class AIClient:
 
         self._providers: List[BaseProvider] = providers
 
+        # --------------------------------------------------------------
+        # Local toolbox support ---------------------------------------
+        # --------------------------------------------------------------
+        if local_toolbox is None:
+            self._local_boxes: list[LocalToolbox] = []
+        elif isinstance(local_toolbox, LocalToolbox):
+            self._local_boxes = [local_toolbox]
+        else:
+            self._local_boxes = list(local_toolbox)
+
         # Strip legacy OpenAI-specific kwargs so they don't leak into FastMCP
         for _legacy_key in ("openai_api_key", "llm_model", "fallback_models", "openai_base_url"):
             kwargs.pop(_legacy_key, None)
 
         # --------------------------------------------------------------
-        # Caching setup – extract before passing remaining kwargs to FastMCP Client
+        # Caching setup – extract before passing remaining kwargs to FastMCP
         # --------------------------------------------------------------
         self._cache: CacheProtocol | None = kwargs.pop("cache", None)  # type: ignore[arg-type]
         # Cache TTL (seconds) can be overridden via kwarg; default 300 per README.
@@ -161,7 +177,7 @@ class AIClient:
         self._client_kwargs = kwargs
 
         self._connections: list[_ClientConnection] = []
-        self._tool_map: dict[str, _HTTPTransport] = {}
+        self._tool_map: dict[str, _LocalOrRemoteTransport] = {}
         self._llm_tools: list[dict] = []
         # Mapping tool_name -> list[str] of server-populated parameters
         self._server_params: dict[str, list[str]] = {}
@@ -224,17 +240,21 @@ class AIClient:
         self._tool_deps: dict[str, set[str]] = {}
 
     async def __aenter__(self):
-        connect_tasks = [self._connect_to_server(url) for url in self._urls]
-        connections = await asyncio.gather(*connect_tasks)
-        self._connections = [conn for conn in connections if conn is not None]
+        if self._urls:
+            connect_tasks = [self._connect_to_server(url) for url in self._urls]
+            connections = await asyncio.gather(*connect_tasks)
+            self._connections = [conn for conn in connections if conn is not None]
+        else:
+            self._connections = []
 
-        if not self._connections:
-            raise RuntimeError("Could not connect to any of the provided MCP servers.")
+        # Pure LLM mode is allowed – only warn if *everything* failed.
+        if not self._connections and not self._local_boxes:
+            self._logger.warning("AIClient initialised without remote servers or local tools – operating in LLM-only mode")
 
         await self._update_llm_tools()
 
         # Spawn periodic refresher if enabled
-        if self._refresh_interval > 0:
+        if self._refresh_interval > 0 and self._urls:
             loop = asyncio.get_running_loop()
             self._refresher_task = loop.create_task(self._periodic_refresh())
 
@@ -288,6 +308,10 @@ class AIClient:
         )
 
         llm_tools = []
+        # --------------------------------------------------------------
+        # 1) Merge *remote* tools (existing block) ---------------------
+        # --------------------------------------------------------------
+
         for i, result in enumerate(tool_results):
             conn = self._connections[i]
             if isinstance(result, Exception):
@@ -365,53 +389,77 @@ class AIClient:
                         },
                     })
         
+        # --------------------------------------------------------------
+        # 2) Merge *local* toolbox tools --------------------------------
+        # --------------------------------------------------------------
+
+        for box in self._local_boxes:
+            for name_, info in box._tools.items():
+                if name_ in self._tool_map:
+                    # duplicates between remote/local not allowed
+                    raise RuntimeError(f"Duplicate tool name '{name_}' between remote server and local toolbox")
+                self._tool_map[name_] = box  # type: ignore[assignment]
+
+                if info.display:
+                    self._display_tools.add(name_)
+                if info.server_params:
+                    self._server_params[name_] = list(info.server_params)
+                if info.depends_on:
+                    self._tool_deps[name_] = set(info.depends_on)
+
+                llm_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": name_,
+                        "description": info.description,
+                        "parameters": info.input_schema,
+                    },
+                })
+
         # --- Synthetic "__think__" tool --------------------------------------
-        llm_tools.append({
-            "type": "function",
-            "function": {
-                "name": THINK_TOOL_NAME,
-                "description": "Record internal reasoning steps without showing them to the user. Use before the next tool call if you need to think.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "thought": {"type": "string", "description": "Internal chain-of-thought. Not shown to the user."}
+        if llm_tools:  # only add meta-tools when we actually expose tools
+            llm_tools.append({
+                "type": "function",
+                "function": {
+                    "name": THINK_TOOL_NAME,
+                    "description": "Record internal reasoning steps without showing them to the user. Use before the next tool call if you need to think.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "thought": {"type": "string", "description": "Internal chain-of-thought. Not shown to the user."}
+                        },
+                        "required": ["thought"],
                     },
-                    "required": ["thought"],
                 },
-            },
-        })
-        # ---------------------------------------------------------------------
+            })
 
-        # --- Synthetic "__summarize__" tool ----------------------------------
-        llm_tools.append({
-            "type": "function",
-            "function": {
-                "name": SUMMARIZE_TOOL_NAME,
-                "description": "Summarize the conversation so far, replacing earlier history with the summary to save tokens.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-            },
-        })
-        # ---------------------------------------------------------------------
-
-        # --- Synthetic "__clarify__" tool ------------------------------------
-        llm_tools.append({
-            "type": "function",
-            "function": {
-                "name": CLARIFY_TOOL_NAME,
-                "description": "Ask the user a follow-up question when instructions are ambiguous.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "question": {"type": "string", "description": "A single clarifying question for the user."}
+            llm_tools.append({
+                "type": "function",
+                "function": {
+                    "name": SUMMARIZE_TOOL_NAME,
+                    "description": "Summarize the conversation so far, replacing earlier history with the summary to save tokens.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
                     },
-                    "required": ["question"],
                 },
-            },
-        })
+            })
+
+            llm_tools.append({
+                "type": "function",
+                "function": {
+                    "name": CLARIFY_TOOL_NAME,
+                    "description": "Ask the user a follow-up question when instructions are ambiguous.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string", "description": "A single clarifying question for the user."}
+                        },
+                        "required": ["question"],
+                    },
+                },
+            })
         # ---------------------------------------------------------------------
 
         # Atomically replace tool list
@@ -466,6 +514,11 @@ class AIClient:
         client = self._tool_map.get(name)
         if not client:
             raise ValueError(f"Tool '{name}' not found on any connected server.")
+
+        # Local toolbox execution shortcut -----------------------------
+        if isinstance(client, LocalToolbox):
+            # Direct in-process call – no retries/circuit breaker logic.
+            return await client.call_tool(name=name, arguments=arguments, server_args=server_args or {})
 
         # Resolve server URL for tracking
         server_url: str | None = None
@@ -573,6 +626,14 @@ class AIClient:
 
         # Append the user message for this turn
         history.append({"role": "user", "content": user_query})
+
+        # ------------------------------------------------------------------
+        # Fast-path: pure LLM mode (no tools) -------------------------------
+        # ------------------------------------------------------------------
+        if not self._tools_enabled():
+            llm_resp = await self._call_llm(messages=history)
+            history.append({"role": "assistant", "content": llm_resp.text})
+            return {"answer": llm_resp.text, "display": None, "history": history}
 
         # ------------------------------------------------------------------
         # Main LLM ➜ Tool loop
@@ -701,6 +762,15 @@ class AIClient:
         history.append({"role": "user", "content": user_query})
 
         try:
+            # Fast-path: no tools available ----------------------------------
+            if not self._tools_enabled():
+                # Use first provider to stream raw chat
+                provider = self._providers[0]
+                async for chunk in provider.async_stream(chat_history=history):
+                    if isinstance(chunk, str):
+                        yield ChatChunk(type="llm_delta", text=chunk)
+                return
+
             for turn in range(max_turns):
                 self._logger.info("LLM streaming", turn=turn + 1, max_turns=max_turns)
 
@@ -712,17 +782,17 @@ class AIClient:
 
                 for provider in self._providers:
                     try:
-                        stream_gen = provider.async_stream(
-                            chat_history=history,
-                            tools=self._llm_tools,
-                            tool_choice="auto",
-                        )
+                        kwargs_stream = {"chat_history": history}
+                        if self._tools_enabled():
+                            kwargs_stream["tools"] = self._llm_tools
+                            kwargs_stream["tool_choice"] = "auto"
+                        stream_gen = provider.async_stream(**kwargs_stream)
                         break
                     except LLMError as e:
                         self._logger.warning(
-                            "Provider failed to start stream – trying next",
+                            "Provider failed to start stream - trying next",
                             provider=provider.__class__.__name__,
-                            error=str(e),
+                            error=str(object=e),
                         )
                         last_err = e
                         continue
@@ -1061,11 +1131,11 @@ class AIClient:
 
         for provider in self._providers:
             try:
-                raw_resp = await provider.async_generate(
-                    chat_history=messages,
-                    tools=self._llm_tools,
-                    tool_choice="auto",
-                )
+                kwargs_gen = {"chat_history": messages}
+                if self._tools_enabled():
+                    kwargs_gen["tools"] = self._llm_tools
+                    kwargs_gen["tool_choice"] = "auto"
+                raw_resp = await provider.async_generate(**kwargs_gen)
 
                 # Coerce plain dict responses into LLMResponse models for uniformity
                 if isinstance(raw_resp, LLMResponse):
@@ -1250,6 +1320,11 @@ class AIClient:
             raise DependencyError("Cyclic dependency detected between requested tool calls.")
 
         return layers
+
+    # Utility ----------------------------------------------------------
+    def _tools_enabled(self) -> bool:  # noqa: D401
+        """Return *True* if any remote or local tools are available."""
+        return bool(self._tool_map or self._local_boxes)
 
 # ---------------------------------------------------------------------------
 # Utility – no-op async context manager (used when no semaphore limit set)

@@ -1,6 +1,6 @@
 # Using the AIClient
 
-The `xmcp.AIClient` is a powerful, asynchronous client for orchestrating interactions between an LLM and one or more `XMCP` servers.
+The `seqoria_agent.AIClient` is a powerful, asynchronous client that orchestrates interactions between an LLM and **remote XMCP servers, local inline tools, or both**.
 
 ## Initialization
 
@@ -8,8 +8,8 @@ You initialize the client with a list of server URLs and a list of LLM providers
 
 ```python
 import asyncio
-from xmcp import AIClient
-from xmcp.providers import OpenAIProvider, AnthropicProvider
+from seqoria_agent import AIClient
+from seqoria_agent.providers import OpenAIProvider, AnthropicProvider
 
 # A list of providers to try in order
 providers = [
@@ -90,7 +90,7 @@ The client provides hooks to integrate with your application's logic:
 -   `logger`: A standard or `structlog` logger for observability.
 
 ```python
-from xmcp.client.cache import RedisCache
+from seqoria_agent.client.cache import RedisCache
 
 def my_display_handler(envelope, history):
     print("Rendering UI for:", envelope['title'])
@@ -103,6 +103,45 @@ ai = AIClient(
 )
 ```
 
+## Local Inline Tools
+
+Need zero-latency, in-process tools?  Wrap them in a `LocalToolbox` and pass it
+to the client.  They are advertised to the LLM exactly like remote tools, but
+executed locally:
+
+```python
+from seqoria_agent.toolbox import LocalToolbox
+from seqoria_agent.models.envelope import DisplayEnvelope
+
+toolbox = LocalToolbox()
+
+@toolbox.tool()
+def add(a: int, b: int) -> int:
+    return a + b
+
+@toolbox.display_tool()
+def shout(msg: str, show_user: bool = False):
+    if show_user:
+        return DisplayEnvelope(type="markdown", payload=f"## {msg.upper()} 🔊")
+    return msg.upper()
+
+async with AIClient(urls=[], providers=[OpenAIProvider(model_id="gpt-4o")],
+                    local_toolbox=toolbox) as ai:
+    res = await ai.chat("What is 2+3?", history=[])
+    print(res["answer"])
+```
+
+## Pure LLM Mode (No Tools)
+
+If you just need a chat wrapper around the provider, create the client with
+**no URLs and no toolboxes**.  The client automatically skips the tool loop:
+
+```python
+async with AIClient(urls=[], providers=[OpenAIProvider(model_id="gpt-4o")]) as ai:
+    res = await ai.chat("Explain quantum tunnelling in one paragraph", history=[])
+    print(res["answer"])
+```
+
 ## What's new in v0.2+
 
 * **Dependency-graph execution** – automatic parallel layers respecting `depends_on`.
@@ -110,6 +149,9 @@ ai = AIClient(
 * **Meta-tools** – `__think__`, `__summarize__`, `__clarify__`.
 * **Retry / circuit-breaker** & **adaptive concurrency** (`max_concurrency`, `tool_timeout`).
 * **Pluggable cache backend** – `DictCache`, `RedisCache`.
+* **Local inline tools** – bring functions in-process with `LocalToolbox`.
+* **Router merging** – compose servers with `FastXMCPRouter`.
+* **LLM-only mode** – operate without any tools (`urls=[]`).
 
 ## Quick Example (stateless)
 ```python
