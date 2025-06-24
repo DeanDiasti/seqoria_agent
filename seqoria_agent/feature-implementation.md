@@ -162,6 +162,14 @@ ai = AIClient(urls=[], providers=[...], local_toolbox=box)
 
 Both features are fully unit-tested and showcased under `examples/servers/server_router.py` and `examples/clients/inline_tools_demo.py`.
 
+### 2025-06-22 – JSON-wrapped Tool Responses
+
+* Added `json_wrapper` flag to `FastXMCP`, `FastXMCPRouter`, and `LocalToolbox`. When enabled, every tool call result is wrapped in a JSON envelope `{ "ai_message": "<tool_response…/>", "metadata": { … } }`.
+* Developers can now pass `response_format=` (alias of `xml_formatter`) in `@tool` / `@display_tool` decorators for clearer intent.
+* `AIClient` auto-detects the wrapper, extracts `metadata`, and exposes an `on_metadata` callback.
+* Backwards-compatibility preserved – feature is opt-in and legacy raw-XML flow still works.
+* Added unit tests (`tests/test_json_wrapper.py`) and updated examples.
+
 ---
 
 ## Contributing

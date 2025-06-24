@@ -3,7 +3,8 @@
 `XMCP` is a thin wrapper around FastAPI + Model Context Protocol (MCP) that adds:
 
 * `@display_tool` decorator for rich UI payloads
-* Automatic **XML envelopes** for deterministic prompt parsing
+* Automatic **XML envelopes** (optionally wrapped in JSON) for deterministic prompt parsing
+* Declarative **XML formatting** with automatic schema derivation
 * **Structured error channel** via `<error>` tags
 * Declarative **dependency graph** with `depends_on` annotation
 * **Server-populated parameters** to inject user_id, geo, etc.
@@ -27,7 +28,30 @@ def greet(name: str, show_user: bool = False):
     if show_user:
         return DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
     return {"greeting": f"Hello {name}!"}
+
+### JSON Wrapper & Declarative Formatter (v0.3+)
+
+Enable the JSON envelope and influence the **inner** XML tags with a declarative formatter:
+
+```python
+from seqoria_agent.server.formatters import make_formatter
+
+app = FastXMCP(json_wrapper=True)  # ← responses are now {"ai_message": xml, "metadata": {...}}
+
+# Build a tiny formatter inline – emits <product> inside <tool_response>
+product_fmt = make_formatter(top_level_fields=["product"])
+
+@app.tool(response_format=product_fmt)
+def multiply(a: int, b: int):
+    return {"product": int(a) * int(b)}
+
+# No formatter supplied?  FastXMCP derives one automatically from the *first* result
+@app.tool()
+def add(a: int, b: int):
+    return int(a) + int(b)  # → <sum>7</sum> (derived on first call)
 ```
+
+`json_wrapper=False` by default for backward-compatibility.
 
 ## 2. Dependencies
 

@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.models.errors import XMCPError
-from seqoria_agent.server.formatters import DeclarativeXMLFormatter  # formatter helpers
+from seqoria_agent.server.formatters import DeclarativeXMLFormatter, derive_formatter_from_data  # formatter helpers
 
 __all__ = ["FastXMCP"]
 
@@ -52,6 +52,7 @@ class FastXMCP(FastAPI):
         version: str = "0.1.0",
         strict_mode: bool = False,
         strict_server_params: bool = True,
+        json_wrapper: bool = False,
         **kw,
     ):
         """Create a FastXMCP application.
@@ -67,6 +68,10 @@ class FastXMCP(FastAPI):
 
         self._strict_mode = strict_mode
         self._strict_server_params = bool(strict_server_params)
+        # When *True* every tool result (success or error) is returned as a
+        # JSON wrapper {"ai_message": <xml>, "metadata": {...}} instead of a
+        # bare XML string.  This is opt-in for backwards-compatibility.
+        self._json_wrapper = bool(json_wrapper)
 
         # Instance-specific tool registry ---------------------------------
         self._tools: Dict[str, _ToolInfo] = {}
@@ -103,6 +108,7 @@ class FastXMCP(FastAPI):
                 func: Callable | None = None,
                 *,
                 xml_formatter: Any | None = None,
+                response_format: Any | None = None,
                 description: str | None = None,
                 server_populated: list[str] | None = None,
                 depends_on: list[str] | None = None,
@@ -120,8 +126,11 @@ class FastXMCP(FastAPI):
 
                 def _register(f: Callable):
                     # Wrap with error handling + validation first
+                    # Give precedence to *response_format* when both passed
+                    formatter_cls = response_format if response_format is not None else xml_formatter
+
                     wrapped = self._wrap_tool_with_error_handling(
-                        func=f, tool_name=f.__name__, formatter_cls=xml_formatter
+                        func=f, tool_name=f.__name__, formatter_cls=formatter_cls
                     )
 
                     # Build JSON schema for AI-visible parameters -------------------
@@ -345,8 +354,24 @@ class FastXMCP(FastAPI):
         raise XMCPError(code="INVALID_PAYLOAD", retryable=False, detail="Return value must be DisplayEnvelope or <tool_response> XML")
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _build_error_xml(tool_name: str, exc: XMCPError) -> str:  # noqa: D401
+    # Helper: Wrap XML into JSON envelope when self._json_wrapper enabled
+    # ------------------------------------------------------------------
+
+    def _wrap_json(self, tool_name: str, xml_str: str, meta_extra: dict[str, Any] | None = None) -> str:
+        """Return **minified JSON string** wrapper suitable for <text> content."""
+        import json as _json, time as _time
+
+        meta: dict[str, Any] = {
+            "tool_name": tool_name,
+            "ts": int(_time.time()),
+        }
+        if meta_extra:
+            meta.update(meta_extra)
+
+        return _json.dumps({"ai_message": xml_str, "metadata": meta}, separators=(",", ":"))
+
+    # ------------------------------------------------------------------
+    def _build_error_xml(self, tool_name: str, exc: XMCPError) -> str:  # noqa: D401
         cddata = (exc.detail or exc.code).strip()
         meta_block = ""
         if exc.meta:
@@ -357,12 +382,16 @@ class FastXMCP(FastAPI):
             except Exception:
                 pass
 
-        return (
+        xml = (
             f"<tool_response tool_name=\"{tool_name}\">\n"
             f"  <error code=\"{exc.code}\" retryable=\"{'true' if exc.retryable else 'false'}\">\n"
             f"    <![CDATA[{cddata}]]>" + meta_block + "\n  </error>\n"
             "</tool_response>"
         )
+
+        if getattr(self, "_json_wrapper", False):
+            return self._wrap_json(tool_name, xml, {"error": exc.code})
+        return xml
 
     # ------------------------------------------------------------------
     def _serialize_success(self, tool_name: str, value: Any, formatter: Any | None):  # noqa: ANN001
@@ -381,11 +410,21 @@ class FastXMCP(FastAPI):
             display_block = f"\n  <display><![CDATA[{display_json}]]></display>"
         else:
             if formatter is None:
-                formatter = DeclarativeXMLFormatter()
+                # Attempt to derive formatter from *value* on first run
+                formatter = derive_formatter_from_data(sample=value) or DeclarativeXMLFormatter()
+
+                # Cache for subsequent calls
+                self._tool_formatters[tool_name] = formatter
+
             formatted = formatter(value, indent_level=2)
             llm_output_xml = f"\n  <llm_output><![CDATA[\n{formatted}\n  ]]></llm_output>"
 
-        return f"<tool_response tool_name=\"{tool_name}\">{llm_output_xml}{display_block}\n</tool_response>"
+        xml_out = f"<tool_response tool_name=\"{tool_name}\">{llm_output_xml}{display_block}\n</tool_response>"
+
+        if getattr(self, "_json_wrapper", False):
+            return self._wrap_json(tool_name, xml_out)
+
+        return xml_out
 
     # ------------------------------------------------------------------
     # NEW – Server-populated parameter injection helper ----------------

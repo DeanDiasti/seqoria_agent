@@ -36,6 +36,7 @@ class FastXMCPRouter(APIRouter):
         tags: List[str] | None = None,
         strict_mode: bool = False,
         strict_server_params: bool = True,
+        json_wrapper: bool = False,
         **kw,
     ):
         """Create a new router.
@@ -51,12 +52,15 @@ class FastXMCPRouter(APIRouter):
         strict_server_params:
             If *True* (default) any attempt by the LLM/client to override a
             *server-populated* parameter is rejected with an error.
+        json_wrapper:
+            If *True*, the router will wrap JSON responses in a JSON envelope.
         """
         super().__init__(prefix=prefix or "", tags=tags or [], **kw)
 
         # ------------- XMCP-specific state ----------------------------
         self._strict_mode = strict_mode
         self._strict_server_params = bool(strict_server_params)
+        self._json_wrapper = bool(json_wrapper)
 
         # Instance-local registries (merged into the FastXMCP app on mount)
         self._tools: Dict[str, _ToolInfo] = {}
@@ -91,6 +95,7 @@ class FastXMCPRouter(APIRouter):
                 func: Callable | None = None,
                 *,
                 xml_formatter: Any | None = None,
+                response_format: Any | None = None,
                 description: str | None = None,
                 server_populated: list[str] | None = None,
                 depends_on: list[str] | None = None,
@@ -99,8 +104,9 @@ class FastXMCPRouter(APIRouter):
 
                 def _register(f: Callable):
                     # Wrap with error handling + validation first
+                    formatter_cls = response_format if response_format is not None else xml_formatter
                     wrapped = self._wrap_tool_with_error_handling(
-                        func=f, tool_name=f.__name__, formatter_cls=xml_formatter
+                        func=f, tool_name=f.__name__, formatter_cls=formatter_cls
                     )
 
                     # ------------------ Build JSON schema -------------
@@ -219,8 +225,7 @@ class FastXMCPRouter(APIRouter):
         )
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _build_error_xml(tool_name: str, exc: XMCPError) -> str:  # noqa: D401
+    def _build_error_xml(self, tool_name: str, exc: XMCPError) -> str:  # noqa: D401
         cddata = (exc.detail or exc.code).strip()
         meta_block = ""
         if exc.meta:
@@ -232,12 +237,24 @@ class FastXMCPRouter(APIRouter):
             except Exception:  # pragma: no cover
                 pass
 
-        return (
+        xml = (
             f"<tool_response tool_name=\"{tool_name}\">\n"
             f"  <error code=\"{exc.code}\" retryable=\"{'true' if exc.retryable else 'false'}\">\n"
             f"    <![CDATA[{cddata}]]>" + meta_block + "\n  </error>\n"
             "</tool_response>"
         )
+
+        if self._json_wrapper:
+            return self._wrap_json(tool_name, xml, {"error": exc.code})
+        return xml
+
+    # ------------------------------------------------------------------
+    def _wrap_json(self, tool_name: str, xml_str: str, meta_extra: dict[str, Any] | None = None) -> str:
+        import json as _json, time as _time
+        meta = {"tool_name": tool_name, "ts": int(_time.time())}
+        if meta_extra:
+            meta.update(meta_extra)
+        return _json.dumps({"ai_message": xml_str, "metadata": meta}, separators=(",", ":"))
 
     # ------------------------------------------------------------------
     def _serialize_success(self, tool_name: str, value: Any, formatter: Any | None):  # noqa: ANN001
@@ -254,11 +271,18 @@ class FastXMCPRouter(APIRouter):
             display_block = f"\n  <display><![CDATA[{display_json}]]></display>"
         else:
             if formatter is None:
-                formatter = DeclarativeXMLFormatter()
+                from seqoria_agent.server.formatters import derive_formatter_from_data
+                formatter = derive_formatter_from_data(sample=value) or DeclarativeXMLFormatter()
+                self._tool_formatters[tool_name] = formatter
             formatted = formatter(value, indent_level=2)
             llm_output_xml = f"\n  <llm_output><![CDATA[\n{formatted}\n  ]]></llm_output>"
 
-        return f"<tool_response tool_name=\"{tool_name}\">{llm_output_xml}{display_block}\n</tool_response>"
+        xml_out = f"<tool_response tool_name=\"{tool_name}\">{llm_output_xml}{display_block}\n</tool_response>"
+
+        if self._json_wrapper:
+            return self._wrap_json(tool_name=tool_name, xml_str=xml_out)
+
+        return xml_out
 
     # ------------------------------------------------------------------
     async def _inject_server_params(

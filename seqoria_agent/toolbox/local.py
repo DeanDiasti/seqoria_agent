@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Sequence
 from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.models.errors import XMCPError
 from seqoria_agent.server.fastxmcp.app import _ToolInfo  # reuse same helper model
-from seqoria_agent.server.formatters import DeclarativeXMLFormatter
+from seqoria_agent.server.formatters import DeclarativeXMLFormatter, derive_formatter_from_data
 
 __all__: list[str] = ["LocalToolbox"]
 
@@ -26,9 +26,10 @@ class LocalToolbox:  # noqa: D401 – simple container
     """Registry for inline XMCP tools (no HTTP layer)."""
 
     # ------------------------------------------------------------------
-    def __init__(self, *, strict_mode: bool = False, strict_server_params: bool = True):
+    def __init__(self, *, strict_mode: bool = False, strict_server_params: bool = True, json_wrapper: bool = False):
         self._strict_mode = bool(strict_mode)
         self._strict_server_params = bool(strict_server_params)
+        self._json_wrapper = bool(json_wrapper)
 
         self._tools: Dict[str, _ToolInfo] = {}
         self._tool_formatters: dict[str, Any] = {}
@@ -52,6 +53,7 @@ class LocalToolbox:  # noqa: D401 – simple container
                 func: Callable | None = None,
                 *,
                 xml_formatter: Any | None = None,
+                response_format: Any | None = None,
                 description: str | None = None,
                 server_populated: list[str] | None = None,
                 depends_on: list[str] | None = None,
@@ -59,8 +61,9 @@ class LocalToolbox:  # noqa: D401 – simple container
                 """Register a function as a tool/display_tool."""
 
                 def _register(f: Callable):
+                    formatter_cls = response_format if response_format is not None else xml_formatter
                     wrapped = self._wrap_tool_with_error_handling(
-                        func=f, tool_name=f.__name__, formatter_cls=xml_formatter
+                        func=f, tool_name=f.__name__, formatter_cls=formatter_cls
                     )
 
                     sig = inspect.signature(f)
@@ -155,8 +158,15 @@ class LocalToolbox:  # noqa: D401 – simple container
         raise XMCPError(code="INVALID_PAYLOAD", retryable=False, detail="Return value must be DisplayEnvelope or <tool_response> XML")
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _build_error_xml(tool_name: str, exc: XMCPError) -> str:  # noqa: D401
+    def _wrap_json(self, tool_name: str, xml_str: str, meta_extra: dict[str, Any] | None = None) -> str:
+        import json as _json, time as _time
+        meta = {"tool_name": tool_name, "ts": int(_time.time())}
+        if meta_extra:
+            meta.update(meta_extra)
+        return _json.dumps({"ai_message": xml_str, "metadata": meta}, separators=(",", ":"))
+
+    # ------------------------------------------------------------------
+    def _build_error_xml(self, tool_name: str, exc: XMCPError) -> str:  # noqa: D401
         cddata = (exc.detail or exc.code).strip()
         meta_block = ""
         if exc.meta:
@@ -166,12 +176,16 @@ class LocalToolbox:  # noqa: D401 – simple container
                 meta_block = f"\n    <meta>{_json.dumps(exc.meta, separators=(',', ':'))}</meta>"
             except Exception:
                 pass
-        return (
+        xml = (
             f"<tool_response tool_name=\"{tool_name}\">\n"
             f"  <error code=\"{exc.code}\" retryable=\"{'true' if exc.retryable else 'false'}\">\n"
             f"    <![CDATA[{cddata}]]>{meta_block}\n  </error>\n"
             "</tool_response>"
         )
+
+        if self._json_wrapper:
+            return self._wrap_json(tool_name, xml, {"error": exc.code})
+        return xml
 
     # ------------------------------------------------------------------
     def _serialize_success(self, tool_name: str, value: Any, formatter: Any | None):  # noqa: ANN001
@@ -187,10 +201,16 @@ class LocalToolbox:  # noqa: D401 – simple container
             display_block = f"\n  <display><![CDATA[{display_json}]]></display>"
         else:
             if formatter is None:
-                formatter = DeclarativeXMLFormatter()
+                formatter = derive_formatter_from_data(sample=value) or DeclarativeXMLFormatter()
+                self._tool_formatters[tool_name] = formatter
             formatted = formatter(value, indent_level=2)
             llm_output = f"\n  <llm_output><![CDATA[\n{formatted}\n  ]]></llm_output>"
-        return f"<tool_response tool_name=\"{tool_name}\">{llm_output}{display_block}\n</tool_response>"
+        xml_out = f"<tool_response tool_name=\"{tool_name}\">{llm_output}{display_block}\n</tool_response>"
+
+        if self._json_wrapper:
+            return self._wrap_json(tool_name, xml_out)
+
+        return xml_out
 
     # ------------------------------------------------------------------
     # Public API --------------------------------------------------------

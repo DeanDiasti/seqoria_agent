@@ -82,12 +82,13 @@ await ai.refresh_tools()
 
 ### Callbacks and Hooks
 
-The client provides hooks to integrate with your application's logic:
+`AIClient` surfaces several synchronous hooks so your application can react instantly:
 
--   `on_display`: A callback that fires immediately when a `DisplayEnvelope` is received from a tool.
--   `on_error`: A callback for handling structured errors from tools.
--   `cache`: A pluggable cache object (e.g., `RedisCache`) to avoid redundant tool calls.
--   `logger`: A standard or `structlog` logger for observability.
+* **`on_display`** – fires when a `DisplayEnvelope` arrives (UI rendering).
+* **`on_error`** – fires on structured `<error>` payloads (alerting / retry).
+* **`on_metadata`** – *new in v0.3* – fires when a tool response is wrapped in the JSON envelope.  All keys from `metadata` are passed unchanged so you can log execution time, tool name, etc.
+* **`cache`** – any object implementing `get/set` avoids redundant tool calls.
+* **`logger`** – plug in your own `structlog` or stdlib logger.
 
 ```python
 from seqoria_agent.client.cache import RedisCache
@@ -99,7 +100,8 @@ ai = AIClient(
     urls=[...],
     providers=[...],
     on_display=my_display_handler,
-    cache=RedisCache(url="redis://localhost:6379")
+    cache=RedisCache(url="redis://localhost:6379"),
+    on_metadata=lambda meta, _hist: print("[debug] metadata", meta),
 )
 ```
 
@@ -152,6 +154,7 @@ async with AIClient(urls=[], providers=[OpenAIProvider(model_id="gpt-4o")]) as a
 * **Local inline tools** – bring functions in-process with `LocalToolbox`.
 * **Router merging** – compose servers with `FastXMCPRouter`.
 * **LLM-only mode** – operate without any tools (`urls=[]`).
+* **JSON wrapper support** – opt-in `json_wrapper=True` on servers; client auto-unwraps
 
 ## Quick Example (stateless)
 ```python

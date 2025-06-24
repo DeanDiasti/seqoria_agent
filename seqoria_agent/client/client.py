@@ -66,18 +66,19 @@ class AIClient:
 
     def __init__(
         self,
-        urls: Iterable[str],
-        providers: List[BaseProvider],
+        providers: List[BaseProvider] = None,
         *,
+        urls: Optional[Iterable[str]] = None,
         logger: Optional[logging.Logger] = None,
         on_error: Optional[Callable[[dict, list | None], None]] = None,
         on_display: Optional[Callable[[dict, list | None], None]] = None,
-        local_toolbox: LocalToolbox | list[LocalToolbox] | None = None,
+        on_metadata: Optional[Callable[[dict, list | None], None]] = None,
+        local_toolbox: Optional[LocalToolbox | list[LocalToolbox]] = None,
         refresh_interval: int | float = 0,
-        param_providers: list["ParameterProvider"] | None = None,
+        param_providers: Optional[list["ParameterProvider"]] = None,
         allow_override: bool = False,
         **kwargs: Any,
-    ):
+    ) -> None:
         """Initialise the AIClient.
 
         Parameters
@@ -98,6 +99,8 @@ class AIClient:
             A synchronous callback invoked when a display tool returns a
             `DisplayEnvelope`. This allows for immediate rendering before the
             `chat` method completes, by default None.
+        on_metadata : Optional[Callable[[dict, list | None], None]], optional
+            A synchronous callback invoked when a tool returns metadata. This allows for immediate processing of metadata before the `chat` method completes, by default None.
         local_toolbox : LocalToolbox | list[LocalToolbox] | None, optional
             One or more `LocalToolbox` instances to register inline tools from.
         refresh_interval : int | float, optional
@@ -230,6 +233,9 @@ class AIClient:
 
         # Optional callback for successful DisplayEnvelope payloads (early-exit)
         self._on_display = on_display
+
+        # Optional callback providing access to JSON wrapper metadata
+        self._on_metadata = on_metadata
 
         # --- Hot-reload of tool registry -----------------------------------
         self._refresh_interval: float = float(refresh_interval)
@@ -1075,7 +1081,20 @@ class AIClient:
                     self._logger.warning("Cache set error (ignored)", error=str(e))
 
         # ------------------------------------------------------------------
-        # Structured error detection
+        # Detect JSON wrapper and extract ai_message / metadata
+        # ------------------------------------------------------------------
+        metadata_block: Optional[dict[str, Any]] = None
+
+        if isinstance(raw_output, str):
+            # Attempt to parse as JSON wrapper
+            try:
+                tmp = json.loads(raw_output)
+                if isinstance(tmp, dict) and "ai_message" in tmp:
+                    metadata_block = tmp.get("metadata", {})
+                    raw_output = tmp.get("ai_message", "")
+            except Exception:
+                pass
+
         # ------------------------------------------------------------------
         error_payload: Optional[dict[str, Any]] = None
         if isinstance(raw_output, str):
@@ -1087,6 +1106,13 @@ class AIClient:
             "name": tool_name,
             "content": raw_output,
         }
+
+        # Optional metadata callback
+        if metadata_block is not None and self._on_metadata is not None:
+            try:
+                self._on_metadata(metadata_block, self._current_history)
+            except Exception as cb_exc:
+                self._logger.warning("on_metadata callback failed", error=str(cb_exc))
 
         if is_display_call:
             self._logger.info("Display tool completed - will trigger early exit")
@@ -1183,7 +1209,6 @@ class AIClient:
             return None
 
         try:
-            import json as _json
             import xml.etree.ElementTree as ET
 
             root = ET.fromstring(xml_str.strip())
@@ -1201,7 +1226,7 @@ class AIClient:
             meta: Any | None = None
             if meta_node is not None and meta_node.text:
                 try:
-                    meta = _json.loads(meta_node.text)
+                    meta = json.loads(meta_node.text)
                 except Exception:
                     meta = meta_node.text.strip()
 

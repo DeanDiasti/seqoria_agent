@@ -1,6 +1,6 @@
 from __future__ import annotations
 import html
-from typing import Any, Sequence
+from typing import Any, Sequence, Callable
 """XML formatter plug-in system for seqoria_agent tools.
 
 This implements a minimal but extensible mechanism to convert arbitrary Python
@@ -50,7 +50,7 @@ class BaseXMLFormatter:
     indent: str = "  "
 
     def __call__(self, data: Any, *, indent_level: int = 0) -> str:  # noqa: D401 – callable shortcut
-        return self.format(data, indent_level=indent_level)
+        return self.format(data=data, indent_level=indent_level)
 
     # --------------------------------------------------------------
     # Public API
@@ -93,97 +93,169 @@ class BaseXMLFormatter:
 
 
 class DeclarativeXMLFormatter(BaseXMLFormatter):
-    """A formatter that serializes dicts and lists recursively.
+    """Declarative helper that turns *structured* dictionaries into concise XML.
 
-    This implementation provides options to filter keys at different levels,
-    allowing for concise XML representations for the LLM.
+    Sub-classes customise only a handful of **class attributes** – no code –
+    and inherit a ready-made :py:meth:`format` implementation.
 
-    Attributes
-    ----------
-    top_level_fields : Sequence[str] | None
-        A list of keys to include from the root object. If `None` or empty,
-        all keys are included. Defaults to `None`.
-    result_item_fields : dict[str, Sequence[str]]
-        A mapping from a key (whose value is a list of dicts) to a list of
-        keys that should be included for the nested dicts.
-        Example: `{"records": ["id", "name"]}`
+    Supported attributes
+    --------------------
+    top_level_fields:
+        Scalar keys to emit directly under ``<tool_response>``.
+    results_list_field:
+        Name of the key whose *value is a list* that should be rendered via
+        ``<result_item_name>`` tags.  Leave empty to skip list handling.
+    result_item_name:
+        XML tag name for each item in that list (default "item").
+    result_item_fields:
+        Sub-keys from each list item dict to include as children.
+    result_item_attributes:
+        Mapping ``attr_name -> callable(item_dict)`` whose return value is
+        inserted as an *attribute* on the ``<result_item_name>`` element.
     """
 
-    # Developers override this in sub-classes
+    # Developers override these ---------------------------------------------
     top_level_fields: Sequence[str] | None = None
+    results_list_field: str = ""
+    result_item_name: str = "item"
+    result_item_fields: Sequence[str] = ()
+    result_item_attributes: dict[str, Callable[[dict], Any]] = {}
 
-    # Keys whose value is a *list* of dict items can specify **nested**
-    # white-list via the mapping below.  Example::
-    #
-    #     result_item_fields = {
-    #         "records": ["id", "name"],
-    #     }
-    #
-    result_item_fields: dict[str, Sequence[str]] = {}
+    # ------------------------------------------------------------------
+    # Public formatter API
+    # ------------------------------------------------------------------
 
-    def format(self, data: Any, *, indent_level: int = 0) -> str:
-        """Recursively convert the data into an XML string.
+    def format(self, data: Any, *, indent_level: int = 0) -> str:  # noqa: ANN001
+        if not isinstance(data, dict):
+            # Fallback – scalar or list
+            return self._format_fallback(data=data, indent_level=indent_level)
 
-        This method handles dicts, lists, and scalar values, delegating to
-        more specific helpers.
-
-        Parameters
-        ----------
-        data : Any
-            The Python data to serialize.
-        indent_level : int, optional
-            The current indentation level. Defaults to 0.
-
-        Returns
-        -------
-        str
-            The resulting XML string.
-        """
-        if isinstance(data, dict):
-            return self._format_dict(data, indent_level)
-        if isinstance(data, list):
-            return self._format_list(data, indent_level, "item")
-        return f"{self._indent(indent_level)}{self._escape(str(data))}"
-
-    # ----------------------------------------------------------
-    def _format_dict(self, data: dict[str, Any], level: int) -> str:  # noqa: ANN001
-        keys = list(data.keys())
-        if self.top_level_fields:
-            keys = [k for k in keys if k in self.top_level_fields]
         lines: list[str] = []
-        for key in keys:
-            val = data[key]
-            tag = self._escape(str(key))
-            if isinstance(val, dict):
-                inner = self._format_dict(val, level + 1)
-                lines.append(f"{self._indent(level)}<{tag}>\n{inner}\n{self._indent(level)}</{tag}>")
-            elif isinstance(val, list):
-                allowed = self.result_item_fields.get(key)
-                inner = self._format_list(val, level + 1, "item", allowed)
-                lines.append(f"{self._indent(level)}<{tag}>\n{inner}\n{self._indent(level)}</{tag}>")
-            else:
-                lines.append(f"{self._indent(level)}<{tag}>{self._escape(str(val))}</{tag}>")
+        indent = self._indent(indent_level)
+
+        # -------- Top-level scalar fields -----------------------------
+        scalar_keys = data.keys()
+        if self.top_level_fields:
+            scalar_keys = [k for k in scalar_keys if k in self.top_level_fields]
+
+        for key in scalar_keys:
+            if key == self.results_list_field:
+                continue  # handled separately
+            val = data.get(key)
+            if val is None:
+                continue
+            lines.append(f"{indent}<{key}>{self._escape(str(val))}</{key}>")
+
+        # -------- List-of-results block -------------------------------
+        if self.results_list_field and self.results_list_field in data:
+            results = data[self.results_list_field]
+            if isinstance(results, list):
+                lines.append(f"{indent}<{self.results_list_field}>")
+                for item in results:
+                    lines.extend(self._format_result_item(item, indent_level + 1))
+                lines.append(f"{indent}</{self.results_list_field}>")
+
         return "\n".join(lines)
 
-    def _format_list(
-        self,
-        items: list[Any],
-        level: int,
-        item_tag: str,
-        allowed_fields: Sequence[str] | None = None,
-    ) -> str:  # noqa: ANN001
-        lines: list[str] = []
-        for itm in items:
-            if isinstance(itm, dict):
-                lines.append(f"{self._indent(level)}<{item_tag}>")
-                nested_keys = list(itm.keys())
-                if allowed_fields:
-                    nested_keys = [k for k in nested_keys if k in allowed_fields]
-                for k in nested_keys:
-                    val = itm[k]
-                    tag = self._escape(str(k))
-                    lines.append(f"{self._indent(level + 1)}<{tag}>{self._escape(str(val))}</{tag}>")
-                lines.append(f"{self._indent(level)}</{item_tag}>")
-            else:
-                lines.append(f"{self._indent(level)}<{item_tag}>{self._escape(str(itm))}</{item_tag}>")
-        return "\n".join(lines) 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _format_result_item(self, item: Any, level: int) -> list[str]:  # noqa: ANN001
+        """Return list[str] lines for a single *result* element."""
+        indent = self._indent(level)
+        if not isinstance(item, dict):
+            return [f"{indent}<{self.result_item_name}>{self._escape(str(item))}</{self.result_item_name}>"]
+
+        # Build attribute string
+        attrs: list[str] = []
+        for name, fn in self.result_item_attributes.items():
+            try:
+                val = fn(item)
+            except Exception:
+                val = None
+            if val is not None:
+                attrs.append(f'{name}="{self._escape(str(val))}"')
+        attr_str = f" {' '.join(attrs)}" if attrs else ""
+
+        lines: list[str] = [f"{indent}<{self.result_item_name}{attr_str}>"]
+
+        for fld in self.result_item_fields:
+            if fld in item and item[fld] is not None:
+                val = self._escape(str(item[fld]))
+                lines.append(f"{indent}  <{fld}>{val}</{fld}>")
+
+        lines.append(f"{indent}</{self.result_item_name}>")
+        return lines
+
+    def _format_fallback(self, data: Any, indent_level: int) -> str:  # noqa: ANN001
+        # Re-use old behaviour for arbitrary types
+        if isinstance(data, list):
+            return "\n".join(
+                f"{self._indent(level=indent_level)}<item>{self._escape(text=str(object=v))}</item>" for v in data
+            )
+        return f"{self._indent(level=indent_level)}{self._escape(text=str(object=data))}"
+
+
+# ---------------------------------------------------------------------------
+# Helper – dynamic factory for inline use
+# ---------------------------------------------------------------------------
+
+
+def make_formatter(
+    *,
+    top_level_fields: Sequence[str] | None = None,
+    results_list_field: str = "",
+    result_item_name: str = "item",
+    result_item_fields: Sequence[str] | None = None,
+    result_item_attributes: dict[str, Callable[[dict], Any]] | None = None,
+) -> DeclarativeXMLFormatter:
+    """Return a *configured instance* of DeclarativeXMLFormatter.
+
+    Examples
+    --------
+    >>> fmt = make_formatter(top_level_fields=["answer"], results_list_field="results")
+    >>> @app.tool(response_format=fmt)
+    ... def search(q: str): ...
+    """
+
+    cls_dict = {
+        "top_level_fields": top_level_fields,
+        "results_list_field": results_list_field,
+        "result_item_name": result_item_name,
+        "result_item_fields": result_item_fields or (),
+        "result_item_attributes": result_item_attributes or {},
+    }
+    Derived = type("InlineFormatter", (DeclarativeXMLFormatter), cls_dict)  # noqa: N801 – dynamic name
+    return Derived()
+
+
+# ---------------------------------------------------------------------------
+# Internal – derive formatter automatically from sample data
+# ---------------------------------------------------------------------------
+
+
+def derive_formatter_from_data(sample: Any) -> DeclarativeXMLFormatter | None:  # noqa: ANN001
+    """Attempt to build a formatter that mirrors the structure of *sample*.
+
+    Currently supports a **dict** with:
+    • scalar fields → top_level_fields
+    • first list-of-dict → results_list_field & result_item_fields
+    Returns *None* when heuristic fails.
+    """
+    if not isinstance(sample, dict):
+        return None
+
+    scalar_keys = [k for k, v in sample.items() if not isinstance(v, list)]
+    list_key = next((k for k, v in sample.items() if isinstance(v, list) and v and isinstance(v[0], dict)), None)
+
+    if list_key:
+        item_fields = list(sample[list_key][0].keys())  # type: ignore[index]
+    else:
+        item_fields = []
+
+    return make_formatter(
+        top_level_fields=scalar_keys,
+        results_list_field=list_key or "",
+        result_item_fields=item_fields,
+    ) 
