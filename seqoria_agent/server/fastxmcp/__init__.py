@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-"""fastxmcp package - public re-exports and convenience imports.
+"""fastxmcp package – public re-exports.
 
-This sub-package provides the `FastXMCP` runtime::
+Canonical usage::
 
-    from seqoria_agent.server.fastxmcp import FastXMCP
+    from seqoria_agent.server.fastxmcp import FastXMCP, FastXMCPRouter
 """
 
-from .app import FastXMCP  # noqa: F401
-from .router import FastXMCPRouter  # noqa: F401
+from seqoria_agent.server.fastxmcp_public import FastXMCP, FastXMCPRouter  # noqa: F401
 
 __all__: list[str] = [
     "FastXMCP",

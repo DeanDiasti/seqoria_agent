@@ -1,6 +1,6 @@
 import pytest, httpx, jwt
 from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent.server.fastxmcp.router import FastXMCPRouter
+from seqoria_agent.server.fastxmcp import FastXMCPRouter
 from seqoria_agent.auth.backends import BearerCookieBackend
 
 SECRET = "router-secret"

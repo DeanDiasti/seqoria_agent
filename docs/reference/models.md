@@ -4,7 +4,7 @@ This page provides an auto-generated API reference for the shared data models in
 
 ## DisplayEnvelope
 
-::: xmcp.models.envelope.DisplayEnvelope
+::: seqoria_agent.models.envelope.DisplayEnvelope
     handler: python
     options:
       show_root_heading: true
@@ -13,7 +13,7 @@ This page provides an auto-generated API reference for the shared data models in
 
 ## ChatChunk
 
-::: xmcp.models.chunk.ChatChunk
+::: seqoria_agent.models.chunk.ChatChunk
     handler: python
     options:
       show_root_heading: true
@@ -22,7 +22,7 @@ This page provides an auto-generated API reference for the shared data models in
 
 ## Errors
 
-::: xmcp.models.errors
+::: seqoria_agent.models.errors
     handler: python
     options:
       show_root_heading: true

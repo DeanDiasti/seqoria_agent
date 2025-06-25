@@ -4,7 +4,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Base Provider
 
-::: xmcp.providers.base_provider.BaseProvider
+::: seqoria_agent.providers.base_provider.BaseProvider
     handler: python
     options:
       show_root_heading: true
@@ -13,7 +13,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Provider Schemas
 
-::: xmcp.providers.schemas
+::: seqoria_agent.providers.schemas
     handler: python
     options:
       show_root_heading: true
@@ -22,7 +22,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## OpenAI Provider
 
-::: xmcp.providers.openai_provider.OpenAIProvider
+::: seqoria_agent.providers.openai_provider.OpenAIProvider
     handler: python
     options:
       show_root_heading: true
@@ -31,7 +31,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Anthropic Provider
 
-::: xmcp.providers.anthropic_provider.AnthropicProvider
+::: seqoria_agent.providers.anthropic_provider.AnthropicProvider
     handler: python
     options:
       show_root_heading: true
@@ -40,7 +40,7 @@ This page provides an auto-generated API reference for the LLM provider abstract
 
 ## Provider Errors
 
-::: xmcp.providers.errors
+::: seqoria_agent.providers.errors
     handler: python
     options:
       show_root_heading: true

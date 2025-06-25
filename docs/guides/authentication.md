@@ -53,7 +53,7 @@ integrate OAuth2 introspection, API keys or mTLS.
 
 Routers can specify their own backend:
 ```python
-from seqoria_agent.server.fastxmcp.router import FastXMCPRouter
+from seqoria_agent.server.fastxmcp import FastXMCPRouter
 from seqoria_agent.auth.backends import BearerCookieBackend
 
 secure = FastXMCPRouter(auth_backend=BearerCookieBackend(secret="s", algorithm="HS256"))

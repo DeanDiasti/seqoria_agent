@@ -4,7 +4,7 @@ This page provides an auto-generated API reference for the `xmcp.client` module.
 
 ## AIClient
 
-::: xmcp.client.AIClient
+::: seqoria_agent.client.AIClient
     handler: python
     options:
       show_root_heading: true
@@ -14,7 +14,7 @@ This page provides an auto-generated API reference for the `xmcp.client` module.
 
 ## ChatChunk
 
-::: xmcp.models.chunk.ChatChunk
+::: seqoria_agent.models.chunk.ChatChunk
     handler: python
     options:
       show_root_heading: true
@@ -23,7 +23,7 @@ This page provides an auto-generated API reference for the `xmcp.client` module.
 
 ## Caching
 
-::: xmcp.client.cache
+::: seqoria_agent.client.cache
     handler: python
     options:
       show_root_heading: true

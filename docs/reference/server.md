@@ -4,7 +4,7 @@ This page provides an auto-generated API reference for the `xmcp.server` module.
 
 ## XMCP
 
-::: xmcp.server.runtime.XMCP
+::: seqoria_agent.server.fastxmcp.FastXMCP
     handler: python
     options:
       show_root_heading: true
@@ -14,7 +14,7 @@ This page provides an auto-generated API reference for the `xmcp.server` module.
 
 ## Formatters
 
-::: xmcp.server.formatters
+::: seqoria_agent.server.formatters
     handler: python
     options:
       show_root_heading: true

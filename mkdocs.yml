@@ -1,5 +1,4 @@
-site_name: saaf Documentation
-site_name: seqoria_agent Documentation
+site_name: Seqoria Agent Documentation
 # site_url: https://deandiasti.github.io/seqoria_agent/
 repo_url: https://github.com/deandiasti/seqoria_agent
 repo_name: seqoria_agent
@@ -67,7 +66,7 @@ nav:
     - Server Recipes: guides/server_recipes.md
     - Authentication: guides/authentication.md
     - Testing & CI: guides/testing.md
-    - Server (Legacy): servers.md
+    - Server Guide: servers.md
   - Topics:
     - Streaming Responses: topics/streaming.md
     - Caching: topics/caching.md
@@ -82,4 +81,6 @@ nav:
   - Coming Soon:
     - Token Accounting: future/token_accounting.md
     - Multi-Tenancy: future/multi_tenancy.md
-    - Frontend Guide: future/frontend_guide.md 
+    - Frontend Guide: future/frontend_guide.md
+  - Migration:
+    - XMCP Server Upgrade: migration/xmcp_server.md 
