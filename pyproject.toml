@@ -1,6 +1,6 @@
 [project]
 name = "seqoria-agent"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,6 +23,7 @@ dependencies = [
     "pytest-cov>=6.2.1",
     "redis>=6.2.0",
     "structlog>=25.4.0",
+    "PyJWT>=2.8.0",
 ]
 
 [project.urls]

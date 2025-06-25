@@ -165,4 +165,30 @@ async with AIClient(urls=["http://localhost:3333"],
     print(res["answer"], "display?", bool(res["display"]))
 ```
 
+## Authentication
+
+Need to call **protected** tools?  Pass an *AuthProvider* when you build the client.
+
+```python
+from seqoria_agent import AIClient
+from seqoria_agent.auth.providers import StaticCookieProvider
+from seqoria_agent.providers import OpenAIProvider
+
+cookies = StaticCookieProvider(token=my_jwt, cookie_name="access_token")
+
+async with AIClient(urls=["https://api.acme.ai/mcp/"],
+                    providers=[OpenAIProvider(model_id="gpt-4o")],
+                    auth_provider=cookies) as ai:
+    res = await ai.chat("who am I?", history=[])
+    print(res["answer"])
+```
+
+You may **replace** credentials without restarting the client:
+
+```python
+ai.add_auth_provider(StaticApiKeyProvider(token="new", header_name="X-API-Key"))
+```
+
+Auth providers can implement `refresh_token_if_needed()` for automatic renewal before each request.
+
 > **Heads-up**  This page is a concise primer. A full deep-dive lives in [Guides → Using AIClient](guides/ai_client.md). 

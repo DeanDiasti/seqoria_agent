@@ -19,6 +19,7 @@ from seqoria_agent.models.errors import XMCPError
 from seqoria_agent.server.fastxmcp.app import _ToolInfo  # reuse same helper model
 from seqoria_agent.server.formatters import DeclarativeXMLFormatter, derive_formatter_from_data
 from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY  # central constant
+from seqoria_agent.auth.backends import BaseAuthBackend, NoAuthBackend
 
 __all__: list[str] = ["LocalToolbox"]
 
@@ -27,10 +28,24 @@ class LocalToolbox:  # noqa: D401 – simple container
     """Registry for inline XMCP tools (no HTTP layer)."""
 
     # ------------------------------------------------------------------
-    def __init__(self, *, strict_mode: bool = False, strict_server_params: bool = True, json_wrapper: bool = False):
+    def __init__(
+        self,
+        *,
+        strict_mode: bool = False,
+        strict_server_params: bool = True,
+        json_wrapper: bool = False,
+        auth_backend: BaseAuthBackend | None = None,
+    ) -> None:
         self._strict_mode = bool(strict_mode)
         self._strict_server_params = bool(strict_server_params)
         self._json_wrapper = bool(json_wrapper)
+
+        if auth_backend is None:
+            auth_backend = NoAuthBackend()
+        if not isinstance(auth_backend, BaseAuthBackend):
+            raise TypeError("auth_backend must be an instance of BaseAuthBackend")
+
+        self._auth_backend: BaseAuthBackend = auth_backend
 
         self._tools: Dict[str, _ToolInfo] = {}
         self._tool_formatters: dict[str, Any] = {}
@@ -225,6 +240,21 @@ class LocalToolbox:  # noqa: D401 – simple container
         info = self._tools[name]
         arguments = dict(arguments or {})
         server_args = server_args or {}
+
+        # --------------------------------------------------------------
+        # Authentication (Phase-1) – run backend once before execution
+        # --------------------------------------------------------------
+
+        # FastAPI passes a `Request` object – for in-process execution we
+        # fabricate a minimal stub carrying a `state` attribute so backends
+        # can attach principal information.  A *SimpleNamespace* is good
+        # enough for this purpose.
+
+        fake_request = SimpleNamespace(state=SimpleNamespace())
+        principal = self._auth_backend.authenticate(request=fake_request)
+        if inspect.isawaitable(object=principal):
+            principal = await principal  # type: ignore[assignment]
+        fake_request.state.principal = principal
 
         # Validate server_args vs allowed list -------------------------
         if server_args:

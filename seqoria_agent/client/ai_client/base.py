@@ -14,6 +14,7 @@ except ModuleNotFoundError:  # pragma: no cover
     structlog = None  # type: ignore
 
 from seqoria_agent.client.ai_client.connection_pool import ConnectionPool
+from seqoria_agent.auth.providers import BaseAuthProvider, NoAuthProvider  # Phase-2
 from seqoria_agent.client.ai_client.executor import Executor
 from seqoria_agent.client.ai_client.history import build_system_prompt
 from seqoria_agent.client.ai_client.llm_interface import LLMInterface
@@ -52,6 +53,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
         param_providers: list[ParameterProvider] | None = None,
         allow_override: bool = False,
         settings: ClientSettings | None = None,
+        auth_provider: BaseAuthProvider | None = None,
         **client_kwargs: Any,
     ) -> None:
         # ------------------------------------------------------------------
@@ -76,6 +78,18 @@ class AIClient:  # noqa: D101 – tiny glue layer
             breaker_reset_after if breaker_reset_after != 60 else settings.breaker_reset_after
         )
         param_providers = param_providers if param_providers is not None else settings.param_providers
+        # ------------------------------------------------------------------
+        # Phase-2 – authentication provider wiring
+        # ------------------------------------------------------------------
+
+        self._auth_provider: BaseAuthProvider = auth_provider or NoAuthProvider()
+
+        # Merge auth_provider into client kwargs so ConnectionPool/Transport
+        # can thread it through to every HTTP request.  Explicit overrides in
+        # *client_kwargs* remain honoured.
+        if "auth_provider" not in client_kwargs:
+            client_kwargs["auth_provider"] = self._auth_provider
+
         # 'allow_override' stays as explicitly provided (default False)
         # Merge client_kwargs with settings.client_kwargs (explicit has priority)
         final_client_kwargs = {**settings.client_kwargs, **client_kwargs}
@@ -239,4 +253,22 @@ class AIClient:  # noqa: D101 – tiny glue layer
             def depends_on(_, n):  # noqa: D401
                 return set(reg.depends_on(name=n)) | set(extra.get(n, set()))
         tmp = Executor(pool=self.pool, registry=_R(), cache=NullCache())
-        return tmp.compute_execution_layers(tool_calls=calls) 
+        return tmp.compute_execution_layers(tool_calls=calls)
+
+    # ------------------------------------------------------------------ auth
+
+    def add_auth_provider(self, provider: BaseAuthProvider):  # noqa: D401
+        """Replace the active *provider* for outgoing HTTP requests.
+
+        The change is applied immediately to existing transport connections
+        so subsequent calls use the updated credentials.
+        """
+        self._auth_provider = provider
+
+        # Update all active transports so they pick up the new provider.
+        for conn in self.pool.connections:
+            if hasattr(conn.client, "set_auth_provider"):
+                try:
+                    conn.client.set_auth_provider(provider=provider)
+                except Exception:
+                    continue 

@@ -15,6 +15,7 @@ from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.models.errors import XMCPError
 from seqoria_agent.server.formatters import DeclarativeXMLFormatter, derive_formatter_from_data  # formatter helpers
 from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY  # central constant reuse
+from seqoria_agent.auth.backends import BaseAuthBackend, NoAuthBackend, BaseMiddlewareAuthBackend  # local import to avoid hard dep when module missing
 
 __all__ = ["FastXMCP"]
 
@@ -54,6 +55,7 @@ class FastXMCP(FastAPI):
         strict_mode: bool = False,
         strict_server_params: bool = True,
         json_wrapper: bool = False,
+        auth_backend=None,
         **kw,
     ):
         """Create a FastXMCP application.
@@ -65,6 +67,9 @@ class FastXMCP(FastAPI):
             or XML). Invalid payloads are transformed into a structured error
             envelope to keep the protocol stable.
         """
+        from starlette.middleware.base import BaseHTTPMiddleware  # type: ignore
+        import inspect as _insp
+
         super().__init__(title=title, version=version, **kw)
 
         self._strict_mode = strict_mode
@@ -73,6 +78,51 @@ class FastXMCP(FastAPI):
         # JSON wrapper {"ai_message": <xml>, "metadata": {...}} instead of a
         # bare XML string.  This is opt-in for backwards-compatibility.
         self._json_wrapper = bool(json_wrapper)
+
+        # ------------------------------------------------------------------
+        # Authentication backend wiring  (Phase-1 + middleware upgrade)
+        # ------------------------------------------------------------------
+
+        if auth_backend is None:
+            auth_backend = NoAuthBackend()
+        if not isinstance(auth_backend, BaseAuthBackend):
+            raise TypeError("auth_backend must be an instance of BaseAuthBackend")
+
+        self._auth_backend: BaseAuthBackend = auth_backend
+
+        # If the provided backend is already a Starlette-compliant middleware
+        # variant, let FastAPI mount it natively.  Otherwise, fall back to the
+        # old inline wrapper to keep 100 % backwards-compatibility.
+        if isinstance(auth_backend, BaseMiddlewareAuthBackend):
+            # FastAPI will instantiate a *new* middleware instance from the
+            # class, therefore we pass the *configuration* via keyword args.
+            self.add_middleware(type(auth_backend), **{
+                k: v for k, v in auth_backend.__dict__.items() if not k.startswith("_")
+            })
+        else:
+            # ------------------------------------------------------------------
+            # Legacy inline wrapper (pre-middleware design) ----------------------
+            # ------------------------------------------------------------------
+
+            class _AuthMiddleware(BaseHTTPMiddleware):  # noqa: D401 – inner helper
+                def __init__(self, app, backend):
+                    super().__init__(app)
+                    self._backend = backend
+
+                async def dispatch(self, request, call_next):  # type: ignore[override]
+                    try:
+                        principal = self._backend.authenticate(request)
+                        if _insp.isawaitable(principal):
+                            principal = await principal  # type: ignore[assignment]
+                        request.state.principal = principal  # always set
+                        return await call_next(request)
+                    except Exception as exc:
+                        from fastapi import HTTPException as _HTTPExc
+                        if isinstance(exc, _HTTPExc):
+                            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+                        raise
+
+            self.add_middleware(_AuthMiddleware, backend=self._auth_backend)
 
         # Instance-specific tool registry ---------------------------------
         self._tools: Dict[str, _ToolInfo] = {}
@@ -84,6 +134,9 @@ class FastXMCP(FastAPI):
         # Each provider must accept (request: Request, tool_name: str, param_name: str)
         # and return the injected value (sync or async). First non-None wins.
         self._param_providers: list[Callable] = []
+
+        # Map tool_name → optional auth backend (router-specific override)
+        self._tool_auth_backends: dict[str, BaseAuthBackend] = {}
 
         # --------------------------------------------------------------
         # Helper: Python → JSON-schema type mapping
@@ -236,10 +289,36 @@ class FastXMCP(FastAPI):
                     return _RPCRes(id=rpc.id, result={"items": items})
 
                 case "tools/call":
+                    # --------------------------------------------------
+                    # Determine auth backend for this specific tool
+                    # --------------------------------------------------
                     params = rpc.params or {}
                     tool_name: str = params.get("name")
+
                     if tool_name not in self._tools:
                         raise XMCPError(code="UNKNOWN_TOOL", detail=tool_name, retryable=False)
+
+                    # Select backend: router-specific override → app default
+                    backend_override = self._tool_auth_backends.get(tool_name, self._auth_backend)
+
+                    # If the backend differs from the app-level backend, or
+                    # if the selected backend is *not* a NoAuthBackend, we
+                    # explicitly (re-)authenticate and enforce presence of a
+                    # principal.
+                    if backend_override is not self._auth_backend:
+                        principal = backend_override.authenticate(request)
+                        if inspect.isawaitable(principal):
+                            principal = await principal  # type: ignore[assignment]
+                        request.state.principal = principal
+
+                    # Enforce principal when backend requires auth
+                    if not isinstance(backend_override, NoAuthBackend) and getattr(request.state, "principal", None) is None:
+                        raise XMCPError(code="UNAUTHENTICATED", detail=tool_name, retryable=False)
+
+                    # (the rest of original code follows, but we need to remove existing params assignment earlier)
+                    # Existing code below refers to params again, so ensure not re-declare.
+                    
+                    # The original variable 'params = rpc.params or {}' has been defined above.
                     arguments: dict = params.get("arguments", {})
                     server_args: dict = params.get("serverArgs", {})
 
@@ -289,6 +368,13 @@ class FastXMCP(FastAPI):
         except XMCPError as xe:
             return _RPCRes(id=rpc.id, error={"code": xe.code, "message": xe.detail})
         except Exception as exc:
+            # Allow FastAPI's HTTPException to propagate so proper HTTP status
+            # codes (e.g., 401) are returned to the client.  Only convert
+            # *other* exceptions into a structured RPC error.
+            from fastapi import HTTPException as _HTTPExc  # local import
+
+            if isinstance(exc, _HTTPExc):
+                raise
             return _RPCRes(id=rpc.id, error={"code": "SERVER_ERROR", "message": str(exc)})
 
     # ------------------------------------------------------------------
@@ -447,6 +533,22 @@ class FastXMCP(FastAPI):
         """
         injected: dict[str, Any] = dict(arguments)  # shallow copy
 
+        # ------------------------------------------------------------------
+        # Built-in principal / user identifier injection (Phase-1)
+        # ------------------------------------------------------------------
+
+        principal_obj = getattr(request.state, "principal", None)
+
+        if "principal" in info.server_params and "principal" not in injected:
+            injected["principal"] = principal_obj
+
+        if "user_id" in info.server_params and "user_id" not in injected:
+            if principal_obj is not None:
+                if hasattr(principal_obj, "id"):
+                    injected["user_id"] = getattr(principal_obj, "id")
+                elif isinstance(principal_obj, dict) and "id" in principal_obj:
+                    injected["user_id"] = principal_obj["id"]
+
         for param in info.server_params:
             # Skip if already supplied (via serverArgs merge)
             if param in injected:
@@ -524,6 +626,9 @@ class FastXMCP(FastAPI):
                 self._tools[name] = info
                 if name in router._tool_formatters:  # type: ignore[attr-defined]
                     self._tool_formatters[name] = router._tool_formatters[name]  # type: ignore[index]
+
+                # Store auth backend override for this tool
+                self._tool_auth_backends[name] = router._auth_backend  # type: ignore[attr-defined]
 
             # Extend parameter providers so router-level SPPs work.
             self._param_providers.extend(router._param_providers)  # type: ignore[attr-defined]

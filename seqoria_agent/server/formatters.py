@@ -226,7 +226,7 @@ def make_formatter(
         "result_item_fields": result_item_fields or (),
         "result_item_attributes": result_item_attributes or {},
     }
-    Derived = type("InlineFormatter", (DeclarativeXMLFormatter), cls_dict)  # noqa: N801 – dynamic name
+    Derived = type("InlineFormatter", (DeclarativeXMLFormatter,), cls_dict)  # noqa: N801
     return Derived()
 
 

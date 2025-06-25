@@ -1,5 +1,7 @@
 ## [Unreleased]
 ### Added
+- HeaderApiKeyBackend and StaticApiKeyProvider for lightweight header-based authentication.
+- Helper migration: legacy FastAPI `Depends(get_current_user)` patterns can now be replaced with `server_populated=["user_id"]` on tools and an `AuthBackend` configured once per app/router.
 - Planned improvements and bug fixes.
 
 ### Changed

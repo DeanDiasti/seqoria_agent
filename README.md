@@ -33,7 +33,7 @@ seqoria_agent is built on three pillars:
 
 ## Installation
 
-> **Prerequisite**   `seqoria_agent` depends on the official **MCP SDK**. If you install `seqoria_agent` with `pip`, the correct `mcp[cli]` version is pulled in automatically—no extra steps required.
+> **Prerequisite**   `seqoria_agent` depends on the official **MCP SDK** *and* (for JWT-based auth) the optional **PyJWT** package.  When you install `seqoria_agent[dev]` the correct `PyJWT` version is pulled in automatically.  If you rely on `BearerCookieBackend` make sure `pyjwt` is available.
 
 ```bash
 # Create & activate a virtual environment (optional, but recommended)

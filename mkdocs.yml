@@ -65,6 +65,7 @@ nav:
     - Full Overview: guides/overview.md
     - Using AIClient: guides/ai_client.md
     - Server Recipes: guides/server_recipes.md
+    - Authentication: guides/authentication.md
     - Testing & CI: guides/testing.md
     - Server (Legacy): servers.md
   - Topics:

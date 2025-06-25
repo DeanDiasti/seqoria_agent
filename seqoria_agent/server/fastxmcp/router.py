@@ -22,6 +22,7 @@ from seqoria_agent.server.formatters import (
     DeclarativeXMLFormatter,
 )  # same default formatter as FastXMCP
 from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY  # central constant reuse
+from seqoria_agent.auth.backends import BaseAuthBackend, NoAuthBackend  # local import to avoid hard dep
 
 __all__: list[str] = ["FastXMCPRouter"]
 
@@ -38,6 +39,7 @@ class FastXMCPRouter(APIRouter):
         strict_mode: bool = False,
         strict_server_params: bool = True,
         json_wrapper: bool = False,
+        auth_backend=None,
         **kw,
     ):
         """Create a new router.
@@ -56,6 +58,13 @@ class FastXMCPRouter(APIRouter):
         json_wrapper:
             If *True*, the router will wrap JSON responses in a JSON envelope.
         """
+        if auth_backend is None:
+            auth_backend = NoAuthBackend()
+        if not isinstance(auth_backend, BaseAuthBackend):
+            raise TypeError("auth_backend must be an instance of BaseAuthBackend")
+
+        self._auth_backend = auth_backend
+
         super().__init__(prefix=prefix or "", tags=tags or [], **kw)
 
         # ------------- XMCP-specific state ----------------------------

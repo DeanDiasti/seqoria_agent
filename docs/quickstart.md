@@ -133,3 +133,8 @@ result = await ai.chat(
 > * **LocalToolbox** ‑ run tools directly inside the client process.
 > * **FastXMCPRouter** ‑ compose large servers from modular routers.
 > * **LLM-only mode** ‑ skip the tool loop when no tools are available. 
+
+> **Need authentication?**  Pair your server with an *AuthBackend* (e.g., `BearerCookieBackend` or
+> `HeaderApiKeyBackend`) and supply the matching *AuthProvider* (e.g., `StaticCookieProvider` or
+> `StaticApiKeyProvider`) when constructing `AIClient`.  See the
+> [Authentication guide](guides/authentication.md) for a full walkthrough. 
