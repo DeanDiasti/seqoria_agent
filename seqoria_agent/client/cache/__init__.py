@@ -8,7 +8,6 @@ side-by-side.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import time
 from typing import Any, Dict, Protocol
@@ -155,20 +154,21 @@ class RedisCache:  # pragma: no cover – optional path
 # ---------------------------------------------------------------------------
 
 def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str | None = None) -> str:  # noqa: D401
-    """Return a deterministic cache key for *tool_name* + *arguments*.
+    """*Deprecated*: Import moved to :pymod:`seqoria_agent.client.ai_client.utils`.
 
-    Parameters
-    ----------
-    tool_name:
-        Name of the tool.
-    arguments:
-        Input arguments dict (order independent).
-    tenant_id:
-        Optional namespace prefix for multi-tenant deployments. When given,
-        the resulting key is ``tenant:{tenant_id}:tool:{tool_name}:{hash}``.
+    This shim forwards to the new implementation and raises a
+    ``DeprecationWarning`` so that existing import paths keep working without
+    code changes downstream.
     """
-    canonical_json = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
-    args_hash = hashlib.sha256(canonical_json.encode()).hexdigest()
+    import warnings
 
-    prefix = f"tenant:{tenant_id}:" if tenant_id else ""
-    return f"{prefix}tool:{tool_name}:{args_hash}" 
+    warnings.warn(
+        "`seqoria_agent.client.cache.build_cache_key` is deprecated; import from "
+        "`seqoria_agent.client.ai_client.utils` instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    from seqoria_agent.client.ai_client.utils import build_cache_key as _new_build_cache_key
+
+    return _new_build_cache_key(tool_name=tool_name, arguments=arguments, tenant_id=tenant_id) 

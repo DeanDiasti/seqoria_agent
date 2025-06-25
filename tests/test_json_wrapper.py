@@ -6,6 +6,7 @@ from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.client import AIClient
 from seqoria_agent.providers.base_provider import BaseProvider
 from seqoria_agent.providers.schemas import LLMResponse, ToolCall
+from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY
 
 
 class DummyProvider(BaseProvider):
@@ -34,7 +35,7 @@ async def test_json_wrapper_roundtrip():
         assert res and hasattr(res[0], "text")
         payload = json.loads(res[0].text)
         assert payload["metadata"]["tool_name"] == "add"
-        assert payload["ai_message"].startswith("<tool_response")
+        assert payload[AI_MESSAGE_KEY].startswith("<tool_response")
 
         # _run_tool parsing path ---------------------------------------------
         tc = ToolCall(id=str(uuid.uuid4()), function={"name": "add", "arguments": json.dumps({"a": 4, "b": 5})})

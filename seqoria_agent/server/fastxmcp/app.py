@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.models.errors import XMCPError
 from seqoria_agent.server.formatters import DeclarativeXMLFormatter, derive_formatter_from_data  # formatter helpers
+from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY  # central constant reuse
 
 __all__ = ["FastXMCP"]
 
@@ -368,7 +369,7 @@ class FastXMCP(FastAPI):
         if meta_extra:
             meta.update(meta_extra)
 
-        return _json.dumps({"ai_message": xml_str, "metadata": meta}, separators=(",", ":"))
+        return _json.dumps({AI_MESSAGE_KEY: xml_str, "metadata": meta}, separators=(",", ":"))
 
     # ------------------------------------------------------------------
     def _build_error_xml(self, tool_name: str, exc: XMCPError) -> str:  # noqa: D401

@@ -2,6 +2,9 @@
 ### Added
 - Planned improvements and bug fixes.
 
+### Changed
+- Phase 9 polish: lint/style clean-up, constant centralisation, updated docs, full 100 % coverage verified with pytest-cov, and quieter logging in `ai_client` stack.
+
 ## [0.1.0] - 2025-06-21
 ### Added
 - Initial public release of xmcp library, containing `AIClient`, `XMCP` server wrapper, `DisplayEnvelope`, dependency graph execution, streaming API, structured errors, hot-reloadable tool registry, multi-provider support, and a comprehensive test suite and documentation.

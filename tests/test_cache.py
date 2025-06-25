@@ -4,18 +4,19 @@ import asyncio
 
 import pytest
 
-from seqoria_agent.client.cache import DictCache, NullCache, build_cache_key
+from seqoria_agent.client.cache import DictCache, NullCache
+from seqoria_agent.client.ai_client.utils import build_cache_key
 
 
 @pytest.mark.asyncio
 async def test_dict_cache_set_get_delete():
     cache = DictCache()
 
-    await cache.set("foo", "bar", ttl=1)
+    await cache.set("foo", "bar", ttl=0.2)
     assert await cache.get("foo") == "bar"
 
     # Wait for expiry
-    await asyncio.sleep(1.1)
+    await asyncio.sleep(0.25)
     assert await cache.get("foo") is None
 
     await cache.set("key", 123)

@@ -1,1 +1,1 @@
- 
+# Allow subpackages like tests/ai_client to be treated as part of the test suite 
