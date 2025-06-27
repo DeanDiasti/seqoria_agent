@@ -229,12 +229,27 @@ class Executor:  # noqa: D101 – docstring provided above
             return (tool_call.id, history_entry, None)
 
         if tool_name == SUMMARIZE_TOOL_NAME:
-            summary_text = summarise_history(history)
-            # Replace existing history (keep system prompt at idx 0)
+            summary_text = summarise_history(history=history)
+
+            # Identify last assistant message if it carries tool_calls
+            preserved_assistant: dict | None = None
+            if history and history[-1].get("role") == "assistant" and history[-1].get("tool_calls"):
+                preserved_assistant = history[-1]
+
+            # Re-build compact history
+            new_hist: list[dict] = []
             if history and history[0].get("role") == "system":
-                history[1:] = [{"role": "assistant", "content": summary_text}]
-            else:
-                history[:] = [{"role": "assistant", "content": summary_text}]
+                new_hist.append(history[0])
+
+            # Insert summarised conversation
+            new_hist.append({"role": "assistant", "content": summary_text})
+
+            # Re-append the assistant message that references the tool call
+            if preserved_assistant is not None:
+                new_hist.append(preserved_assistant)
+
+            # Replace in-place
+            history[:] = new_hist
 
             history_entry = {
                 "tool_call_id": tool_call.id,
@@ -242,7 +257,7 @@ class Executor:  # noqa: D101 – docstring provided above
                 "name": tool_name,
                 "content": "conversation summarized",
             }
-            self._logger.info("Conversation summarized and history compressed")
+            self._logger.info("Conversation summarized and history compressed (assistant link preserved)")
             return (tool_call.id, history_entry, None)
 
         if tool_name == CLARIFY_TOOL_NAME:
@@ -257,7 +272,7 @@ class Executor:  # noqa: D101 – docstring provided above
                 "answer": question_text,
                 "display": None,
             }
-            self._logger.info("Clarification requested from user")
+            self._logger.info(msg="Clarification requested from user")
             return (tool_call.id, history_entry, early_payload)
 
         # ------------------------------------------------------------------
@@ -377,24 +392,45 @@ class Executor:  # noqa: D101 – docstring provided above
     # ------------------------------------------------------------------
 
     def compute_execution_layers(self, tool_calls: List[ToolCall]) -> List[List[ToolCall]]:
-        """Return topologically-sorted execution layers for *tool_calls*."""
-        call_map: Dict[str, ToolCall] = {
-            (tc.function or {}).get("name"): tc for tc in tool_calls
-        }
-        requested: Set[str] = set(call_map.keys())
+        """Return topologically-sorted execution layers for *tool_calls*.
 
-        # Build graph (edges: dep → tool)
+        The implementation keeps *all* occurrences of the same tool name.  A
+        single user request can legitimately contain multiple calls to the
+        **same** tool (e.g. three consecutive ``get_time`` invocations).  The
+        previous variant deduplicated by *tool name* which meant that only the
+        *last* call survived, leading to missing tool response messages and
+        schema validation errors from the LLM provider.  We now map
+        ``tool_name → List[ToolCall]`` so every occurrence is executed while
+        still respecting inter-tool dependencies defined on a *per-tool-name*
+        basis.
+        """
+        # Group calls by *name* while preserving original order of duplicates
+        name_to_calls: Dict[str, List[ToolCall]] = defaultdict(list)
+        for tc in tool_calls:
+            tool_name = (tc.function or {}).get("name")
+            if tool_name is None:
+                # Skip pathological inputs without a name – they will error later
+                continue
+            name_to_calls[tool_name].append(tc)
+
+        requested_names: Set[str] = set(name_to_calls.keys())
+
+        # ------------------------------------------------------------------
+        # Build dependency graph (edges: dep_name → tool_name)
+        # ------------------------------------------------------------------
         graph: Dict[str, Set[str]] = defaultdict(set)
-        indegree: Dict[str, int] = {name: 0 for name in requested}
+        indegree: Dict[str, int] = {name: 0 for name in requested_names}
 
-        for tool_name in requested:
+        for tool_name in requested_names:
             deps = self._registry.depends_on(tool_name)
             for dep in deps:
-                if dep in requested:
+                if dep in requested_names:
                     graph[dep].add(tool_name)
                     indegree[tool_name] += 1
 
-        # Kahn — produce layers ----------------------------------------------
+        # ------------------------------------------------------------------
+        # Topological sort (Kahn) – but expand duplicate calls per node
+        # ------------------------------------------------------------------
         layers: List[List[ToolCall]] = []
         queue: deque[str] = deque([n for n, d in indegree.items() if d == 0])
         processed = 0
@@ -404,14 +440,15 @@ class Executor:  # noqa: D101 – docstring provided above
             for _ in range(len(queue)):
                 n = queue.popleft()
                 processed += 1
-                current_layer.append(call_map[n])
+                # Append *all* calls for this tool name – preserves duplicates
+                current_layer.extend(name_to_calls[n])
                 for succ in graph.get(n, []):
                     indegree[succ] -= 1
                     if indegree[succ] == 0:
                         queue.append(succ)
             layers.append(current_layer)
 
-        if processed != len(requested):
+        if processed != len(requested_names):
             raise DependencyError("Cyclic dependency detected between requested tool calls.")
 
         return layers

@@ -54,32 +54,32 @@ _COLOR_HEX = {
 }
 
 
-@app.display_tool()
-def change_color(color: str, show_user: bool = False):
-    """Hybrid tool that either returns a HEX code or sends a UI notification."""
-    hex_code = _COLOR_HEX.get(color.lower())
-    if hex_code is None:
-        raise XMCPError(code="UNKNOWN_COLOR", detail=f"Unknown colour '{color}'", retryable=False)
+# @app.display_tool()
+# def change_color(color: str, show_user: bool = False):
+#     """Hybrid tool that either returns a HEX code or sends a UI notification."""
+#     hex_code = _COLOR_HEX.get(color.lower())
+#     if hex_code is None:
+#         raise XMCPError(code="UNKNOWN_COLOR", detail=f"Unknown colour '{color}'", retryable=False)
 
-    if show_user:
-        return DisplayEnvelope(
-            type="notification",
-            title="Colour changed",
-            payload=f"Background colour set to **{color}** ({hex_code})",
-        )
+#     if show_user:
+#         return DisplayEnvelope(
+#             type="notification",
+#             title="Colour changed",
+#             payload=f"Background colour set to **{color}** ({hex_code})",
+#         )
 
-    return hex_code
+#     return hex_code
 
 
-@app.display_tool()
-def flash_screen(color: str, times: int = 3, show_user: bool = False):
-    """Display-only tool that flashes the screen."""
-    return DisplayEnvelope(
-        type="notification",
-        title="Screen flash",
-        payload=f"Flashing screen {times} × with {color}",
-        meta={"times": times, "color": color},
-    )
+# @app.display_tool()
+# def flash_screen(color: str, times: int = 3, show_user: bool = False):
+#     """Display-only tool that flashes the screen."""
+#     return DisplayEnvelope(
+#         type="notification",
+#         title="Screen flash",
+#         payload=f"Flashing screen {times} × with {color}",
+#         meta={"times": times, "color": color},
+#     )
 
 
 @app.tool()

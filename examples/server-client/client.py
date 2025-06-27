@@ -67,12 +67,12 @@ logger = structlog.get_logger("seqoria_agent_demo")
 # ------------------------------------------------------------------
 
 class DemoUserProvider:  # simple example
-    async def resolve(self, param_name: str, tool_name: str, context: ParamContext):  # type: ignore[override]
+    async def resolve(self, param_name: str, tool_name: str, context: ParamContext) -> str | None:  # type: ignore[override]
         if param_name == "user_id":
-            return os.getenv("DEMO_USER_ID", "abc123abc123")
+            return os.getenv(key="DEMO_USER_ID", default="abc123abc123")
         return None
 
-async def main():
+async def main() -> None:
     """Interactive CLI that streams AI responses and display envelopes.
 
     Demonstrates the *serverArgs* channel for server-populated parameters –

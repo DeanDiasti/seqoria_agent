@@ -23,6 +23,7 @@ advanced fall-back logic can evolve without touching the surrounding
 from typing import Any, AsyncGenerator, List, Optional, Union
 
 import logging
+import asyncio
 
 # Prefer structlog when available for key-value logging like elsewhere in the codebase
 try:
@@ -156,11 +157,16 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
 
         for provider in self._providers:
             try:
-                kwargs_stream: dict[str, Any] = {"chat_history": history}
+                kwargs_stream = {"chat_history": history}
                 if tools is not None:
                     kwargs_stream["tools"] = tools
                     kwargs_stream["tool_choice"] = tool_choice
-                stream_gen = await provider.async_stream(**kwargs_stream)  # type: ignore[arg-type]
+
+                tmp = provider.async_stream(**kwargs_stream)  # type: ignore[arg-type]
+
+                # Guard against both async and sync implementations
+                stream_gen = await tmp if asyncio.iscoroutine(obj=tmp) else tmp
+
                 break
             except LLMError as e:
                 self._logger.warning(

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-"""Phase-6 AIClient orchestrator (≤150 LOC).
-Composes ConnectionPool, ToolRegistry, Executor and LLMInterface while
-keeping the public surface identical to the legacy implementation.
-"""
+"""AIClient orchestrator (refactored)."""
 
 import asyncio, logging
-from typing import Any, AsyncGenerator, Iterable, List, Optional, Self
+from typing import Any, AsyncGenerator, Iterable, List, Optional, Self, Union
 
 try:  # Prefer structlog but fall back to stdlib
     import structlog  # type: ignore
@@ -52,6 +49,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
         breaker_reset_after: int = 60,
         param_providers: list[ParameterProvider] | None = None,
         allow_override: bool = False,
+        enable_meta_tools: bool | Iterable[str] = True,
         settings: ClientSettings | None = None,
         auth_provider: BaseAuthProvider | None = None,
         **client_kwargs: Any,
@@ -123,6 +121,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
             tool_map=self._tool_map,
             refresh_interval=refresh_interval,
             logger=self._logger,
+            enable_meta_tools=enable_meta_tools,
         )
         self.executor = Executor(
             pool=self.pool,
@@ -143,7 +142,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
     async def __aenter__(self) -> Self:
         await self.pool.start(); await self.registry.refresh()
         if not self.pool.has_servers and not self._boxes:
-            self._logger.warning("AIClient initialised without tools – LLM-only mode")
+            self._logger.warning("AIClient initialised without tools - LLM-only mode")
         return self
 
     async def __aexit__(self, *_) -> None:
@@ -161,83 +160,173 @@ class AIClient:  # noqa: D101 – tiny glue layer
         await self.registry.refresh()
 
     async def refresh_tools(self) -> None:  # manual refresh
-        # keep legacy behaviour using overridden _update_llm_tools when subclassed
         await self._update_llm_tools()
 
-    def _tools_enabled(self) -> bool:
+    # ------------------------------------------------------------------ Phase-1 helpers (public)
+
+    def tools_enabled(self) -> bool:  # noqa: D401
+        """Return *True* if any tool is available."""
+
+        # Prefer the registry as source-of-truth (includes meta-tools) but
+        # fall back to the historical check for edge-cases where the registry
+        # has not been refreshed yet (e.g. before ``AIClient.__aenter__``).
         return bool(self._tool_map or self._boxes)
 
-    # ------------------------------------------------------------------ chat
-    async def chat(self, user_query: str, history: List[dict], *, max_turns: int = 5):
+    # Deprecated private alias kept for backward-compatibility -------------
+    def _tools_enabled(self) -> bool:  # noqa: D401
+        """Deprecated - call :pyfunc:`tools_enabled`."""
+
+        return self.tools_enabled()
+
+    def prepare_history(self, user_query: str, history: List[dict]) -> List[dict]:  # noqa: D401
+        """Add system prompt (if absent) and user query."""
+
+        if history is None:
+            raise ValueError("history required")
+
+        if not history or history[0].get("role") != "system":
+            history.insert(0, {"role": "system", "content": self._system_prompt})
+
+        history.append({"role": "user", "content": user_query})
+        return history
+
+    # ------------------------------------------------------------------ Phase-2 LLM single-shot helpers
+
+    async def llm_generate_once(  # noqa: D401
+        self,
+        history: List[dict],
+        *,
+        use_tools: bool = True,
+        tool_choice: str = "auto",
+    ) -> LLMResponse:
+        """Single LLM step (optionally with tools)."""
+
+        if history is None:
+            raise ValueError("history required")
+
+        if use_tools and self.tools_enabled():
+            return await self.llm.generate(
+                history=history,
+                tools=self.registry.llm_tools,
+                tool_choice=tool_choice,
+            )
+
+        return await self.llm.generate(history=history)
+
+    async def llm_stream_once(  # noqa: D401
+        self,
+        history: List[dict],
+        *,
+        use_tools: bool = True,
+        tool_choice: str = "auto",
+    ) -> AsyncGenerator[Union[str, LLMResponse], None]:
+        """Stream a single LLM step."""
+
+        if history is None:
+            raise ValueError("history required")
+
+        if use_tools and self.tools_enabled():
+            async for chunk in self.llm.stream(
+                history=history,
+                tools=self.registry.llm_tools,
+                tool_choice=tool_choice,
+            ):
+                yield chunk
+            return
+
+        async for chunk in self.llm.stream(history=history):
+            yield chunk
+
+    # ------------------------------------------------------------------ Phase-3 tool execution wrapper
+
+    async def run_tool_calls(self, tool_calls: List[ToolCall], history: List[dict]):  # noqa: D401
+        """Forward to :pymeth:`Executor.run_calls`."""
+        return await self.executor.run_calls(tool_calls=tool_calls, history=history)
+
+    # ------------------------------------------------------------------ chat (refactored Phase-4)
+
+    async def chat(self, user_query: str, history: List[dict], *, max_turns: int = 5):  # noqa: D401
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
             raise RuntimeError("chat re-entered")
         self._hist = history
         try:
-            if not history or history[0].get("role") != "system":
-                history.insert(0, {"role": "system", "content": self._system_prompt})
-            history.append({"role": "user", "content": user_query})
-            if not self._tools_enabled():
-                r = await self.llm.generate(history=history)
-                history.append({"role": "assistant", "content": r.text})
-                return {"answer": r.text, "display": None, "history": history}
+            self.prepare_history(user_query, history)  # Phase-1 helper
+            # LLM-only fast path --------------------------------------------------
+            if not self.tools_enabled():
+                resp = await self.llm_generate_once(history, use_tools=False)
+                history.append({"role": "assistant", "content": resp.text})
+                return {"answer": resp.text, "display": None, "history": history}
+
             for _ in range(max_turns):
-                r = await self.llm.generate(history=history, tools=self.registry.llm_tools, tool_choice="auto")
+                resp = await self.llm_generate_once(history, use_tools=True, tool_choice="auto")
                 history.append({
                     "role": "assistant",
-                    "content": r.text,
-                    **({"tool_calls": [tc.model_dump() for tc in r.tool_calls]} if r.tool_calls else {}),
+                    "content": resp.text,
+                    **({"tool_calls": [tc.model_dump() for tc in resp.tool_calls]} if resp.tool_calls else {}),
                 })
-                if not r.tool_calls:
-                    return {"answer": r.text, "display": None, "history": history}
-                early = await self.executor.run_calls(tool_calls=r.tool_calls, history=history)
+                if not resp.tool_calls:
+                    return {"answer": resp.text, "display": None, "history": history}
+                early = await self.run_tool_calls(tool_calls=resp.tool_calls, history=history)
                 if early:
                     early["history"] = history
                     return early
+
+            # Turn limit reached --------------------------------------------------
             return {"answer": "[Turn limit reached]", "display": None, "history": history}
         finally:
             self._hist = None
 
-    # ------------------------------------------------------------------ streaming chat
-    async def stream_chat(self, user_query: str, history: List[dict], *, max_turns: int = 5) -> AsyncGenerator[ChatChunk, None]:
+    # ------------------------------------------------------------------ streaming chat (refactored Phase-4)
+
+    async def stream_chat(self, user_query: str, history: List[dict], *, max_turns: int = 5) -> AsyncGenerator[ChatChunk, None]:  # noqa: D401
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
             raise RuntimeError("stream_chat re-entered")
         self._hist = history
         try:
-            if not history or history[0].get("role") != "system":
-                history.insert(0, {"role": "system", "content": self._system_prompt})
-            history.append({"role": "user", "content": user_query})
-            if not self._tools_enabled():
-                gen = await self._providers[0].async_stream(chat_history=history)
-                async for d in gen:
-                    if isinstance(d, str):
-                        yield ChatChunk(type="llm_delta", text=d)
+            self.prepare_history(user_query, history)
+            # LLM-only fast path --------------------------------------------------
+            if not self.tools_enabled():
+                async for chunk in self.llm_stream_once(history, use_tools=False):
+                    if isinstance(chunk, str):
+                        yield ChatChunk(type="llm_delta", text=chunk)
                 return
+
             for _ in range(max_turns):
                 agg: List[str] = []
-                final: Optional[LLMResponse] = None
-                async for c in self.llm.stream(history=history, tools=self.registry.llm_tools, tool_choice="auto"):
+                final_resp: Optional[LLMResponse] = None
+
+                async for c in self.llm_stream_once(history, use_tools=True, tool_choice="auto"):
                     if isinstance(c, str):
-                        agg.append(c); yield ChatChunk(type="llm_delta", text=c)
+                        agg.append(c)
+                        yield ChatChunk(type="llm_delta", text=c)
                     else:
-                        final = c
-                if final is None:
-                    final = LLMResponse(model_id="unknown", text="".join(agg))
+                        final_resp = c
+
+                if final_resp is None:
+                    final_resp = LLMResponse(model_id="unknown", text="".join(agg))
+
                 history.append({
                     "role": "assistant",
-                    "content": final.text,
-                    **({"tool_calls": [tc.model_dump() for tc in final.tool_calls]} if final.tool_calls else {}),
+                    "content": final_resp.text,
+                    **({"tool_calls": [tc.model_dump() for tc in final_resp.tool_calls]} if final_resp.tool_calls else {}),
                 })
-                early = await self.executor.run_calls(tool_calls=final.tool_calls, history=history)
+
+                if not final_resp.tool_calls:
+                    return
+
+                early = await self.run_tool_calls(tool_calls=final_resp.tool_calls, history=history)
                 if early:
                     if early.get("display"):
                         yield ChatChunk(type="tool_display", envelope=early["display"])
                     if early.get("answer"):
                         yield ChatChunk(type="llm_delta", text=early["answer"])
                     return
+
+            # Turn limit reached --------------------------------------------------
             yield ChatChunk(type="llm_delta", text="[Turn limit reached]")
         finally:
             self._hist = None
@@ -271,4 +360,29 @@ class AIClient:  # noqa: D101 – tiny glue layer
                 try:
                     conn.client.set_auth_provider(provider=provider)
                 except Exception:
-                    continue 
+                    continue
+
+    def append_assistant_message(self, content: str, history: List[dict] | None = None, *, tool_calls: List[ToolCall] | None = None) -> List[dict]:  # noqa: D401
+        """Append an *assistant* message to *history*.
+
+        When called from inside :pyfunc:`chat` or :pyfunc:`stream_chat` the
+        current internal history (``self._hist``) is used automatically.  For
+        external callers pass the *history* list explicitly.  The helper keeps
+        the message schema consistent with other parts of *AIClient* and
+        serialises *tool_calls* via :pyfunc:`ToolCall.model_dump` for
+        wire-compatibility.
+        """
+        # Resolve target history ------------------------------------------------
+        target = history if history is not None else self._hist
+        if target is None:
+            raise ValueError("history required – either pass *history* or call within chat/stream_chat")
+
+        entry: dict[str, Any] = {
+            "role": "assistant",
+            "content": content,
+        }
+        if tool_calls:
+            entry["tool_calls"] = [tc.model_dump() for tc in tool_calls]
+
+        target.append(entry)
+        return target 

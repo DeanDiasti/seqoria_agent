@@ -62,7 +62,7 @@ def build_system_prompt(extra_instructions: str | None = None) -> str:  # noqa: 
 def summarise_history(history: List[dict]) -> str:  # noqa: D401
     """Return a naive summary of *history* by concatenating the last few messages.
 
-    The implementation is intentionally simplistic – it merely prints the last
+    The implementation is intentionally simplistic - it merely prints the last
     ``N`` conversation turns so that Phase 5 does not introduce behavioural
     changes.  A more sophisticated summariser can replace this later without
     affecting callers.

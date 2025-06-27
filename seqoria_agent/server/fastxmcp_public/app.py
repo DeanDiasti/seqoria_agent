@@ -11,6 +11,7 @@ import inspect
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+import uvicorn  # noqa: F401
 
 from seqoria_agent.server.xmcp_core import AuthBridge, ToolCore
 from seqoria_agent.server.xmcp_core.models import ToolInfo as _ToolInfo  # re-export for legacy callers
@@ -186,7 +187,7 @@ class FastXMCP(FastAPI):  # noqa: D101 – public server class
         return self._core.register_param_provider(fn)
 
     def include_router(self, router, **kw):  # noqa: D401 – merge registries
-        super().include_router(router, **kw)
+        super().include_router(router=router, **kw)
         try:
             from seqoria_agent.server.fastxmcp_public.router import FastXMCPRouter  # updated import
         except Exception:  # pragma: no cover – missing module
@@ -204,4 +205,53 @@ class FastXMCP(FastAPI):  # noqa: D101 – public server class
 
     # Tests import this utility directly → delegate to ToolCore
     def _wrap_tool_with_error_handling(self, func, tool_name: str, formatter_cls: Any | None = None):  # noqa: D401, ANN001
-        return self._core._wrap_tool_with_error_handling(func, tool_name, formatter_cls) 
+        return self._core._wrap_tool_with_error_handling(func=func, tool_name=tool_name, formatter_cls=formatter_cls)
+
+    def run(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        reload: bool = False,
+        workers: int | None = None,
+        log_level: str = "info",
+        **uvicorn_kwargs,
+    ) -> None:  # noqa: D401
+        """Launch a development server with *uvicorn*.
+
+        This is a convenience wrapper around :pyfunc:`uvicorn.run` so you can simply
+        do::
+
+            app = FastXMCP()
+            app.run(port=9000)
+
+        Parameters
+        ----------
+        host
+            Bind socket to this host. Defaults to ``127.0.0.1``.
+        port
+            Bind socket to this port. Defaults to ``8000``.
+        reload
+            Enable auto-reload on code changes (development only).
+        workers
+            Number of worker processes. ``None`` leaves it to *uvicorn*'s default.
+        log_level
+            Log level passed through to *uvicorn*.
+        **uvicorn_kwargs
+            Any additional keyword arguments are forwarded verbatim to
+            :pyfunc:`uvicorn.run` for maximum flexibility (e.g., ``ssl_keyfile``).
+        """
+        # Assemble basic configuration first, then merge extras so callers can
+        # intentionally override any default if they wish.
+        cfg: dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "reload": reload,
+            "log_level": log_level,
+        }
+        if workers is not None:
+            cfg["workers"] = workers
+        cfg.update(uvicorn_kwargs)
+
+        # Forward the FastAPI instance (self) directly; uvicorn will treat it as an
+        # ASGI application callable.
+        uvicorn.run(app=self, **cfg) 

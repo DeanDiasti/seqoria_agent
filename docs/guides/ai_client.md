@@ -115,4 +115,76 @@ aiclient = AIClient(
     tool_timeout=8.0,
     retry_policy={"max_attempts": 3, "backoff_base": 0.5},
 )
+```
+
+---
+
+## Manual Loop
+
+Sometimes you need **full control** over the agentic loop – for instance when
+embedding the assistant inside a GUI, a voice-assistant or a multi-step
+workflow engine.  The low-level helpers introduced in v0.3 let you drive the
+conversation *one turn at a time* while re-using all the heavy lifting done by
+`AIClient` (tool registry, dependency graph, caching, …).
+
+### Minimal CLI Demo
+
+```python
+import asyncio
+from seqoria_agent.client import AIClient
+from seqoria_agent.providers import OpenAIProvider
+
+async def main():
+    providers = [OpenAIProvider(model_id="gpt-4o")]
+    async with AIClient(urls=["http://localhost:3333"], providers=providers) as ai:
+        history: list[dict] = []
+
+        while True:
+            user_query = input("You: ")
+            if not user_query:
+                break  # Exit on empty line
+
+            # 1) Add system + user message
+            ai.prepare_history(user_query, history)
+
+            # 2) Let the model decide on a single step
+            resp = await ai.llm_generate_once(history)
+            ai.append_assistant_message(resp.text, history, tool_calls=resp.tool_calls)
+
+            # 3) Execute tools (if any) and let early-exit bubble up
+            if resp.tool_calls:
+                early = await ai.run_tool_calls(resp.tool_calls, history)
+                if early and early.get("answer"):
+                    print(f"Assistant: {early['answer']}")
+                    continue
+
+            print(f"Assistant: {resp.text}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Streaming UI Integration
+
+`llm_stream_once()` yields incremental *deltas* followed by the full
+`LLMResponse`.  Combine it with your favourite framework to render tokens in
+real-time:
+
+```python
+async for chunk in ai.llm_stream_once(history):
+    if isinstance(chunk, str):
+        ui.append_token(chunk)  # ← progressive rendering
+    else:
+        ai.append_assistant_message(chunk.text, history, tool_calls=chunk.tool_calls)
+```
+
+### Debugging Tips
+
+* Enable **verbose logging** via `LOGLEVEL=DEBUG` to see tool graphs and cache
+  hits.
+* Register `on_display`, `on_error`, or `on_metadata` callbacks when
+  constructing the client to intercept structured events.
+* Call `await ai.refresh_tools()` to hot-reload the tool catalogue without
+  recreating the client object.
+
 ``` 

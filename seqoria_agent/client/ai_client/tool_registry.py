@@ -15,10 +15,16 @@ monolithic AIClient can be refactored into smaller, testable pieces.
 # ruff clean imports
 import asyncio
 import logging
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Set
 
 from seqoria_agent.client.ai_client.connection_pool import ConnectionPool
 from seqoria_agent.toolbox import LocalToolbox
+from seqoria_agent.client.ai_client.constants import (
+    THINK_TOOL_NAME,
+    CLARIFY_TOOL_NAME,
+    SUMMARIZE_TOOL_NAME,
+)
 
 __all__: list[str] = [
     "ToolRegistry",
@@ -52,6 +58,8 @@ class ToolRegistry:
     logger:
         Optional :pymod:`logging` compatible logger.  A module-level logger is
         used when omitted.
+    enable_meta_tools:
+        Whether to include built-in meta-tools in the tool catalogue.
     """
 
     # Limit total LOC to stay within phase requirement (< 300 LOC)
@@ -64,6 +72,7 @@ class ToolRegistry:
         tool_map: Optional[Dict[str, Any]] = None,
         refresh_interval: float = 0.0,
         logger: Optional[logging.Logger] = None,
+        enable_meta_tools: bool | Iterable[str] = True,
     ) -> None:
         self._pool = pool
         self._local_boxes: List[LocalToolbox] = list(local_toolboxes or [])
@@ -71,6 +80,34 @@ class ToolRegistry:
 
         self._refresh_interval: float = float(refresh_interval)
         self._logger = logger or logging.getLogger("seqoria_agent.tool_registry")
+
+        # Meta-tool toggle --------------------------------------------------
+        self._enabled_meta_names: Set[str]
+
+        # Normalise enable_meta_tools into a set of internal names
+        if enable_meta_tools is True:
+            self._enabled_meta_names = {THINK_TOOL_NAME, CLARIFY_TOOL_NAME, SUMMARIZE_TOOL_NAME}
+        elif enable_meta_tools is False:
+            self._enabled_meta_names = set()
+        else:
+            # Accept any iterable of string-like names (case-insensitive)
+            mapping = {
+                "think": THINK_TOOL_NAME,
+                "__think__": THINK_TOOL_NAME,
+                "clarify": CLARIFY_TOOL_NAME,
+                "__clarify__": CLARIFY_TOOL_NAME,
+                "summarize": SUMMARIZE_TOOL_NAME,
+                "__summarize__": SUMMARIZE_TOOL_NAME,
+            }
+            chosen: Set[str] = set()
+            for n in enable_meta_tools:  # type: ignore[arg-type]
+                try:
+                    canon = mapping.get(str(n).lower())
+                    if canon:
+                        chosen.add(canon)
+                except Exception:
+                    continue
+            self._enabled_meta_names = chosen
 
         # Internal state ---------------------------------------------------
         self._llm_tools: List[dict] = []
@@ -248,6 +285,13 @@ class ToolRegistry:
                 )
 
         # ------------------------------------------------------------------
+        # 3)  Built-in meta-tools (optional)
+        # ------------------------------------------------------------------
+
+        if self._enabled_meta_names:
+            llm_tools.extend([t for t in _META_TOOLS if t["function"]["name"] in self._enabled_meta_names])
+
+        # ------------------------------------------------------------------
         # Finalise – replace list atomically so concurrent reads see either old or new
         # ------------------------------------------------------------------
         async with self._lock:
@@ -271,3 +315,62 @@ class ToolRegistry:
         except asyncio.CancelledError:
             # Normal shutdown path
             return 
+
+# ---------------------------------------------------------------------------
+# Built-in meta-tools (OpenAI tool schema) – keep at bottom to avoid circulars
+# ---------------------------------------------------------------------------
+
+_META_TOOLS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": THINK_TOOL_NAME,
+            "description": (
+                "Internal helper - allows the assistant to think out loud "
+                "without exposing the thought to the user."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thought": {
+                        "type": "string",
+                        "description": "The assistant's internal reasoning.",
+                    },
+                },
+                "required": ["thought"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": CLARIFY_TOOL_NAME,
+            "description": (
+                "Ask the user a concise question when additional information "
+                "is required."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The clarification question for the user.",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": SUMMARIZE_TOOL_NAME,
+            "description": (
+                "Compresses the current chat history so the conversation can "
+                "continue within context limits."),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+] 
