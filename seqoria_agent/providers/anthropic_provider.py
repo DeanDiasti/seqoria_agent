@@ -321,7 +321,7 @@ class AnthropicProvider(BaseProvider):
         if tool_choice is not None:
             params["tool_choice"] = tool_choice
 
-        async def _create_stream():
+        async def _create_stream() -> Any:
             # Use the async client here
             return await self.async_client.messages.create(model=self.model_id,
                                                            messages=chat_history,
@@ -350,11 +350,9 @@ class AnthropicProvider(BaseProvider):
                     if hasattr(chunk, 'content_block'):
                         if chunk.content_block.type == 'tool_use':
                             # Start of a tool use block
-                            current_tool_call = {
-                                "id": chunk.content_block.id,
-                                "name": chunk.content_block.name,
-                                "input": chunk.content_block.input  # This might be empty initially
-                            }
+                            current_tool_call = {"id": chunk.content_block.id,
+                                                 "name": chunk.content_block.name,
+                                                 "input": chunk.content_block.input}  # This might be empty initially
                             current_tool_input_json = ""  # Reset for accumulating JSON
                 elif chunk.type == "content_block_delta":
                     # Extract text delta from content block delta
@@ -397,13 +395,11 @@ class AnthropicProvider(BaseProvider):
             # After the loop finishes, yield the final LLMResponse
             usage_obj = LLMUsage(**final_usage_data)
             tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            yield LLMResponse(
-                model_id=self.model_id,
-                text=full_completion_text,
-                tool_calls=tool_objs,
-                usage=usage_obj,
-                stop_reason=stop_reason,
-            )
+            yield LLMResponse(model_id=self.model_id, 
+                              text=full_completion_text, 
+                              tool_calls=tool_objs, 
+                              usage=usage_obj, 
+                              stop_reason=stop_reason)
 
         except Exception as e:
             # Handle errors occurring during async stream iteration

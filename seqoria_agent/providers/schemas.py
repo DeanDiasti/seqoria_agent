@@ -40,7 +40,7 @@ class LLMResponse(BaseModel):
     is the final object yielded by the `async_stream` method.
     """
 
-    model_id: str = Field(..., description="The actual model ID used for the response.")
+    model_id: str = Field(default=..., description="The actual model ID used for the response.")
     text: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
     usage: Optional[LLMUsage] = None

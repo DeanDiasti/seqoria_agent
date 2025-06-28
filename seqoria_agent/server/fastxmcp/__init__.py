@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-"""fastxmcp package – public re-exports.
+"""Public FastXMCP interfaces (canonical import paths).
 
-Canonical usage::
-
-    from seqoria_agent.server.fastxmcp import FastXMCP, FastXMCPRouter
+Example
+-------
+>>> from seqoria_agent.server.fastxmcp_public import FastXMCP, FastXMCPRouter
 """
 
-from seqoria_agent.server.fastxmcp_public import FastXMCP, FastXMCPRouter  # noqa: F401
+from .app import FastXMCP  # noqa: F401
+from .router import FastXMCPRouter  # noqa: F401
 
 __all__: list[str] = [
     "FastXMCP",

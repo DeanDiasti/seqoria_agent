@@ -189,7 +189,7 @@ class FastXMCP(FastAPI):  # noqa: D101 – public server class
     def include_router(self, router, **kw):  # noqa: D401 – merge registries
         super().include_router(router=router, **kw)
         try:
-            from seqoria_agent.server.fastxmcp_public.router import FastXMCPRouter  # updated import
+            from seqoria_agent.server.fastxmcp.router import FastXMCPRouter  # updated import
         except Exception:  # pragma: no cover – missing module
             FastXMCPRouter = None  # type: ignore
         if FastXMCPRouter is not None and isinstance(router, FastXMCPRouter):  # type: ignore[arg-type]

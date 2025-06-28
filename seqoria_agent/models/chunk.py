@@ -20,8 +20,16 @@ class ChatChunk:  # noqa: D101 – simple container
     envelope:
         Serialized :class:`seqoria_agent.models.envelope.DisplayEnvelope` when
         ``type == 'tool_display'``.
+    usage:
+        Optional usage payload for token count information when type == 'token_usage'.
+    cumulative:
+        When type == 'token_usage', True indicates this chunk carries the
+        cumulative total across the whole agentic loop, False means per-turn
+        usage.  None for backward compatibility when the producer omits it.
     """
 
-    type: Literal["llm_delta", "tool_display"]
+    type: Literal["llm_delta", "tool_display", "token_usage"]
     text: Optional[str] = None
-    envelope: Optional[Dict] = None 
+    envelope: Optional[Dict] = None
+    usage: Optional[dict] = None
+    cumulative: Optional[bool] = None 

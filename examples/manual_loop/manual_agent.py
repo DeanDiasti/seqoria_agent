@@ -54,10 +54,10 @@ def random_number() -> int:  # noqa: D401 – simple helper
 # Helper – print assistant output nicely
 # ---------------------------------------------------------------------------
 
-def _print_assistant(text: str | None):  # noqa: D401 – tiny util
+def _print_assistant(text: str | None) -> None:  # noqa: D401 – tiny util
     if not text:
         return
-    for line in str(text).splitlines():
+    for line in str(object=text).splitlines():
         print(f"Assistant: {line}")
 
 
@@ -84,27 +84,27 @@ async def main() -> None:  # noqa: D401
                 break
 
             if not user_query:
-                print("Exiting – empty input detected.")
+                print("Exiting - empty input detected.")
                 break
 
             # 1) Update history with system + user message
-            ai.prepare_history(user_query, history)
+            history = ai.prepare_history(user_query=user_query, history=history)
 
             # 2) Inner agentic loop – let the model think & use tools until ready
             for _ in range(5):  # hard-limit internal turns per user input
-                resp = await ai.llm_generate_once(history)
-                ai.append_assistant_message(resp.text or "", history, tool_calls=resp.tool_calls)
+                resp = await ai.llm_generate_once(history=history)
+                ai.append_assistant_message(content=resp.text or "", history=history, tool_calls=resp.tool_calls)
 
                 if resp.tool_calls:
-                    early = await ai.run_tool_calls(resp.tool_calls, history)
+                    early = await ai.run_tool_calls(tool_calls=resp.tool_calls, history=history)
                     if early and early.get("answer"):
-                        _print_assistant(early["answer"])
+                        _print_assistant(text=early["answer"])
                         break  # finished for this user turn
                     # else: tool ran but no immediate answer – let LLM continue
                     continue
 
                 # Model responded directly – done for this user turn
-                _print_assistant(resp.text)
+                _print_assistant(text=resp.text)
                 break
 
         # Conversation end --------------------------------------------------

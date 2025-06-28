@@ -140,9 +140,7 @@ async def main() -> None:
                         break
 
                     # Stream the response incrementally -----------------------
-                    async for chunk in client.stream_chat(
-                        user_query=user_input, history=chat_history, max_turns=5
-                    ):
+                    async for chunk in client.stream_chat(user_query=user_input, history=chat_history, max_turns=5):
                         if chunk.type == "llm_delta":
                             # Stream token deltas inline
                             print(chunk.text, end="", flush=True)

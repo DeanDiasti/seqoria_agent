@@ -20,7 +20,7 @@ from seqoria_agent.client.cache import CacheProtocol, NullCache  # noqa: F401
 from seqoria_agent.client.parameters import ParameterProvider
 from seqoria_agent.models.chunk import ChatChunk
 from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.schemas import LLMResponse, ToolCall
+from seqoria_agent.providers.schemas import LLMResponse, ToolCall, LLMUsage
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.settings import ClientSettings  # noqa: F401
 
@@ -198,20 +198,34 @@ class AIClient:  # noqa: D101 – tiny glue layer
         *,
         use_tools: bool = True,
         tool_choice: str = "auto",
-    ) -> LLMResponse:
-        """Single LLM step (optionally with tools)."""
+        include_usage: bool = False,
+    ) -> Union[LLMResponse, dict]:
+        """Single LLM step (optionally with tools).
+
+        When *include_usage* is *True* the return value is a dict
+        ``{"response": <LLMResponse>, "usage": <usage_dict_or_None>}``
+        so callers can access token statistics without having to unzip the
+        :class:`LLMResponse` object themselves.  When *False* (default) the
+        behaviour is identical to previous versions and the plain
+        :class:`LLMResponse` is returned for full backwards-compatibility."""
 
         if history is None:
             raise ValueError("history required")
 
         if use_tools and self.tools_enabled():
-            return await self.llm.generate(
-                history=history,
-                tools=self.registry.llm_tools,
-                tool_choice=tool_choice,
-            )
+            resp = await self.llm.generate(history=history,
+                                           tools=self.registry.llm_tools,
+                                           tool_choice=tool_choice)
+            if include_usage:
+                return {"response": resp, 
+                        "usage": resp.usage}
+            return resp
 
-        return await self.llm.generate(history=history)
+        resp = await self.llm.generate(history=history)
+        if include_usage:
+            return {"response": resp, 
+                    "usage": resp.usage}
+        return resp
 
     async def llm_stream_once(  # noqa: D401
         self,
@@ -219,23 +233,39 @@ class AIClient:  # noqa: D101 – tiny glue layer
         *,
         use_tools: bool = True,
         tool_choice: str = "auto",
-    ) -> AsyncGenerator[Union[str, LLMResponse], None]:
-        """Stream a single LLM step."""
+        include_usage: bool = False,
+    ) -> AsyncGenerator[Union[str, dict, LLMResponse], None]:
+        """Stream a single LLM step.
+
+        When *include_usage* is *True* the final :class:`LLMResponse` chunk
+        is wrapped in ``{"response": <LLMResponse>, "usage": <usage_dict_or_None>}``.
+        Intermediate string deltas stay untouched so existing token-by-token
+        rendering code continues to work."""
 
         if history is None:
             raise ValueError("history required")
 
-        if use_tools and self.tools_enabled():
-            async for chunk in self.llm.stream(
-                history=history,
-                tools=self.registry.llm_tools,
-                tool_choice=tool_choice,
-            ):
-                yield chunk
-            return
+        async def _gen() -> AsyncGenerator[dict[str, Any] | LLMResponse | str, None]:
+            if use_tools and self.tools_enabled():
+                stream_iter = self.llm.stream(history=history, 
+                                              tools=self.registry.llm_tools, 
+                                              tool_choice=tool_choice)
+            else:
+                stream_iter = self.llm.stream(history=history)
 
-        async for chunk in self.llm.stream(history=history):
-            yield chunk
+            async for chunk in stream_iter:
+                if isinstance(chunk, LLMResponse):
+                    if include_usage:
+                        yield {"response": chunk, 
+                               "usage": chunk.usage}
+                    else:
+                        yield chunk
+                else:
+                    # str deltas pass through unchanged
+                    yield chunk
+
+        async for c in _gen():
+            yield c
 
     # ------------------------------------------------------------------ Phase-3 tool execution wrapper
 
@@ -245,89 +275,197 @@ class AIClient:  # noqa: D101 – tiny glue layer
 
     # ------------------------------------------------------------------ chat (refactored Phase-4)
 
-    async def chat(self, user_query: str, history: List[dict], *, max_turns: int = 5):  # noqa: D401
+    async def chat(self, 
+                   user_query: str, 
+                   history: List[dict], 
+                   *, 
+                   max_turns: int = 5, 
+                   include_usage: bool = False) -> dict[str, Any]:  # noqa: D401
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
             raise RuntimeError("chat re-entered")
         self._hist = history
         try:
-            self.prepare_history(user_query, history)  # Phase-1 helper
+            total_usage = LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+
+            def _add_usage(u) -> None:  # noqa: D401
+                if u is None:
+                    return
+                total_usage.prompt_tokens += u.prompt_tokens or 0
+                total_usage.completion_tokens += u.completion_tokens or 0
+                total_usage.total_tokens += u.total_tokens or 0
+
+            self.prepare_history(user_query=user_query, 
+                                 history=history)  # Phase-1 helper
             # LLM-only fast path --------------------------------------------------
             if not self.tools_enabled():
-                resp = await self.llm_generate_once(history, use_tools=False)
-                history.append({"role": "assistant", "content": resp.text})
-                return {"answer": resp.text, "display": None, "history": history}
+                resp_raw = await self.llm_generate_once(history=history, 
+                                                        use_tools=False, 
+                                                        include_usage=include_usage)
+
+                if include_usage:
+                    resp_obj = resp_raw["response"]  # type: ignore[index]
+                    usage_block = resp_raw["usage"]  # type: ignore[index]
+                else:
+                    resp_obj = resp_raw  # type: ignore[assignment]
+                    usage_block = None
+
+                _add_usage(u=resp_obj.usage)
+
+                history.append({"role": "assistant", 
+                                "content": resp_obj.text})
+                result = {"answer": resp_obj.text,
+                          "display": None,
+                          "history": history}
+                if include_usage:
+                    result["usage_turn"] = usage_block
+                    result["usage_total"] = total_usage
+                return result
 
             for _ in range(max_turns):
-                resp = await self.llm_generate_once(history, use_tools=True, tool_choice="auto")
-                history.append({
-                    "role": "assistant",
-                    "content": resp.text,
-                    **({"tool_calls": [tc.model_dump() for tc in resp.tool_calls]} if resp.tool_calls else {}),
-                })
-                if not resp.tool_calls:
-                    return {"answer": resp.text, "display": None, "history": history}
-                early = await self.run_tool_calls(tool_calls=resp.tool_calls, history=history)
+                resp_raw = await self.llm_generate_once(history=history, 
+                                                        use_tools=True, 
+                                                        tool_choice="auto", include_usage=include_usage)
+
+                if include_usage:
+                    resp_obj = resp_raw["response"]  # type: ignore[index]
+                    usage_block = resp_raw["usage"]  # type: ignore[index]
+                else:
+                    resp_obj = resp_raw  # type: ignore[assignment]
+                    usage_block = None
+
+                _add_usage(u=resp_obj.usage)
+
+                history.append({"role": "assistant",
+                                "content": resp_obj.text,
+                                **({"tool_calls": [tc.model_dump() for tc in resp_obj.tool_calls]} if resp_obj.tool_calls else {})})
+
+                if not resp_obj.tool_calls:
+                    result = {"answer": resp_obj.text, 
+                              "display": None, 
+                              "history": history}
+                    if include_usage:
+                        result["usage_turn"] = usage_block
+                        result["usage_total"] = total_usage
+                    return result
+
+                early = await self.run_tool_calls(tool_calls=resp_obj.tool_calls, history=history)
                 if early:
                     early["history"] = history
+                    if include_usage:
+                        early["usage_turn"] = usage_block
+                        early["usage_total"] = total_usage
                     return early
 
             # Turn limit reached --------------------------------------------------
-            return {"answer": "[Turn limit reached]", "display": None, "history": history}
+            result = {"answer": "[Turn limit reached]", 
+                      "display": None, 
+                      "history": history}
+            if include_usage:
+                result["usage_turn"] = None
+                result["usage_total"] = total_usage
+            return result
         finally:
             self._hist = None
 
     # ------------------------------------------------------------------ streaming chat (refactored Phase-4)
 
-    async def stream_chat(self, user_query: str, history: List[dict], *, max_turns: int = 5) -> AsyncGenerator[ChatChunk, None]:  # noqa: D401
+    async def stream_chat(self, 
+                          user_query: str, 
+                          history: List[dict], 
+                          *, 
+                          max_turns: int = 5, 
+                          include_usage: bool = False) -> AsyncGenerator[ChatChunk, None]:  # noqa: D401
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
             raise RuntimeError("stream_chat re-entered")
         self._hist = history
         try:
-            self.prepare_history(user_query, history)
+            # ------------------------------------------------------------
+            total_usage = LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+
+            def _add_usage(u) -> None:  # noqa: D401
+                if u is None:
+                    return
+                total_usage.prompt_tokens += u.prompt_tokens or 0
+                total_usage.completion_tokens += u.completion_tokens or 0
+                total_usage.total_tokens += u.total_tokens or 0
+
+            self.prepare_history(user_query=user_query, 
+                                 history=history)
             # LLM-only fast path --------------------------------------------------
             if not self.tools_enabled():
-                async for chunk in self.llm_stream_once(history, use_tools=False):
+                usage_block = None
+                async for chunk in self.llm_stream_once(history=history, use_tools=False, include_usage=include_usage):
                     if isinstance(chunk, str):
                         yield ChatChunk(type="llm_delta", text=chunk)
+                    else:
+                        # final chunk with usage (when include_usage=True)
+                        if include_usage:
+                            usage_block = chunk.get("usage")  # type: ignore[attr-defined]
+                            _add_usage(u=usage_block)
+                if include_usage:
+                    yield ChatChunk(type="token_usage", 
+                                    usage=usage_block, 
+                                    cumulative=False)
+                    yield ChatChunk(type="token_usage", 
+                                    usage=total_usage, 
+                                    cumulative=True)
                 return
 
             for _ in range(max_turns):
                 agg: List[str] = []
                 final_resp: Optional[LLMResponse] = None
+                usage_block = None
 
-                async for c in self.llm_stream_once(history, use_tools=True, tool_choice="auto"):
+                async for c in self.llm_stream_once(history=history, 
+                                                    use_tools=True, 
+                                                    tool_choice="auto", 
+                                                    include_usage=include_usage):
                     if isinstance(c, str):
                         agg.append(c)
                         yield ChatChunk(type="llm_delta", text=c)
                     else:
-                        final_resp = c
+                        if include_usage:
+                            usage_block = c.get("usage")  # type: ignore[attr-defined]
+                            final_resp = c["response"]  # type: ignore[index]
+                            _add_usage(usage_block)
+                        else:
+                            final_resp = c
 
                 if final_resp is None:
-                    final_resp = LLMResponse(model_id="unknown", text="".join(agg))
+                    final_resp = LLMResponse(model_id="unknown", 
+                                             text="".join(agg))
 
-                history.append({
-                    "role": "assistant",
-                    "content": final_resp.text,
-                    **({"tool_calls": [tc.model_dump() for tc in final_resp.tool_calls]} if final_resp.tool_calls else {}),
-                })
+                history.append({"role": "assistant",
+                                "content": final_resp.text,
+                                **({"tool_calls": [tc.model_dump() for tc in final_resp.tool_calls]} if final_resp.tool_calls else {})})
 
                 if not final_resp.tool_calls:
+                    if include_usage:
+                        yield ChatChunk(type="token_usage", usage=usage_block, cumulative=False)
+                        yield ChatChunk(type="token_usage", usage=total_usage, cumulative=True)
                     return
 
                 early = await self.run_tool_calls(tool_calls=final_resp.tool_calls, history=history)
                 if early:
                     if early.get("display"):
-                        yield ChatChunk(type="tool_display", envelope=early["display"])
+                        yield ChatChunk(type="tool_display", 
+                                        envelope=early["display"])
                     if early.get("answer"):
-                        yield ChatChunk(type="llm_delta", text=early["answer"])
+                        yield ChatChunk(type="llm_delta", 
+                                        text=early["answer"])
+                    if include_usage:
+                        yield ChatChunk(type="token_usage", usage=usage_block, cumulative=False)
+                        yield ChatChunk(type="token_usage", usage=total_usage, cumulative=True)
                     return
 
             # Turn limit reached --------------------------------------------------
             yield ChatChunk(type="llm_delta", text="[Turn limit reached]")
+            if include_usage:
+                yield ChatChunk(type="token_usage", usage=total_usage, cumulative=True)
         finally:
             self._hist = None
 
@@ -377,10 +515,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
         if target is None:
             raise ValueError("history required – either pass *history* or call within chat/stream_chat")
 
-        entry: dict[str, Any] = {
-            "role": "assistant",
-            "content": content,
-        }
+        entry: dict[str, Any] = {"role": "assistant",
+                                 "content": content,}
         if tool_calls:
             entry["tool_calls"] = [tc.model_dump() for tc in tool_calls]
 
