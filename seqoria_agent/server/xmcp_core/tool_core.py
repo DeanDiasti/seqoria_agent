@@ -105,7 +105,7 @@ class ToolCore:
         self._strict_mode = bool(strict_mode)
         self._strict_server_params = bool(strict_server_params)
         self._json_wrapper = bool(json_wrapper)
-        self._log = logger or logging.getLogger(__name__)
+        self._log = logger or logging.getLogger(name=__name__)
 
         # registries -----------------------------------------------------
         self._tools: Dict[str, ToolInfo] = {}

@@ -64,6 +64,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         *,
         tools: List[dict] | None = None,
         tool_choice: str = "auto",
+        model: str | None = None,
     ) -> LLMResponse:
         """Generate a single response using the first provider that succeeds.
 
@@ -92,6 +93,8 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                 if tools is not None:
                     kwargs_gen["tools"] = tools
                     kwargs_gen["tool_choice"] = tool_choice
+                if model is not None:
+                    kwargs_gen["model"] = model
 
                 raw_resp = await provider.async_generate(**kwargs_gen)  # type: ignore[arg-type]
 
@@ -100,7 +103,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                     response = raw_resp
                 else:
                     try:
-                        response = LLMResponse.model_validate(raw_resp)  # type: ignore[arg-type]
+                        response = LLMResponse.model_validate(obj=raw_resp)  # type: ignore[arg-type]
                     except Exception:
                         # Minimal best-effort fallback – map common attributes if present
                         response = LLMResponse(
@@ -141,6 +144,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         *,
         tools: List[dict] | None = None,
         tool_choice: str = "auto",
+        model: str | None = None,
     ) -> AsyncGenerator[Union[str, LLMResponse], None]:
         """Yield incremental deltas followed by the final :class:`LLMResponse`.
 
@@ -161,6 +165,8 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                 if tools is not None:
                     kwargs_stream["tools"] = tools
                     kwargs_stream["tool_choice"] = tool_choice
+                if model is not None:
+                    kwargs_stream["model"] = model
 
                 tmp = provider.async_stream(**kwargs_stream)  # type: ignore[arg-type]
 
@@ -169,11 +175,9 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
 
                 break
             except LLMError as e:
-                self._logger.warning(
-                    "Provider failed to start stream – trying next",
-                    provider=provider.__class__.__name__,
-                    error=str(e),
-                )
+                self._logger.warning("Provider failed to start stream - trying next", 
+                                     provider=provider.__class__.__name__, 
+                                     error=str(object=e))
                 last_err = e
                 continue
 
@@ -196,24 +200,20 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                     final_response = chunk
                 elif isinstance(chunk, dict):
                     try:
-                        final_response = LLMResponse.model_validate(chunk)
+                        final_response = LLMResponse.model_validate(obj=chunk)
                     except Exception:
-                        final_response = LLMResponse(
-                            model_id=chunk.get("model_id", "unknown"),
-                            text=chunk.get("text"),
-                            tool_calls=chunk.get("tool_calls"),
-                            usage=chunk.get("usage"),
-                            stop_reason=chunk.get("stop_reason"),
-                        )
+                        final_response = LLMResponse(model_id=chunk.get("model_id", "unknown"),
+                                                     text=chunk.get("text"),
+                                                     tool_calls=chunk.get("tool_calls"),
+                                                     usage=chunk.get("usage"),
+                                                     stop_reason=chunk.get("stop_reason"))
                 else:
                     self._logger.warning("Unknown chunk type from provider stream", type=str(type(chunk)))
             # Yield non-string chunks only *after* they are processed (see below)
 
         # Some providers may finish without emitting a distinct LLMResponse
         if final_response is None:
-            final_response = LLMResponse(
-                model_id="unknown",
-                text="".join(aggregated_text),
-            )
+            final_response = LLMResponse(model_id="unknown",
+                                         text="".join(aggregated_text))
 
         yield final_response 

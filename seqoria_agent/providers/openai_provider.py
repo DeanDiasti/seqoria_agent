@@ -215,6 +215,7 @@ class OpenAIProvider(BaseProvider):
                              chat_history: List[Dict[str, Any]], 
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
+                             model: Optional[str] = None,
                              **kwargs) -> LLMResponse:
         """
         Asynchronously generate a completion for the provided chat history.
@@ -224,6 +225,7 @@ class OpenAIProvider(BaseProvider):
             tools: List of tool dictionaries for tool-based generation in OpenAI format:
                 [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}]
             tool_choice: Dictionary specifying the tool choice (e.g., "auto", "none", or {"type": "function", "function": {"name": "..."}}).
+            model_id: Optional identifier for the model to use. If None, uses the default model.
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
             
         Returns
@@ -247,8 +249,9 @@ class OpenAIProvider(BaseProvider):
         if tool_choice is not None:
             params["tool_choice"] = tool_choice
 
+        effective_model = model or self.model_id
         async def _generate() -> LLMResponse:
-            completion = await self.async_client.chat.completions.create(model=self.model_id,
+            completion = await self.async_client.chat.completions.create(model=effective_model,
                                                                           messages=chat_history,
                                                                           stream=False,
                                                                           **params)
@@ -286,13 +289,11 @@ class OpenAIProvider(BaseProvider):
 
             usage_obj = LLMUsage(**usage_data)
             tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            return LLMResponse(
-                model_id=self.model_id,
-                text=content,
-                tool_calls=tool_objs,
-                usage=usage_obj,
-                stop_reason=stop_reason,
-            )
+            return LLMResponse(model_id=effective_model, 
+                               text=content, 
+                               tool_calls=tool_objs, 
+                               usage=usage_obj, 
+                               stop_reason=stop_reason)
         
         return await self._execute_with_retry(operation=_generate)
     
@@ -300,6 +301,7 @@ class OpenAIProvider(BaseProvider):
                            chat_history: List[Dict[str, Any]], 
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
+                           model: Optional[str] = None,
                            **kwargs) -> AsyncGenerator[Union[str, LLMResponse], None]:
         """
         Asynchronously stream a completion for the provided chat history.
@@ -312,6 +314,7 @@ class OpenAIProvider(BaseProvider):
             tools: List of tool dictionaries for tool-based generation in OpenAI format:
                 [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}]
             tool_choice: Dictionary specifying the tool choice (e.g., "auto", "none", or {"type": "function", "function": {"name": "..."}}).
+            model_id: Optional identifier for the model to use. If None, uses the default model.
             **kwargs: Generation parameters overriding defaults.
             
         Yields
@@ -332,9 +335,10 @@ class OpenAIProvider(BaseProvider):
         if tool_choice is not None:
             params["tool_choice"] = tool_choice
 
+        effective_model = model or self.model_id
         async def _create_stream() -> openai.AsyncStream[ChatCompletionChunk]:
             # Use the async client here
-            return await self.async_client.chat.completions.create(model=self.model_id,
+            return await self.async_client.chat.completions.create(model=effective_model,
                                                                    messages=chat_history,
                                                                    stream=True,
                                                                    stream_options={"include_usage": True},
@@ -371,14 +375,10 @@ class OpenAIProvider(BaseProvider):
                              if tool_call_delta.index is not None:
                                  # Ensure we have enough slots in the tool_calls list
                                  while len(tool_calls) <= tool_call_delta.index:
-                                     tool_calls.append({
-                                         "id": "",
-                                         "type": "function",
-                                         "function": {
-                                             "name": "",
-                                             "arguments": ""
-                                         }
-                                     })
+                                     tool_calls.append({"id": "",
+                                                        "type": "function",
+                                                        "function": {"name": "",
+                                                                     "arguments": ""}})
                                  
                                  # Update the tool call at the specified index
                                  current_tool_call = tool_calls[tool_call_delta.index]
@@ -405,13 +405,11 @@ class OpenAIProvider(BaseProvider):
             # After the loop finishes, yield the final LLMResponse
             usage_obj = LLMUsage(**final_usage_data)
             tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            yield LLMResponse(
-                model_id=self.model_id,
-                text=full_completion_text,
-                tool_calls=tool_objs,
-                usage=usage_obj,
-                stop_reason=stop_reason,
-            )
+            yield LLMResponse(model_id=effective_model, 
+                              text=full_completion_text, 
+                              tool_calls=tool_objs, 
+                              usage=usage_obj, 
+                              stop_reason=stop_reason)
 
         except Exception as e:
             # Handle errors occurring during async stream iteration

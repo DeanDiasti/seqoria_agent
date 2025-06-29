@@ -41,6 +41,7 @@ class BaseProvider(ABC):
                              chat_history: List[Dict[str, Any]], 
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
+                             model: Optional[str] = None,
                              **kwargs) -> LLMResponse:
         """
         Asynchronously generate a completion for the provided chat history.
@@ -50,6 +51,7 @@ class BaseProvider(ABC):
             tools: Optional list of tool definitions for function calling.
                    Each tool should have 'name', 'description', and 'input_schema' fields.
             tool_choice: Optional tool choice configuration. Format may vary by provider.
+            model: Optional identifier for the model.
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
             
         Returns
@@ -68,6 +70,7 @@ class BaseProvider(ABC):
                            chat_history: List[Dict[str, Any]], 
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
+                           model: Optional[str] = None,
                            **kwargs) -> AsyncGenerator[Union[str, LLMResponse], None]:
         """
         Asynchronously stream a completion for the provided chat history.
@@ -80,6 +83,7 @@ class BaseProvider(ABC):
             chat_history: List of message dictionaries.
             tools: Optional list of tool definitions for function calling.
             tool_choice: Optional tool choice configuration.
+            model: Optional identifier for the model.
             **kwargs: Generation parameters overriding defaults.
             
         Yields

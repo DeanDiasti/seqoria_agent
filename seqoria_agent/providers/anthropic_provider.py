@@ -200,6 +200,7 @@ class AnthropicProvider(BaseProvider):
                              chat_history: List[Dict[str, Any]], 
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
+                             model: Optional[str] = None,
                              **kwargs) -> LLMResponse:
         """
         Asynchronously generate a completion for the provided chat history.
@@ -212,6 +213,7 @@ class AnthropicProvider(BaseProvider):
                         - {"type": "auto"} (default): Let Claude decide whether to use tools
                         - {"type": "any"}: Force Claude to use at least one tool
                         - {"type": "tool", "name": "tool_name"}: Force Claude to use a specific tool
+            model: Optional model identifier to override the default model
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
             
         Returns
@@ -234,8 +236,9 @@ class AnthropicProvider(BaseProvider):
         if tool_choice is not None:
             params["tool_choice"] = tool_choice
 
+        effective_model = model or self.model_id
         async def _generate() -> LLMResponse:
-            completion = await self.async_client.messages.create(model=self.model_id,
+            completion = await self.async_client.messages.create(model=effective_model,
                                                                  messages=chat_history,
                                                                  **params)
             
@@ -271,13 +274,11 @@ class AnthropicProvider(BaseProvider):
 
             usage_obj = LLMUsage(**usage_data)
             tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            return LLMResponse(
-                model_id=self.model_id,
-                text=text_content,
-                tool_calls=tool_objs,
-                usage=usage_obj,
-                stop_reason=completion.stop_reason,
-            )
+            return LLMResponse(model_id=effective_model,
+                               text=text_content,
+                               tool_calls=tool_objs,
+                               usage=usage_obj,
+                               stop_reason=completion.stop_reason)
         
         return await self._execute_with_retry(operation=_generate)
     
@@ -285,6 +286,7 @@ class AnthropicProvider(BaseProvider):
                            chat_history: List[Dict[str, Any]], 
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
+                           model: Optional[str] = None,
                            **kwargs) -> AsyncGenerator[Union[str, LLMResponse], None]:
         """
         Asynchronously stream a completion for the provided chat history.
@@ -296,6 +298,7 @@ class AnthropicProvider(BaseProvider):
             chat_history: List of message dictionaries.
             tools: Optional list of tool definitions for function calling.
             tool_choice: Optional tool choice configuration.
+            model: Optional model identifier to override the default model
             **kwargs: Generation parameters overriding defaults.
             
         Yields
@@ -321,9 +324,10 @@ class AnthropicProvider(BaseProvider):
         if tool_choice is not None:
             params["tool_choice"] = tool_choice
 
+        effective_model = model or self.model_id
         async def _create_stream() -> Any:
             # Use the async client here
-            return await self.async_client.messages.create(model=self.model_id,
+            return await self.async_client.messages.create(model=effective_model,
                                                            messages=chat_history,
                                                            stream=True,
                                                            **params)
@@ -395,7 +399,7 @@ class AnthropicProvider(BaseProvider):
             # After the loop finishes, yield the final LLMResponse
             usage_obj = LLMUsage(**final_usage_data)
             tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            yield LLMResponse(model_id=self.model_id, 
+            yield LLMResponse(model_id=effective_model, 
                               text=full_completion_text, 
                               tool_calls=tool_objs, 
                               usage=usage_obj, 

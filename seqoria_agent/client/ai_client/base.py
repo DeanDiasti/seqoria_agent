@@ -54,9 +54,6 @@ class AIClient:  # noqa: D101 – tiny glue layer
         auth_provider: BaseAuthProvider | None = None,
         **client_kwargs: Any,
     ) -> None:
-        # ------------------------------------------------------------------
-        # Phase 9 – merge explicit kwargs with ClientSettings (non-breaking)
-        # ------------------------------------------------------------------
         if settings is None:
             settings = ClientSettings()
 
@@ -199,6 +196,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
         use_tools: bool = True,
         tool_choice: str = "auto",
         include_usage: bool = False,
+        model: str | None = None,
     ) -> Union[LLMResponse, dict]:
         """Single LLM step (optionally with tools).
 
@@ -215,13 +213,15 @@ class AIClient:  # noqa: D101 – tiny glue layer
         if use_tools and self.tools_enabled():
             resp = await self.llm.generate(history=history,
                                            tools=self.registry.llm_tools,
-                                           tool_choice=tool_choice)
+                                           tool_choice=tool_choice,
+                                           model=model)
             if include_usage:
                 return {"response": resp, 
                         "usage": resp.usage}
             return resp
 
-        resp = await self.llm.generate(history=history)
+        resp = await self.llm.generate(history=history, 
+                                       model=model)
         if include_usage:
             return {"response": resp, 
                     "usage": resp.usage}
@@ -234,6 +234,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
         use_tools: bool = True,
         tool_choice: str = "auto",
         include_usage: bool = False,
+        model: str | None = None,
     ) -> AsyncGenerator[Union[str, dict, LLMResponse], None]:
         """Stream a single LLM step.
 
@@ -249,9 +250,11 @@ class AIClient:  # noqa: D101 – tiny glue layer
             if use_tools and self.tools_enabled():
                 stream_iter = self.llm.stream(history=history, 
                                               tools=self.registry.llm_tools, 
-                                              tool_choice=tool_choice)
+                                              tool_choice=tool_choice,
+                                              model=model)
             else:
-                stream_iter = self.llm.stream(history=history)
+                stream_iter = self.llm.stream(history=history, 
+                                              model=model)
 
             async for chunk in stream_iter:
                 if isinstance(chunk, LLMResponse):
@@ -280,7 +283,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
                    history: List[dict], 
                    *, 
                    max_turns: int = 5, 
-                   include_usage: bool = False) -> dict[str, Any]:  # noqa: D401
+                   include_usage: bool = False,
+                   model: str | None = None) -> dict[str, Any]:  # noqa: D401
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
@@ -302,7 +306,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
             if not self.tools_enabled():
                 resp_raw = await self.llm_generate_once(history=history, 
                                                         use_tools=False, 
-                                                        include_usage=include_usage)
+                                                        include_usage=include_usage,
+                                                        model=model)
 
                 if include_usage:
                     resp_obj = resp_raw["response"]  # type: ignore[index]
@@ -326,7 +331,9 @@ class AIClient:  # noqa: D101 – tiny glue layer
             for _ in range(max_turns):
                 resp_raw = await self.llm_generate_once(history=history, 
                                                         use_tools=True, 
-                                                        tool_choice="auto", include_usage=include_usage)
+                                                        tool_choice="auto", 
+                                                        include_usage=include_usage,
+                                                        model=model)
 
                 if include_usage:
                     resp_obj = resp_raw["response"]  # type: ignore[index]
@@ -376,7 +383,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
                           history: List[dict], 
                           *, 
                           max_turns: int = 5, 
-                          include_usage: bool = False) -> AsyncGenerator[ChatChunk, None]:  # noqa: D401
+                          include_usage: bool = False,
+                          model: str | None = None) -> AsyncGenerator[ChatChunk, None]:  # noqa: D401
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
@@ -384,7 +392,9 @@ class AIClient:  # noqa: D101 – tiny glue layer
         self._hist = history
         try:
             # ------------------------------------------------------------
-            total_usage = LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+            total_usage = LLMUsage(prompt_tokens=0, 
+                                   completion_tokens=0, 
+                                   total_tokens=0)
 
             def _add_usage(u) -> None:  # noqa: D401
                 if u is None:
@@ -398,7 +408,10 @@ class AIClient:  # noqa: D101 – tiny glue layer
             # LLM-only fast path --------------------------------------------------
             if not self.tools_enabled():
                 usage_block = None
-                async for chunk in self.llm_stream_once(history=history, use_tools=False, include_usage=include_usage):
+                async for chunk in self.llm_stream_once(history=history, 
+                                                        use_tools=False, 
+                                                        include_usage=include_usage, 
+                                                        model=model):
                     if isinstance(chunk, str):
                         yield ChatChunk(type="llm_delta", text=chunk)
                     else:
@@ -423,7 +436,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
                 async for c in self.llm_stream_once(history=history, 
                                                     use_tools=True, 
                                                     tool_choice="auto", 
-                                                    include_usage=include_usage):
+                                                    include_usage=include_usage,
+                                                    model=model):
                     if isinstance(c, str):
                         agg.append(c)
                         yield ChatChunk(type="llm_delta", text=c)
