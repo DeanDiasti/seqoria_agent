@@ -194,7 +194,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
                    *, 
                    max_turns: int = 5,
                    model: str | None = None) -> AsyncGenerator[Union[AssistantMessage, ToolCallRequestList, ToolMessages], None]:  # noqa: D401
-        
+        """Chat with the LLM."""
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
@@ -268,7 +268,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
                           *, 
                           max_turns: int = 5, 
                           model: str | None = None) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolMessages], None]:  # noqa: D401
-        
+        """Stream a chat session."""
         if history is None:
             raise ValueError("history required")
         if user_query is None:

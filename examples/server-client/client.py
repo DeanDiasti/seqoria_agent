@@ -39,11 +39,8 @@ load_dotenv()
 # MCP server endpoints discovered by the demo client
 # ------------------------------------------------------------------
 
-servers = [
-    "http://localhost:8004/mcp",
-    "http://localhost:8005/mcp",
-    "http://localhost:8006/mcp",  # NEW math-router server
-]
+servers = ["http://localhost:8004/mcp", 
+           "http://localhost:8005/mcp"]
 
 # ------------------------------------------------------------------
 # Structured logging setup for the demo
