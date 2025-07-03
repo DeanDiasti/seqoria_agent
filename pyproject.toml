@@ -14,13 +14,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "anthropic>=0.54.0",
-    "fastapi>=0.115.13",
+    "anthropic>=0.57.1",
+    "fastapi>=0.115.14",
     "httpx>=0.28.1",
-    "mcp>=1.9.4",
-    "openai>=1.90.0",
+    "openai>=1.93.0",
     "pydantic>=2.11.7",
-    "pytest-cov>=6.2.1",
     "redis>=6.2.0",
     "structlog>=25.4.0",
     "PyJWT>=2.8.0",
