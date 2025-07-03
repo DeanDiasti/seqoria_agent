@@ -9,7 +9,7 @@ app = FastXMCP(title="APIKeyMiddlewareExample")
 app.add_middleware(HeaderApiKeyBackend, key_header="X-API-Key", validator=API_KEY)
 
 
-@app.get("/health")
+@app.get(path="/health")
 async def health():
     return {"status": "ok"}
 
