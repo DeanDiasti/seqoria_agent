@@ -31,9 +31,6 @@ class ParamContext(TypedDict, total=False):
 class ParameterProvider(Protocol):
     """Protocol for client-side parameter providers."""
 
-    async def resolve(
-        self,
-        param_name: str,
-        tool_name: str,
-        context: ParamContext,
-    ) -> Optional[Any]: ... 
+    async def resolve(self,
+                      param_name: str,
+                      tool_name: str) -> Optional[Any]: ... 

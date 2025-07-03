@@ -10,6 +10,7 @@ import random
 from seqoria_agent.client.ai_client.base import AIClient
 from seqoria_agent.providers import OpenAIProvider
 from seqoria_agent import LocalToolbox
+from seqoria_agent.models.chunk import AssistantMessage, ToolMessages
 
 load_dotenv()
 
@@ -26,13 +27,23 @@ async def main() -> None:
 
     async with AIClient(providers=[provider], local_toolbox=toolbox) as ai:
         history: list[dict] = []
-        result = await ai.chat(user_query="generate a random number between 0 and 100", 
-                               history=history, 
-                               include_usage=True)
 
-        print("Answer:", result["answer"])
-        print("Prompt/Completion/Total tokens (turn):", result["usage_turn"].model_dump())
-        print("Cumulative tokens so far:", result["usage_total"].model_dump())
+        async for chunk in ai.chat(user_query="generate a random number between 0 and 100", 
+                               history=history):
+            if isinstance(chunk, AssistantMessage):
+                print(chunk.content)
+                print("Prompt/Completion/Total tokens (turn):", chunk.usage.model_dump())
+            elif isinstance(chunk, ToolMessages):
+                print("tool call\n" * (len(chunk) // 2))
+
+        result = ai.chat(user_query="generate a random number between 0 and 100", 
+                               history=history)
+
+        async for chunk in result:
+            if isinstance(chunk, AssistantMessage):
+                print(chunk.content)
+            elif isinstance(chunk, ToolMessages):
+                print("tool call\n" * (len(chunk) // 2))
 
 
 if __name__ == "__main__":

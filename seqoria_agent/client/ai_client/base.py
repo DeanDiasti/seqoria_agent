@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio, logging
 from typing import Any, AsyncGenerator, Iterable, List, Optional, Self, Union
+from io import StringIO  # Locally import to avoid module cost when unused
 
 try:  # Prefer structlog but fall back to stdlib
     import structlog  # type: ignore
@@ -18,11 +19,10 @@ from seqoria_agent.client.ai_client.llm_interface import LLMInterface
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
 from seqoria_agent.client.cache import CacheProtocol, NullCache  # noqa: F401
 from seqoria_agent.client.parameters import ParameterProvider
-from seqoria_agent.models.chunk import ChatChunk
 from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.schemas import LLMResponse, ToolCall, LLMUsage
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.settings import ClientSettings  # noqa: F401
+from seqoria_agent.models.chunk import AssistantMessage, ToolCallRequest, ToolCallResult, ChatChunk, UserMessage, ToolCallRequestList, LLMUsage, ToolMessages
 
 __all__ = ["AIClient"]
 
@@ -69,68 +69,45 @@ class AIClient:  # noqa: D101 – tiny glue layer
         tool_timeout = tool_timeout if tool_timeout is not None else settings.tool_timeout
         retry_policy = retry_policy if retry_policy is not None else settings.retry_policy
         breaker_threshold = breaker_threshold if breaker_threshold != 5 else settings.breaker_threshold
-        breaker_reset_after = (
-            breaker_reset_after if breaker_reset_after != 60 else settings.breaker_reset_after
-        )
+        breaker_reset_after = (breaker_reset_after if breaker_reset_after != 60 else settings.breaker_reset_after)
         param_providers = param_providers if param_providers is not None else settings.param_providers
-        # ------------------------------------------------------------------
-        # Phase-2 – authentication provider wiring
-        # ------------------------------------------------------------------
 
         self._auth_provider: BaseAuthProvider = auth_provider or NoAuthProvider()
-
-        # Merge auth_provider into client kwargs so ConnectionPool/Transport
-        # can thread it through to every HTTP request.  Explicit overrides in
-        # *client_kwargs* remain honoured.
         if "auth_provider" not in client_kwargs:
             client_kwargs["auth_provider"] = self._auth_provider
-
-        # 'allow_override' stays as explicitly provided (default False)
-        # Merge client_kwargs with settings.client_kwargs (explicit has priority)
         final_client_kwargs = {**settings.client_kwargs, **client_kwargs}
 
-        # ------------------------------------------------------------------
-        # Preserve original behaviour after merging
-        # ------------------------------------------------------------------
         if not providers:
             raise ValueError("'providers' may not be empty")
         self._providers = providers
         self._urls = list(dict.fromkeys(urls or []))
         self._boxes = _as_list(local_toolbox)
-        self._logger = logger or (
-            structlog.get_logger("seqoria_agent")  # type: ignore
-            if structlog else logging.getLogger(name="seqoria_agent")
-        )
+        # Always use stdlib logging for internal library logs to avoid structlog API incompatibilities
+        self._logger = logger or logging.getLogger(name="seqoria_agent")
         self._tool_map: dict[str, Any] = {}
 
-        self.pool = ConnectionPool(
-            urls=self._urls,
-            logger=self._logger,
-            retry_policy=retry_policy or {},
-            breaker_threshold=breaker_threshold,
-            breaker_reset_after=breaker_reset_after,
-            tool_map=self._tool_map,
-            client_kwargs=final_client_kwargs,
-        )
-        self.registry = ToolRegistry(
-            pool=self.pool,
-            local_toolboxes=self._boxes,
-            tool_map=self._tool_map,
-            refresh_interval=refresh_interval,
-            logger=self._logger,
-            enable_meta_tools=enable_meta_tools,
-        )
-        self.executor = Executor(
-            pool=self.pool,
-            registry=self.registry,
-            cache=cache or NullCache(),
-            cache_ttl=cache_ttl,
-            tool_semaphore=asyncio.Semaphore(value=max_concurrency) if max_concurrency else None,
-            tool_timeout=tool_timeout,
-            param_providers=param_providers,
-            allow_override=allow_override,
-            logger=self._logger,
-        )
+        self.pool = ConnectionPool(urls=self._urls,
+                                   logger=self._logger,
+                                   retry_policy=retry_policy or {},
+                                   breaker_threshold=breaker_threshold,
+                                   breaker_reset_after=breaker_reset_after,
+                                   tool_map=self._tool_map,
+                                   client_kwargs=final_client_kwargs)
+        self.registry = ToolRegistry(pool=self.pool,
+                                     local_toolboxes=self._boxes,
+                                     tool_map=self._tool_map,
+                                     refresh_interval=refresh_interval,
+                                     logger=self._logger,
+                                     enable_meta_tools=enable_meta_tools)
+        self.executor = Executor(pool=self.pool,
+                                 registry=self.registry,
+                                 cache=cache or NullCache(),
+                                 cache_ttl=cache_ttl,
+                                 tool_semaphore=asyncio.Semaphore(value=max_concurrency) if max_concurrency else None,
+                                 tool_timeout=tool_timeout,
+                                 param_providers=param_providers,
+                                 allow_override=allow_override,
+                                 logger=self._logger)
         self.llm = LLMInterface(providers=self._providers, logger=self._logger)
         self._system_prompt = build_system_prompt()
         self._hist: Optional[List[dict]] = None
@@ -139,7 +116,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
     async def __aenter__(self) -> Self:
         await self.pool.start(); await self.registry.refresh()
         if not self.pool.has_servers and not self._boxes:
-            self._logger.warning("AIClient initialised without tools - LLM-only mode")
+            self._logger.warning(msg="AIClient initialised without tools - LLM-only mode")
         return self
 
     async def __aexit__(self, *_) -> None:
@@ -152,60 +129,28 @@ class AIClient:  # noqa: D101 – tiny glue layer
     async def call_mcp_tool(self, name: str, arguments: dict[str, Any], *, server_args: dict | None = None):
         return await self.pool.call_tool(name=name, arguments=arguments, server_args=server_args)
 
-    async def _update_llm_tools(self) -> None:
-        """Legacy compatibility shim – delegates to ToolRegistry.refresh."""
+    async def refresh_tools(self) -> None:  # manual refresh
         await self.registry.refresh()
 
-    async def refresh_tools(self) -> None:  # manual refresh
-        await self._update_llm_tools()
+    async def run_tool_calls(self, tool_calls: List[ToolCallRequest]) -> List[ToolCallResult]:
+        return await self.executor.run_calls(tool_calls=tool_calls)
 
     # ------------------------------------------------------------------ Phase-1 helpers (public)
 
     def tools_enabled(self) -> bool:  # noqa: D401
         """Return *True* if any tool is available."""
 
-        # Prefer the registry as source-of-truth (includes meta-tools) but
-        # fall back to the historical check for edge-cases where the registry
-        # has not been refreshed yet (e.g. before ``AIClient.__aenter__``).
         return bool(self._tool_map or self._boxes)
-
-    # Deprecated private alias kept for backward-compatibility -------------
-    def _tools_enabled(self) -> bool:  # noqa: D401
-        """Deprecated - call :pyfunc:`tools_enabled`."""
-
-        return self.tools_enabled()
-
-    def prepare_history(self, user_query: str, history: List[dict]) -> List[dict]:  # noqa: D401
-        """Add system prompt (if absent) and user query."""
-
-        if history is None:
-            raise ValueError("history required")
-
-        if not history or history[0].get("role") != "system":
-            history.insert(0, {"role": "system", "content": self._system_prompt})
-
-        history.append({"role": "user", "content": user_query})
-        return history
 
     # ------------------------------------------------------------------ Phase-2 LLM single-shot helpers
 
-    async def llm_generate_once(  # noqa: D401
-        self,
-        history: List[dict],
-        *,
-        use_tools: bool = True,
-        tool_choice: str = "auto",
-        include_usage: bool = False,
-        model: str | None = None,
-    ) -> Union[LLMResponse, dict]:
-        """Single LLM step (optionally with tools).
-
-        When *include_usage* is *True* the return value is a dict
-        ``{"response": <LLMResponse>, "usage": <usage_dict_or_None>}``
-        so callers can access token statistics without having to unzip the
-        :class:`LLMResponse` object themselves.  When *False* (default) the
-        behaviour is identical to previous versions and the plain
-        :class:`LLMResponse` is returned for full backwards-compatibility."""
+    async def llm_generate_once(self,
+                                history: List[dict],
+                                *,
+                                use_tools: bool = True,
+                                tool_choice: str = "auto",
+                                model: str | None = None) -> Union[AssistantMessage, ToolCallRequestList]:
+        """Single LLM step (optionally with tools)."""
 
         if history is None:
             raise ValueError("history required")
@@ -215,183 +160,57 @@ class AIClient:  # noqa: D101 – tiny glue layer
                                            tools=self.registry.llm_tools,
                                            tool_choice=tool_choice,
                                            model=model)
-            if include_usage:
-                return {"response": resp, 
-                        "usage": resp.usage}
-            return resp
+        else:
+            resp = await self.llm.generate(history=history, 
+                                           model=model)
 
-        resp = await self.llm.generate(history=history, 
-                                       model=model)
-        if include_usage:
-            return {"response": resp, 
-                    "usage": resp.usage}
         return resp
 
-    async def llm_stream_once(  # noqa: D401
-        self,
-        history: List[dict],
-        *,
-        use_tools: bool = True,
-        tool_choice: str = "auto",
-        include_usage: bool = False,
-        model: str | None = None,
-    ) -> AsyncGenerator[Union[str, dict, LLMResponse], None]:
-        """Stream a single LLM step.
-
-        When *include_usage* is *True* the final :class:`LLMResponse` chunk
-        is wrapped in ``{"response": <LLMResponse>, "usage": <usage_dict_or_None>}``.
-        Intermediate string deltas stay untouched so existing token-by-token
-        rendering code continues to work."""
+    async def llm_stream_once(self,
+                              history: List[dict],
+                              *,
+                              use_tools: bool = True,
+                              tool_choice: str = "auto",
+                              model: str | None = None) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequest], None]:
+        """Stream a single LLM step"""
 
         if history is None:
             raise ValueError("history required")
-
-        async def _gen() -> AsyncGenerator[dict[str, Any] | LLMResponse | str, None]:
-            if use_tools and self.tools_enabled():
-                stream_iter = self.llm.stream(history=history, 
-                                              tools=self.registry.llm_tools, 
-                                              tool_choice=tool_choice,
-                                              model=model)
-            else:
-                stream_iter = self.llm.stream(history=history, 
-                                              model=model)
-
-            async for chunk in stream_iter:
-                if isinstance(chunk, LLMResponse):
-                    if include_usage:
-                        yield {"response": chunk, 
-                               "usage": chunk.usage}
-                    else:
-                        yield chunk
-                else:
-                    # str deltas pass through unchanged
-                    yield chunk
-
-        async for c in _gen():
-            yield c
-
-    # ------------------------------------------------------------------ Phase-3 tool execution wrapper
-
-    async def run_tool_calls(self, tool_calls: List[ToolCall], history: List[dict]):  # noqa: D401
-        """Forward to :pymeth:`Executor.run_calls`."""
-        return await self.executor.run_calls(tool_calls=tool_calls, history=history)
-
-    # ------------------------------------------------------------------ chat (refactored Phase-4)
+        
+        if use_tools and self.tools_enabled():
+            async for chunk in self.llm.stream(history=history, 
+                                               tools=self.registry.llm_tools, 
+                                               tool_choice=tool_choice,
+                                               model=model):
+                yield chunk
+        else:
+            async for chunk in self.llm.stream(history=history, 
+                                               model=model):
+                yield chunk
 
     async def chat(self, 
                    user_query: str, 
                    history: List[dict], 
                    *, 
-                   max_turns: int = 5, 
-                   include_usage: bool = False,
-                   model: str | None = None) -> dict[str, Any]:  # noqa: D401
+                   max_turns: int = 5,
+                   model: str | None = None) -> AsyncGenerator[Union[AssistantMessage, ToolCallRequestList, ToolMessages], None]:  # noqa: D401
+        
         if history is None:
             raise ValueError("history required")
         if self._hist is not None:
             raise RuntimeError("chat re-entered")
         self._hist = history
         try:
-            total_usage = LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-
-            def _add_usage(u) -> None:  # noqa: D401
-                if u is None:
-                    return
-                total_usage.prompt_tokens += u.prompt_tokens or 0
-                total_usage.completion_tokens += u.completion_tokens or 0
-                total_usage.total_tokens += u.total_tokens or 0
-
-            self.prepare_history(user_query=user_query, 
-                                 history=history)  # Phase-1 helper
+            history.append(UserMessage(role="user", content=user_query))
+            
             # LLM-only fast path --------------------------------------------------
             if not self.tools_enabled():
-                resp_raw = await self.llm_generate_once(history=history, 
-                                                        use_tools=False, 
-                                                        include_usage=include_usage,
-                                                        model=model)
+                yield await self.llm_generate_once(history=history, 
+                                                    use_tools=False,
+                                                    model=model)
+                return
+            
 
-                if include_usage:
-                    resp_obj = resp_raw["response"]  # type: ignore[index]
-                    usage_block = resp_raw["usage"]  # type: ignore[index]
-                else:
-                    resp_obj = resp_raw  # type: ignore[assignment]
-                    usage_block = None
-
-                _add_usage(u=resp_obj.usage)
-
-                history.append({"role": "assistant", 
-                                "content": resp_obj.text})
-                result = {"answer": resp_obj.text,
-                          "display": None,
-                          "history": history}
-                if include_usage:
-                    result["usage_turn"] = usage_block
-                    result["usage_total"] = total_usage
-                return result
-
-            for _ in range(max_turns):
-                resp_raw = await self.llm_generate_once(history=history, 
-                                                        use_tools=True, 
-                                                        tool_choice="auto", 
-                                                        include_usage=include_usage,
-                                                        model=model)
-
-                if include_usage:
-                    resp_obj = resp_raw["response"]  # type: ignore[index]
-                    usage_block = resp_raw["usage"]  # type: ignore[index]
-                else:
-                    resp_obj = resp_raw  # type: ignore[assignment]
-                    usage_block = None
-
-                _add_usage(u=resp_obj.usage)
-
-                history.append({"role": "assistant",
-                                "content": resp_obj.text,
-                                **({"tool_calls": [tc.model_dump() for tc in resp_obj.tool_calls]} if resp_obj.tool_calls else {})})
-
-                if not resp_obj.tool_calls:
-                    result = {"answer": resp_obj.text, 
-                              "display": None, 
-                              "history": history}
-                    if include_usage:
-                        result["usage_turn"] = usage_block
-                        result["usage_total"] = total_usage
-                    return result
-
-                early = await self.run_tool_calls(tool_calls=resp_obj.tool_calls, history=history)
-                if early:
-                    early["history"] = history
-                    if include_usage:
-                        early["usage_turn"] = usage_block
-                        early["usage_total"] = total_usage
-                    return early
-
-            # Turn limit reached --------------------------------------------------
-            result = {"answer": "[Turn limit reached]", 
-                      "display": None, 
-                      "history": history}
-            if include_usage:
-                result["usage_turn"] = None
-                result["usage_total"] = total_usage
-            return result
-        finally:
-            self._hist = None
-
-    # ------------------------------------------------------------------ streaming chat (refactored Phase-4)
-
-    async def stream_chat(self, 
-                          user_query: str, 
-                          history: List[dict], 
-                          *, 
-                          max_turns: int = 5, 
-                          include_usage: bool = False,
-                          model: str | None = None) -> AsyncGenerator[ChatChunk, None]:  # noqa: D401
-        if history is None:
-            raise ValueError("history required")
-        if self._hist is not None:
-            raise RuntimeError("stream_chat re-entered")
-        self._hist = history
-        try:
-            # ------------------------------------------------------------
             total_usage = LLMUsage(prompt_tokens=0, 
                                    completion_tokens=0, 
                                    total_tokens=0)
@@ -403,102 +222,137 @@ class AIClient:  # noqa: D101 – tiny glue layer
                 total_usage.completion_tokens += u.completion_tokens or 0
                 total_usage.total_tokens += u.total_tokens or 0
 
-            self.prepare_history(user_query=user_query, 
-                                 history=history)
-            # LLM-only fast path --------------------------------------------------
-            if not self.tools_enabled():
-                usage_block = None
-                async for chunk in self.llm_stream_once(history=history, 
-                                                        use_tools=False, 
-                                                        include_usage=include_usage, 
-                                                        model=model):
-                    if isinstance(chunk, str):
-                        yield ChatChunk(type="llm_delta", text=chunk)
-                    else:
-                        # final chunk with usage (when include_usage=True)
-                        if include_usage:
-                            usage_block = chunk.get("usage")  # type: ignore[attr-defined]
-                            _add_usage(u=usage_block)
-                if include_usage:
-                    yield ChatChunk(type="token_usage", 
-                                    usage=usage_block, 
-                                    cumulative=False)
-                    yield ChatChunk(type="token_usage", 
-                                    usage=total_usage, 
-                                    cumulative=True)
-                return
 
             for _ in range(max_turns):
-                agg: List[str] = []
-                final_resp: Optional[LLMResponse] = None
-                usage_block = None
-
-                async for c in self.llm_stream_once(history=history, 
+                resp = await self.llm_generate_once(history=history, 
                                                     use_tools=True, 
-                                                    tool_choice="auto", 
-                                                    include_usage=include_usage,
-                                                    model=model):
-                    if isinstance(c, str):
-                        agg.append(c)
-                        yield ChatChunk(type="llm_delta", text=c)
-                    else:
-                        if include_usage:
-                            usage_block = c.get("usage")  # type: ignore[attr-defined]
-                            final_resp = c["response"]  # type: ignore[index]
-                            _add_usage(usage_block)
-                        else:
-                            final_resp = c
+                                                    tool_choice="auto",
+                                                    model=model)
+                
+                _add_usage(u=resp.usage)
 
-                if final_resp is None:
-                    final_resp = LLMResponse(model_id="unknown", 
-                                             text="".join(agg))
-
-                history.append({"role": "assistant",
-                                "content": final_resp.text,
-                                **({"tool_calls": [tc.model_dump() for tc in final_resp.tool_calls]} if final_resp.tool_calls else {})})
-
-                if not final_resp.tool_calls:
-                    if include_usage:
-                        yield ChatChunk(type="token_usage", usage=usage_block, cumulative=False)
-                        yield ChatChunk(type="token_usage", usage=total_usage, cumulative=True)
+                if isinstance(resp, AssistantMessage):
+                    yield resp
                     return
 
-                early = await self.run_tool_calls(tool_calls=final_resp.tool_calls, history=history)
-                if early:
-                    if early.get("display"):
-                        yield ChatChunk(type="tool_display", 
-                                        envelope=early["display"])
-                    if early.get("answer"):
-                        yield ChatChunk(type="llm_delta", 
-                                        text=early["answer"])
-                    if include_usage:
-                        yield ChatChunk(type="token_usage", usage=usage_block, cumulative=False)
-                        yield ChatChunk(type="token_usage", usage=total_usage, cumulative=True)
-                    return
+                if isinstance(resp, ToolCallRequestList):
+                    # Assistant decided to use tool(s) – no textual answer yet
+                    tool_results = await self.executor.run_calls(tool_calls=resp.tool_calls)
 
-            # Turn limit reached --------------------------------------------------
-            yield ChatChunk(type="llm_delta", text="[Turn limit reached]")
-            if include_usage:
-                yield ChatChunk(type="token_usage", usage=total_usage, cumulative=True)
+                    # Interleave requests and results so each tool_call is immediately
+                    # followed by its corresponding tool_result.
+                    tool_messages = ToolMessages()
+                    for req, res in zip(resp.tool_calls, tool_results):
+                        tool_messages.extend([req, res])
+
+                    history.extend(tool_messages)
+                    yield tool_messages
+
+
+            else:
+                # Turn limit reached – return a structured response so callers can resume later
+                yield AssistantMessage(role="assistant", 
+                                       content="[Turn limit reached]", 
+                                       model=None, 
+                                       usage=total_usage)
+
+
         finally:
             self._hist = None
 
-    # ------------------------------------------------------------------ legacy test hooks
-    async def _run_tool(self, tc: ToolCall):
-        return await self.executor._run_tool(tool_call=tc, history=self._hist or [])
+    # ------------------------------------------------------------------ streaming chat (refactored Phase-4)
 
-    def _compute_execution_layers(self, calls: List[ToolCall]):
-        extra = getattr(self, "_tool_deps", {})  # type: ignore[attr-defined]
-        reg = self.registry
-        class _R:  # minimal proxy
-            def depends_on(_, n):  # noqa: D401
-                return set(reg.depends_on(name=n)) | set(extra.get(n, set()))
-        tmp = Executor(pool=self.pool, registry=_R(), cache=NullCache())
-        return tmp.compute_execution_layers(tool_calls=calls)
+    async def stream_chat(self, 
+                          user_query: str, 
+                          history: List[dict], 
+                          *, 
+                          max_turns: int = 5, 
+                          model: str | None = None) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolMessages], None]:  # noqa: D401
+        
+        if history is None:
+            raise ValueError("history required")
+        if user_query is None:
+            raise ValueError("user_query required")
+        
+        history.append(UserMessage(role="user", 
+                                   content=user_query))
+
+        try:
+            # LLM-only fast path --------------------------------------------------
+            if not self.tools_enabled():
+                async for chunk in self.llm_stream_once(history=history, 
+                                                        use_tools=False,  
+                                                        model=model):
+                    yield chunk
+
+                return
+
+
+            total_usage = LLMUsage(prompt_tokens=0, 
+                                   completion_tokens=0, 
+                                   total_tokens=0)
+
+            def _add_usage(u) -> None:  # noqa: D401
+                if u is None:
+                    return
+                total_usage.prompt_tokens += u.prompt_tokens or 0
+                total_usage.completion_tokens += u.completion_tokens or 0
+                total_usage.total_tokens += u.total_tokens or 0
+
+
+            for _ in range(max_turns):
+                async for c in self.llm_stream_once(history=history, 
+                                                    use_tools=True, 
+                                                    tool_choice="auto", 
+                                                    model=model):
+                    
+                    if isinstance(c, ChatChunk):
+                        yield c
+
+                    else:
+                        _add_usage(u=c.usage)
+
+
+                        if isinstance(c, AssistantMessage):
+                            message = AssistantMessage(role="assistant", 
+                                                       content=c.content, 
+                                                       model=c.model, 
+                                                       usage=total_usage)
+                            history.append(message)
+                            yield message
+
+                            return
+
+                        elif isinstance(c, ToolCallRequestList):
+                            tool_results = await self.executor.run_calls(tool_calls=c.tool_calls)
+
+                            # Interleave requests and results so each tool_call is immediately
+                            # followed by its corresponding tool_result.
+                            tool_messages = ToolMessages()
+                            for req, res in zip(c.tool_calls, tool_results):
+                                tool_messages.extend([req, res])
+
+                            history.extend(tool_messages)
+                            yield tool_messages
+
+                            break
+
+                        else:
+                            raise ValueError("Unknown chunk type from provider stream: %s", type(c))
+
+            else:
+                # Turn limit reached --------------------------------------------------
+                yield AssistantMessage(role="assistant", 
+                                       content="[Turn limit reached]", 
+                                       model=None, 
+                                       usage=total_usage)
+
+        finally:
+            self._hist = None
 
     # ------------------------------------------------------------------ auth
 
-    def add_auth_provider(self, provider: BaseAuthProvider):  # noqa: D401
+    def add_auth_provider(self, provider: BaseAuthProvider) -> None:  # noqa: D401
         """Replace the active *provider* for outgoing HTTP requests.
 
         The change is applied immediately to existing transport connections
@@ -514,7 +368,11 @@ class AIClient:  # noqa: D101 – tiny glue layer
                 except Exception:
                     continue
 
-    def append_assistant_message(self, content: str, history: List[dict] | None = None, *, tool_calls: List[ToolCall] | None = None) -> List[dict]:  # noqa: D401
+    def append_assistant_message(self, 
+                                 content: str, 
+                                 history: List[dict] | None = None, 
+                                 *, 
+                                 tool_calls: List[ToolCallRequest] | None = None) -> List[dict]:  # noqa: D401
         """Append an *assistant* message to *history*.
 
         When called from inside :pyfunc:`chat` or :pyfunc:`stream_chat` the
@@ -527,7 +385,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
         # Resolve target history ------------------------------------------------
         target = history if history is not None else self._hist
         if target is None:
-            raise ValueError("history required – either pass *history* or call within chat/stream_chat")
+            raise ValueError("history required - either pass *history* or call within chat/stream_chat")
 
         entry: dict[str, Any] = {"role": "assistant",
                                  "content": content,}

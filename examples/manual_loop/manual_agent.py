@@ -29,9 +29,11 @@ import os
 import random
 from typing import List
 
-from seqoria_agent.client import AIClient  # convenience import re-exports helpers
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.client import AIClient
+from seqoria_agent import OpenAIProvider
 from seqoria_agent.toolbox import LocalToolbox
+from seqoria_agent.models.chunk import ToolCallRequest, AssistantMessage, ToolCallRequestList
+from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
 # Inline tools
@@ -61,16 +63,13 @@ def _print_assistant(text: str | None) -> None:  # noqa: D401 – tiny util
         print(f"Assistant: {line}")
 
 
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
-
 async def main() -> None:  # noqa: D401
+    load_dotenv()
     if not os.getenv("OPENAI_API_KEY"):
         print("ERROR: OPENAI_API_KEY environment variable is missing.")
         return
 
-    providers = [OpenAIProvider(model_id="gpt-4o")]
+    providers = [OpenAIProvider(model_id="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))]
 
     async with AIClient(urls=[], providers=providers, local_toolbox=box) as ai:
         history: List[dict] = []
@@ -87,24 +86,28 @@ async def main() -> None:  # noqa: D401
                 print("Exiting - empty input detected.")
                 break
 
-            # 1) Update history with system + user message
-            history = ai.prepare_history(user_query=user_query, history=history)
+            history.append({"role": "user", "content": user_query}) 
 
-            # 2) Inner agentic loop – let the model think & use tools until ready
+            # 1) Inner agentic loop – let the model think & use tools until ready
             for _ in range(5):  # hard-limit internal turns per user input
                 resp = await ai.llm_generate_once(history=history)
-                ai.append_assistant_message(content=resp.text or "", history=history, tool_calls=resp.tool_calls)
 
-                if resp.tool_calls:
-                    early = await ai.run_tool_calls(tool_calls=resp.tool_calls, history=history)
-                    if early and early.get("answer"):
-                        _print_assistant(text=early["answer"])
-                        break  # finished for this user turn
-                    # else: tool ran but no immediate answer – let LLM continue
+                if isinstance(resp, ToolCallRequestList):
+                    tool_results = await ai.run_tool_calls(tool_calls=resp.tool_calls)
+
+                    # Interleave requests and corresponding results for OpenAI compliance
+                    tool_messages: list = []
+                    for req, res in zip(resp.tool_calls, tool_results):
+                        tool_messages.extend([req, res])
+
+                    history.extend(tool_messages)
                     continue
 
-                # Model responded directly – done for this user turn
-                _print_assistant(text=resp.text)
+                if isinstance(resp, AssistantMessage):
+                    history.append({"role": "assistant", "content": resp.content})
+                    _print_assistant(text=resp.content)
+                    break  # finished for this user turn 
+
                 break
 
         # Conversation end --------------------------------------------------

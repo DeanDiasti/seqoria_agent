@@ -10,6 +10,7 @@ import random
 from seqoria_agent.client.ai_client.base import AIClient
 from seqoria_agent.providers import OpenAIProvider
 from seqoria_agent import LocalToolbox
+from seqoria_agent.models.chunk import ChatChunk, AssistantMessage, ToolMessages
 
 load_dotenv()
 
@@ -25,30 +26,18 @@ async def main() -> None:
     provider = OpenAIProvider(api_key=os.getenv(key="OPENAI_API_KEY"))
 
     async with AIClient(providers=[provider], local_toolbox=toolbox) as ai:
-        per_turn_usage = None
-        cumulative_usage = None
-
         async for chunk in ai.stream_chat(
             user_query="generate a random number between 0 and 100",
             history=[],
             max_turns=5,
-            include_usage=True,
         ):
-            if chunk.type == "llm_delta":
+            if isinstance(chunk, ChatChunk):
                 # Stream token deltas inline
-                print(chunk.text, end="", flush=True)
-            elif chunk.type == "token_usage":
-                if chunk.cumulative:
-                    cumulative_usage = chunk.usage
-                else:
-                    per_turn_usage = chunk.usage
-
-        # newline after streaming text
-        print()
-        if per_turn_usage:
-            print("Prompt/Completion/Total tokens (turn):", per_turn_usage.model_dump())
-        if cumulative_usage:
-            print("Cumulative tokens so far:", cumulative_usage.model_dump())
+                print(chunk.content, end="", flush=True)
+            elif isinstance(chunk, AssistantMessage):
+                print(f"usage: {chunk.usage.model_dump()}")
+            elif isinstance(chunk, ToolMessages):
+                print("tool call\n" * (len(chunk) // 2))
 
 
 if __name__ == "__main__":

@@ -1,43 +1,35 @@
 import asyncio
+import json
 import os
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-import openai
-
-# Import specific exceptions from the openai library for better error handling
-from openai import (
-    APIConnectionError,
-    APIStatusError,
-    AuthenticationError,
-    BadRequestError,
-    ConflictError,
-    InternalServerError,
-    NotFoundError,
-    PermissionDeniedError,
-    RateLimitError,
-    UnprocessableEntityError,
-)
+from openai import (AsyncOpenAI,
+                    AsyncStream,
+                    APIConnectionError,
+                    APIStatusError,
+                    AuthenticationError,
+                    BadRequestError,
+                    ConflictError,
+                    InternalServerError,
+                    NotFoundError,
+                    PermissionDeniedError,
+                    RateLimitError,
+                    UnprocessableEntityError)
 from openai.types.chat import ChatCompletionChunk
 
-from .base_provider import BaseProvider
-from .errors import (
-    ConnectionError,
-    ContentFilterError,
-    ContextLengthExceededError,
-    EnvironmentError,
-    InvalidRequestError,
-    LLMError,
-    ModelNotFoundError,
-    QuotaExceededError,
-    ServerError,
-)
+from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.errors import (ConnectionError,
+                                            ContentFilterError,
+                                            ContextLengthExceededError,
+                                            EnvironmentError,
+                                            InvalidRequestError,
+                                            LLMError,
+                                            ModelNotFoundError,
+                                            QuotaExceededError,
+                                            ServerError)
 
-# Use a relative import since we're in the same directory
-from .schemas import LLMResponse, LLMUsage, ToolCall
-
-# NOTE: We intentionally do NOT load environment variables from a .env file here.
-# The API key should be provided explicitly via the `api_key` argument when the
-# provider is instantiated (or be available in the environment already).
+from seqoria_agent.providers.schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
+from seqoria_agent.models.chunk import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult
 
 class OpenAIProvider(BaseProvider):
     """
@@ -51,7 +43,10 @@ class OpenAIProvider(BaseProvider):
     # Default model to use if requested model is unavailable or none is specified
     DEFAULT_MODEL = "gpt-4o" 
     
-    def __init__(self, model_id: Optional[str] = None, api_key: Optional[str] = None, **kwargs) -> None:
+    def __init__(self, model_id: Optional[str] = None, 
+                 api_key: Optional[str] = None, 
+                 base_url: Optional[str] = None,
+                 **kwargs) -> None:
         """
         Initialize the asynchronous OpenAI provider.
         
@@ -101,13 +96,13 @@ class OpenAIProvider(BaseProvider):
         }
 
         # Optional custom base URL (Azure proxy, OpenAI-compatible gateway …)
-        base_url: Optional[str] = kwargs.get('base_url') or "https://api.openai.com/v1"
+        base_url: Optional[str] = base_url or kwargs.get('base_url') or "https://api.openai.com/v1"
         if base_url:
             client_kwargs['base_url'] = base_url
         
         try:
             # Create and assign the async client
-            self.async_client = openai.AsyncOpenAI(api_key=api_key, **client_kwargs)
+            self.async_client = AsyncOpenAI(api_key=api_key, **client_kwargs)
         except Exception as e:
             # Catch any exception during initialization
             raise ConnectionError(provider="OpenAI") from e
@@ -170,9 +165,9 @@ class OpenAIProvider(BaseProvider):
                     parts = error_message.split(sep=' ')
                     for i, part in enumerate(iterable=parts):
                         if part == 'tokens': 
-                            tokens = int(x=parts[i-1])
+                            tokens = int(parts[i-1])
                         if part == 'limit': 
-                            max_tokens = int(x=parts[i-1])
+                            max_tokens = int(parts[i-1])
                  except (ValueError, IndexError): 
                     pass
                  return ContextLengthExceededError(model_id=self.model_id, tokens=tokens, max_tokens=max_tokens)
@@ -207,16 +202,85 @@ class OpenAIProvider(BaseProvider):
         # Fallback for unexpected errors
         return LLMError(message=f"An unexpected OpenAI error occurred: {error}")
     
+    async def _prepare_chat_history(self, chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]]) -> List[Dict[str, Any]]:
+        """
+        Normalize `chat_history` so it can be passed directly to the OpenAI Chat API.
+
+        The incoming list can contain a mix of:
+        • plain ``dict`` messages using the Seqoria internal schema (``{"role": ..., ...}``)
+        • ``ToolCallRequest`` / ``ToolCallResult`` pydantic models
+        • ``ChatChunk`` pydantic models (regular user / assistant messages)
+
+        All inputs are converted into the dictionary format expected by the
+        OpenAI Chat completions endpoint.
+        """
+
+        prepared_chat_history: List[Dict[str, Any]] = []
+
+        for raw_msg in chat_history:
+            # Handle *pydantic model* inputs first
+            if isinstance(raw_msg, ToolCallRequest):
+                prepared_chat_history.append({"role": "assistant",
+                                              "tool_calls": [{"id": raw_msg.id,
+                                                              "type": "function",
+                                                              "function": {"name": raw_msg.name,
+                                                                           "arguments": json.dumps(obj=raw_msg.arguments or {})}}]})
+                continue
+
+            if isinstance(raw_msg, ToolCallResult):
+                prepared_chat_history.append({"role": "tool",
+                                              "content": raw_msg.result,
+                                              "tool_call_id": raw_msg.tool_call_id})
+                continue
+
+            if isinstance(raw_msg, (AssistantMessage, UserMessage, SystemMessage)):
+                prepared_chat_history.append({"role": raw_msg.role,
+                                              "content": raw_msg.content})
+                continue
+
+            role = raw_msg.get("role")
+            if role == "tool_call":
+                prepared_chat_history.append({"role": "assistant",
+                                              "tool_calls": [{"id": raw_msg.get("id"),
+                                                              "type": "function",
+                                                              "function": {"name": raw_msg.get("name"),
+                                                                           "arguments": json.dumps(obj=raw_msg.get("arguments", {}))}}]})
+            elif role == "tool_result":
+                prepared_chat_history.append({"role": "tool",
+                                              "content": raw_msg.get("result"),
+                                              "tool_call_id": raw_msg.get("tool_call_id")})
+            elif role in {"assistant", "system", "user"}:
+                prepared_chat_history.append({"role": role, 
+                                              "content": raw_msg.get("content")})
+
+        return prepared_chat_history
+    
     # Reuse shared implementation from BaseProvider (introduced in v0.2)
     async def _execute_with_retry(self, operation: callable) -> Any:  # type: ignore[override]
-        return await super()._execute_with_retry(operation)
+        return await super()._execute_with_retry(operation=operation)
     
-    async def async_generate(self, 
-                             chat_history: List[Dict[str, Any]], 
+    async def _parse_tool_call(self, tool_call: List[Dict[str, Any]]) -> ToolCall:
+        """
+        Parse a tool call into a ToolCall object.
+        """
+        processed_tool_calls: List[ToolCall] = []
+
+        for tc in tool_call:
+            try:
+                tc["arguments"] = json.loads(s=tc["arguments"]) if isinstance(tc["arguments"], str) else tc["arguments"]
+            except Exception:
+                tc["arguments"] = {}
+
+            processed_tool_calls.append(ToolCall(**tc)) 
+
+        return processed_tool_calls
+    
+    async def async_generate(self,
+                             chat_history: List[Dict[str, Any]],
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
                              model: Optional[str] = None,
-                             **kwargs) -> LLMResponse:
+                             **kwargs) -> Union[LLMResponse, ToolCallList]:
         """
         Asynchronously generate a completion for the provided chat history.
         
@@ -230,7 +294,7 @@ class OpenAIProvider(BaseProvider):
             
         Returns
         -------
-            LLMResponse: Response containing:
+            Union[LLMResponse, ToolCallList]: Response containing:
                 - text (str | None): Generated text string. None if generation fails or is empty.
                 - usage (LLMUsage): Token usage information
                 - tool_calls (list | None): List of tool calls in OpenAI format:
@@ -249,29 +313,34 @@ class OpenAIProvider(BaseProvider):
         if tool_choice is not None:
             params["tool_choice"] = tool_choice
 
+        if chat_history:
+            formatted_chat_history = await self._prepare_chat_history(chat_history=chat_history)
+
         effective_model = model or self.model_id
-        async def _generate() -> LLMResponse:
+        async def _generate() -> Union[LLMResponse, ToolCallList]:
             completion = await self.async_client.chat.completions.create(model=effective_model,
-                                                                          messages=chat_history,
+                                                                          messages=formatted_chat_history,
                                                                           stream=False,
                                                                           **params)
             
             content = None
-            tool_calls = []
+            tool_calls: List[Dict[str, Any]] = []
             
             if completion.choices and completion.choices[0].message:
                 content = completion.choices[0].message.content
                 # Extract tool calls if present - format according to OpenAI specification
                 if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
                     for tool_call in completion.choices[0].message.tool_calls:
-                        tool_calls.append({
-                            "id": tool_call.id,
-                            "type": tool_call.type,  # Should be "function"
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments  # Keep as JSON string
-                            }
-                        })
+                        # Attempt to parse the JSON string returned in `arguments`
+                        try:
+                            parsed_args = json.loads(s=tool_call.function.arguments) if isinstance(tool_call.function.arguments, str) else tool_call.function.arguments
+                        except Exception:
+                            parsed_args = tool_call.function.arguments
+
+                        tool_calls.append(ToolCall(id=tool_call.id,
+                                                   type="function_call",
+                                                   function_name=tool_call.function.name,
+                                                   arguments=parsed_args))
 
             usage_data = {"prompt_tokens": 0, 
                           "completion_tokens": 0, 
@@ -288,11 +357,15 @@ class OpenAIProvider(BaseProvider):
                 stop_reason = completion.choices[0].finish_reason
 
             usage_obj = LLMUsage(**usage_data)
-            tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            return LLMResponse(model_id=effective_model, 
-                               text=content, 
-                               tool_calls=tool_objs, 
-                               usage=usage_obj, 
+            if tool_calls:
+                return ToolCallList(model_id=effective_model,
+                                    tool_calls=tool_calls,
+                                    usage=usage_obj)
+
+            return LLMResponse(model_id=effective_model,
+                               type="llm_response",
+                               text=content,
+                               usage=usage_obj,
                                stop_reason=stop_reason)
         
         return await self._execute_with_retry(operation=_generate)
@@ -302,7 +375,7 @@ class OpenAIProvider(BaseProvider):
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
                            model: Optional[str] = None,
-                           **kwargs) -> AsyncGenerator[Union[str, LLMResponse], None]:
+                           **kwargs) -> AsyncGenerator[Union[LLMResponse, ToolCallList], None]:
         """
         Asynchronously stream a completion for the provided chat history.
         
@@ -335,17 +408,20 @@ class OpenAIProvider(BaseProvider):
         if tool_choice is not None:
             params["tool_choice"] = tool_choice
 
+        if chat_history:
+            formatted_chat_history = await self._prepare_chat_history(chat_history=chat_history)
+
         effective_model = model or self.model_id
-        async def _create_stream() -> openai.AsyncStream[ChatCompletionChunk]:
+        async def _create_stream() -> AsyncStream[ChatCompletionChunk]:
             # Use the async client here
             return await self.async_client.chat.completions.create(model=effective_model,
-                                                                   messages=chat_history,
+                                                                   messages=formatted_chat_history,
                                                                    stream=True,
                                                                    stream_options={"include_usage": True},
                                                                    **params)
         
         full_completion_text = ""
-        tool_calls = []
+        tool_calls: List[Dict[str, Any]] = []
         final_usage_data = {"prompt_tokens": 0, 
                             "completion_tokens": 0, 
                             "total_tokens": 0}
@@ -354,62 +430,71 @@ class OpenAIProvider(BaseProvider):
         try:
             # Asynchronously iterate through the stream chunks
             async for chunk in await self._execute_with_retry(operation=_create_stream):
-                 # Check if it's the final chunk with usage data
-                 if chunk.usage:
-                     final_usage_data = {"prompt_tokens": chunk.usage.prompt_tokens or 0,
+                # Check if it's the final chunk with usage data
+                if chunk.usage:
+                    final_usage_data = {"prompt_tokens": chunk.usage.prompt_tokens or 0,
                                          "completion_tokens": chunk.usage.completion_tokens or 0,
                                          "total_tokens": chunk.usage.total_tokens or 0}
 
                  # Check if it's a content chunk
-                 if chunk.choices and chunk.choices[0].delta:
-                     delta = chunk.choices[0].delta
+                if chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta
                      
-                     # Handle text content
-                     if delta.content:
-                         full_completion_text += delta.content
-                         yield delta.content
-                     
+                    # Handle text content
+                    if delta.content:
+                        full_completion_text += delta.content
+                        yield LLMResponse(model_id=effective_model, 
+                                          type="llm_delta", 
+                                          text=delta.content,
+                                          usage=None,
+                                          stop_reason=None)
+
                      # Handle tool calls - format according to OpenAI specification
-                     if hasattr(delta, 'tool_calls') and delta.tool_calls:
-                         for tool_call_delta in delta.tool_calls:
-                             if tool_call_delta.index is not None:
-                                 # Ensure we have enough slots in the tool_calls list
-                                 while len(tool_calls) <= tool_call_delta.index:
-                                     tool_calls.append({"id": "",
-                                                        "type": "function",
-                                                        "function": {"name": "",
-                                                                     "arguments": ""}})
+                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        for tool_call_delta in delta.tool_calls:
+                            if tool_call_delta.index is not None:
+                                # Ensure we have enough slots in the tool_calls list
+                                if len(tool_calls) <= tool_call_delta.index:
+                                    tool_calls.append({"id": "",
+                                                       "type": "function_call",
+                                                       "function_name": "",
+                                                       "arguments": ""})
                                  
                                  # Update the tool call at the specified index
-                                 current_tool_call = tool_calls[tool_call_delta.index]
+                                current_tool_call = tool_calls[tool_call_delta.index]
                                  
                                  # Update ID if provided
-                                 if tool_call_delta.id:
+                                if not current_tool_call["id"] and tool_call_delta.id:
                                      current_tool_call["id"] = tool_call_delta.id
                                  
                                  # Update type if provided
-                                 if tool_call_delta.type:
-                                     current_tool_call["type"] = tool_call_delta.type
+                                if not current_tool_call["type"] and tool_call_delta.type:
+                                    current_tool_call["type"] = tool_call_delta.type
                                  
                                  # Update function details if provided
-                                 if tool_call_delta.function:
-                                     if tool_call_delta.function.name:
-                                         current_tool_call["function"]["name"] = tool_call_delta.function.name
-                                     if tool_call_delta.function.arguments:
-                                         current_tool_call["function"]["arguments"] += tool_call_delta.function.arguments
+                                if tool_call_delta.function:
+                                    if not current_tool_call["function_name"] and tool_call_delta.function.name:
+                                        current_tool_call["function_name"] = tool_call_delta.function.name
+                                    if tool_call_delta.function.arguments:
+                                        current_tool_call["arguments"] += tool_call_delta.function.arguments
                      
                      # Extract finish reason
-                     if hasattr(chunk.choices[0], 'finish_reason') and chunk.choices[0].finish_reason:
-                         stop_reason = chunk.choices[0].finish_reason
-            
-            # After the loop finishes, yield the final LLMResponse
+                    if hasattr(chunk.choices[0], 'finish_reason') and chunk.choices[0].finish_reason:
+                        stop_reason = chunk.choices[0].finish_reason
+
             usage_obj = LLMUsage(**final_usage_data)
-            tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            yield LLMResponse(model_id=effective_model, 
-                              text=full_completion_text, 
-                              tool_calls=tool_objs, 
-                              usage=usage_obj, 
-                              stop_reason=stop_reason)
+            
+            if tool_calls:
+                tool_calls_obj = await self._parse_tool_call(tool_call=tool_calls)
+                yield ToolCallList(model_id=effective_model,
+                                   tool_calls=tool_calls_obj,
+                                   usage=usage_obj)
+            else:
+                yield LLMResponse(model_id=effective_model,
+                                  type="llm_response",
+                                  text=full_completion_text,
+                                  usage=usage_obj,
+                                  stop_reason=stop_reason)
 
         except Exception as e:
             # Handle errors occurring during async stream iteration

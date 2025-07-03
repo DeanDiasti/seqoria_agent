@@ -18,47 +18,30 @@ try:
 except ModuleNotFoundError:  # pragma: no cover – optional dependency
     structlog = None
 
-_logger = (
-    structlog.get_logger("seqoria_agent.callbacks")  # type: ignore[assignment]
-    if structlog is not None
-    else logging.getLogger("seqoria_agent.callbacks")
-)
+_logger = logging.getLogger(name="seqoria_agent.callbacks")
 
-__all__: list[str] = [
-    "on_display",
-    "on_error",
-    "on_metadata",
-]
+__all__: list[str] = ["on_error", "on_metadata"]
 
 
-# ---------------------------------------------------------------------------
-# Internal utility
-# ---------------------------------------------------------------------------
-
-def _safe_call(cb: Optional[Callable[[Any, List[dict] | None], None]], *args):  # noqa: D401
+def _safe_call(cb: Optional[Callable[[Any, List[dict] | None], None]], *args) -> None:  # noqa: D401
     """Invoke *cb* with *args* guarding against non-callable or errors."""
     if not callable(cb):
         return
     try:
         cb(*args)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001 – user callbacks must not crash core
-        _logger.warning("Callback raised exception", error=str(exc), callback=getattr(cb, "__name__", str(cb)))
+        _logger.warning("Callback raised exception (ignored): %s", exc)
 
 
 # ---------------------------------------------------------------------------
 # Public wrappers
 # ---------------------------------------------------------------------------
 
-def on_display(envelope: dict, history: list[dict] | None, cb):  # noqa: D401, ANN001
-    """Safely forward *envelope* to *cb* if callable."""
-    _safe_call(cb, envelope, history)
-
-
-def on_error(error_payload: dict, history: list[dict] | None, cb):  # noqa: D401, ANN001
+def on_error(error_payload: dict, cb):  # noqa: D401, ANN001
     """Safely forward *error_payload* to *cb* if callable."""
-    _safe_call(cb, error_payload, history)
+    _safe_call(cb, error_payload)
 
 
-def on_metadata(meta: dict, history: list[dict] | None, cb):  # noqa: D401, ANN001
+def on_metadata(meta: dict, cb):  # noqa: D401, ANN001
     """Safely forward *meta* block to *cb* if callable."""
-    _safe_call(cb, meta, history) 
+    _safe_call(cb, meta) 

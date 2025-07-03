@@ -14,25 +14,17 @@ monolithic AIClient can be refactored into smaller, testable pieces.
 
 # ruff clean imports
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Set
 
 from seqoria_agent.client.ai_client.connection_pool import ConnectionPool
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.client.ai_client.constants import (
-    THINK_TOOL_NAME,
-    CLARIFY_TOOL_NAME,
-    SUMMARIZE_TOOL_NAME,
-)
+from seqoria_agent.client.ai_client.constants import THINK_TOOL_NAME
 
-__all__: list[str] = [
-    "ToolRegistry",
-]
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+__all__: list[str] = ["ToolRegistry"]
 
 
 class ToolRegistry:
@@ -62,67 +54,35 @@ class ToolRegistry:
         Whether to include built-in meta-tools in the tool catalogue.
     """
 
-    # Limit total LOC to stay within phase requirement (< 300 LOC)
-
-    def __init__(
-        self,
-        *,
-        pool: ConnectionPool,
-        local_toolboxes: Optional[List[LocalToolbox]] = None,
-        tool_map: Optional[Dict[str, Any]] = None,
-        refresh_interval: float = 0.0,
-        logger: Optional[logging.Logger] = None,
-        enable_meta_tools: bool | Iterable[str] = True,
-    ) -> None:
+    def __init__(self,
+                 *,
+                 pool: ConnectionPool,
+                 local_toolboxes: Optional[List[LocalToolbox]] = None,
+                 tool_map: Optional[Dict[str, Any]] = None,
+                 refresh_interval: float = 0.0,
+                 logger: Optional[logging.Logger] = None,
+                 enable_meta_tools: bool | Iterable[str] = True) -> None:
         self._pool = pool
         self._local_boxes: List[LocalToolbox] = list(local_toolboxes or [])
         self._tool_map: Dict[str, Any] = tool_map if tool_map is not None else {}
 
         self._refresh_interval: float = float(refresh_interval)
-        self._logger = logger or logging.getLogger("seqoria_agent.tool_registry")
+        self._logger = logger or logging.getLogger(name="seqoria_agent.tool_registry")
 
         # Meta-tool toggle --------------------------------------------------
         self._enabled_meta_names: Set[str]
 
-        # Normalise enable_meta_tools into a set of internal names
-        if enable_meta_tools is True:
-            self._enabled_meta_names = {THINK_TOOL_NAME, CLARIFY_TOOL_NAME, SUMMARIZE_TOOL_NAME}
-        elif enable_meta_tools is False:
-            self._enabled_meta_names = set()
-        else:
-            # Accept any iterable of string-like names (case-insensitive)
-            mapping = {
-                "think": THINK_TOOL_NAME,
-                "__think__": THINK_TOOL_NAME,
-                "clarify": CLARIFY_TOOL_NAME,
-                "__clarify__": CLARIFY_TOOL_NAME,
-                "summarize": SUMMARIZE_TOOL_NAME,
-                "__summarize__": SUMMARIZE_TOOL_NAME,
-            }
-            chosen: Set[str] = set()
-            for n in enable_meta_tools:  # type: ignore[arg-type]
-                try:
-                    canon = mapping.get(str(n).lower())
-                    if canon:
-                        chosen.add(canon)
-                except Exception:
-                    continue
-            self._enabled_meta_names = chosen
+        self._enabled_meta_names = {THINK_TOOL_NAME} if enable_meta_tools else set()
 
         # Internal state ---------------------------------------------------
         self._llm_tools: List[dict] = []
         self._server_params: Dict[str, List[str]] = {}
-        self._display_tools: Set[str] = set()
         self._tool_deps: Dict[str, Set[str]] = {}
-
-        # Concurrency guard for refreshes
-        self._lock = asyncio.Lock()
-
-        # Background refresher task
+        self._seen_schema_hash: Dict[str, str] = {}
+        self._lock: asyncio.Lock = asyncio.Lock()
         self._refresher_task: Optional[asyncio.Task] = None
         if self._refresh_interval > 0:
-            loop = asyncio.get_running_loop()
-            self._refresher_task = loop.create_task(self._periodic_refresh())
+            self._refresher_task = asyncio.get_running_loop().create_task(coro=self._periodic_refresh())
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -132,10 +92,6 @@ class ToolRegistry:
     def llm_tools(self) -> List[dict]:  # noqa: D401 – simple getter
         """Return OpenAI-compatible tool list for the LLM interface."""
         return list(self._llm_tools)
-
-    def is_display_tool(self, name: str) -> bool:  # noqa: D401
-        """Return *True* when *name* is annotated as a display-tool."""
-        return name in self._display_tools
 
     def server_params(self, name: str) -> List[str]:  # noqa: D401
         """Return server-populated parameter names for *name* (may be empty)."""
@@ -169,120 +125,100 @@ class ToolRegistry:
             # Clear previous state – callers may hold on to llm_tools list, so
             # we create *new* containers below and re-assign atomically.
             self._tool_map.clear()
-            self._display_tools.clear()
             self._server_params.clear()
             self._tool_deps.clear()
+            self._seen_schema_hash.clear()
 
         llm_tools: List[dict] = []
 
-        # ------------------------------------------------------------------
-        # 1) Merge REMOTE tools
-        # ------------------------------------------------------------------
+        # A mapping from *base* tool name → variant alias we produced for the FIRST
+        # variant (used so subsequent tools from the same server can refer to it
+        # in their `depends_on` annotations).
+        base_to_primary_alias: Dict[str, str] = {}
+
+        # Merge REMOTE tools
         connections = self._pool.connections
         if connections:
-            tool_results = await asyncio.gather(
-                *(conn.client.list_tools() for conn in connections),
-                return_exceptions=True,
-            )
-            for idx, result in enumerate(tool_results):
+            tool_results = await asyncio.gather(*(conn.client.list_tools() for conn in connections),
+                                                return_exceptions=True)
+            for idx, result in enumerate(iterable=tool_results):
                 conn = connections[idx]
                 if isinstance(result, Exception):
-                    self._logger.warning(
-                        "Could not list tools from server", url=conn.url, error=str(result)
-                    )
+                    self._logger.warning("Could not list tools from server (%s): %s", conn.url, result)
                     continue
 
                 for tool in result:
-                    if tool.name in self._tool_map:
-                        # Remote-remote duplicate (different servers) – prefer first seen
+                    base_name: str = tool.name
+                    schema_fingerprint = self._schema_hash(schema=tool.inputSchema)
+
+                    # Decide public name ------------------------------------------------
+                    primary_hash = self._seen_schema_hash.get(base_name)
+                    if primary_hash is None:
+                        # First time we see this name → keep the short variant
+                        public_name = base_name
+                        self._seen_schema_hash[base_name] = schema_fingerprint
+                        base_to_primary_alias[base_name] = public_name
+                    elif primary_hash == schema_fingerprint:
+                        # Same schema – duplicate registration (replica). Skip additional
+                        # copies for now but we *could* aggregate back-ends later.
                         continue
+                    else:
+                        # New schema variant → create alias with fingerprint suffix
+                        public_name = f"{base_name}__{schema_fingerprint}"
 
-                    self._tool_map[tool.name] = conn.client
+                    # ------------------------------------------------------------------
+                    # Register mapping + annotation-derived metadata
+                    self._tool_map[public_name] = conn.client
 
-                    # -------- Annotation parsing (supports dict & pydantic) ---------
-                    annotations = getattr(tool, "annotations", None)
+                    # Annotation parsing (supports dict & pydantic) ---------
+                    annotations = getattr(tool, "annotations", None)  # type: ignore[attr-defined]
                     if annotations:
-                        # Legacy dict-style
-                        if isinstance(annotations, dict):
-                            if annotations.get("is_display_tool"):
-                                self._display_tools.add(tool.name)
-                            sp = annotations.get("server_populated") or []
-                            if isinstance(sp, list):
-                                self._server_params[tool.name] = list(sp)
-                            dep = annotations.get("depends_on") or []
-                            if isinstance(dep, list):
-                                self._tool_deps[tool.name] = set(dep)
-                        else:
-                            # Likely a *pydantic* model – try attribute access with fallbacks
-                            is_display = False
-                            if hasattr(annotations, "is_display_tool"):
-                                is_display = bool(annotations.is_display_tool)
-                            elif hasattr(annotations, "model_dump"):
-                                try:
-                                    is_display = bool(annotations.model_dump().get("is_display_tool"))
-                                except Exception:
-                                    pass
-                            if is_display:
-                                self._display_tools.add(tool.name)
+                        # Extract fields once using helper
+                        sp_raw = self._get_annotation_field(annotations=annotations, 
+                                                            field="server_populated")
+                        if sp_raw:
+                            self._server_params[public_name] = list(sp_raw)
 
-                            def _safe_get(field: str):
-                                if hasattr(annotations, field):
-                                    return getattr(annotations, field)
-                                if hasattr(annotations, "model_dump"):
-                                    try:
-                                        return annotations.model_dump().get(field)
-                                    except Exception:
-                                        return None
-                                return None
+                        dep_raw = self._get_annotation_field(annotations=annotations, 
+                                                             field="depends_on")
+                        if dep_raw:
+                            mapped = {base_to_primary_alias.get(d, d) for d in dep_raw}
+                            self._tool_deps[public_name] = mapped
 
-                            sp_list = _safe_get("server_populated")
-                            if sp_list:
-                                self._server_params[tool.name] = list(sp_list)
-
-                            dep_list = _safe_get("depends_on")
-                            if dep_list:
-                                self._tool_deps[tool.name] = set(dep_list)
-
-                    llm_tools.append(
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": tool.name,
-                                "description": tool.description,
-                                "parameters": tool.inputSchema,  # noqa: N803 external name
-                            },
-                        }
-                    )
+                    llm_tools.append({"type": "function",
+                                      "function": {"name": public_name,
+                                                   "description": tool.description,
+                                                   "parameters": tool.inputSchema}})  # noqa: N803 external name
 
         # ------------------------------------------------------------------
         # 2) Merge LOCAL toolbox tools
         # ------------------------------------------------------------------
         for box in self._local_boxes:
-            for name_, info in box._tools.items():  # pylint: disable=protected-access
-                if name_ in self._tool_map:
-                    # Duplicate between remote and local – raise as this is a config error
-                    raise RuntimeError(
-                        f"Duplicate tool name '{name_}' between remote server and local toolbox"
-                    )
-                self._tool_map[name_] = box  # type: ignore[assignment]
+            for base_name, info in box._tools.items():
+                schema_fingerprint = self._schema_hash(schema=info.input_schema)
 
-                if info.display:
-                    self._display_tools.add(name_)
+                primary_hash = self._seen_schema_hash.get(base_name)
+                if primary_hash is None:
+                    public_name = base_name
+                    self._seen_schema_hash[base_name] = schema_fingerprint
+                    base_to_primary_alias[base_name] = public_name
+                elif primary_hash == schema_fingerprint:
+                    # Same schema already registered (remote replica) -> skip registering again
+                    continue
+                else:
+                    public_name = f"{base_name}__{schema_fingerprint}"
+
+                self._tool_map[public_name] = box  # type: ignore[assignment]
+
                 if info.server_params:
-                    self._server_params[name_] = list(info.server_params)
+                    self._server_params[public_name] = list(info.server_params)
                 if info.depends_on:
-                    self._tool_deps[name_] = set(info.depends_on)
+                    self._tool_deps[public_name] = {base_to_primary_alias.get(d, d) for d in info.depends_on}
 
-                llm_tools.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": name_,
-                            "description": info.description,
-                            "parameters": info.input_schema,
-                        },
-                    }
-                )
+                llm_tools.append({"type": "function",
+                                  "function": {"name": public_name,
+                                               "description": info.description,
+                                               "parameters": info.input_schema}})
 
         # ------------------------------------------------------------------
         # 3)  Built-in meta-tools (optional)
@@ -297,7 +233,7 @@ class ToolRegistry:
         async with self._lock:
             self._llm_tools = llm_tools
 
-        self._logger.info("ToolRegistry refreshed", tool_count=len(llm_tools))
+        self._logger.info("ToolRegistry refreshed with %d tools", len(llm_tools))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -307,70 +243,49 @@ class ToolRegistry:
         """Background task that refreshes the catalogue periodically."""
         try:
             while True:
-                await asyncio.sleep(self._refresh_interval)
+                await asyncio.sleep(delay=self._refresh_interval)
                 try:
                     await self.refresh()
                 except Exception as exc:  # pragma: no cover – keep alive
-                    self._logger.warning("Background tool refresh failed", error=str(exc))
+                    self._logger.warning(msg="Background tool refresh failed", 
+                                         error=str(object=exc))
         except asyncio.CancelledError:
             # Normal shutdown path
             return 
 
-# ---------------------------------------------------------------------------
-# Built-in meta-tools (OpenAI tool schema) – keep at bottom to avoid circulars
-# ---------------------------------------------------------------------------
+    @staticmethod
+    def _schema_hash(schema: dict[str, Any]) -> str:  # noqa: D401
+        """Return an 8-char SHA-1 fingerprint for *schema* (deterministic)."""
+        raw = json.dumps(obj=schema, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(string=raw.encode()).hexdigest()[:8]
 
-_META_TOOLS: list[dict] = [
-    {
-        "type": "function",
-        "function": {
-            "name": THINK_TOOL_NAME,
-            "description": (
-                "Internal helper - allows the assistant to think out loud "
-                "without exposing the thought to the user."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "thought": {
-                        "type": "string",
-                        "description": "The assistant's internal reasoning.",
-                    },
-                },
-                "required": ["thought"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": CLARIFY_TOOL_NAME,
-            "description": (
-                "Ask the user a concise question when additional information "
-                "is required."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "The clarification question for the user.",
-                    },
-                },
-                "required": ["question"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": SUMMARIZE_TOOL_NAME,
-            "description": (
-                "Compresses the current chat history so the conversation can "
-                "continue within context limits."),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-] 
+    @staticmethod
+    def _get_annotation_field(annotations: Any, field: str):  # noqa: ANN401
+        """Return *field* value from *annotations* supporting dict / pydantic."""
+        if annotations is None:
+            return None
+        # Plain dict (legacy)
+        if isinstance(annotations, dict):
+            return annotations.get(field)
+
+        # Attribute access (pydantic or SimpleNamespace)
+        if hasattr(annotations, field):
+            return getattr(annotations, field)
+
+        # Pydantic v2 – use model_dump when available
+        if hasattr(annotations, "model_dump"):
+            try:
+                return annotations.model_dump().get(field)
+            except Exception:
+                return None
+
+        return None
+
+_META_TOOLS: list[dict] = [{"type": "function",
+                            "function": {"name": THINK_TOOL_NAME,
+                                         "description": ("Internal helper - allows the assistant to think out loud "
+                                                         "without exposing the thought to the user."),
+                                         "parameters": {"type": "object",
+                                                        "properties": {"thought": {"type": "string",
+                                                                                   "description": "The assistant's internal reasoning."}},
+                                                        "required": ["thought"]}}}] 

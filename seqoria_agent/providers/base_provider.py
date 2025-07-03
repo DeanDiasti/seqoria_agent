@@ -9,7 +9,7 @@ like OpenAI, Anthropic, Bedrock, and SambaNova.
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-from .schemas import LLMResponse
+from .schemas import LLMResponse, ToolCallList
 
 
 class BaseProvider(ABC):
@@ -42,7 +42,7 @@ class BaseProvider(ABC):
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
                              model: Optional[str] = None,
-                             **kwargs) -> LLMResponse:
+                             **kwargs) -> Union[LLMResponse, ToolCallList]:
         """
         Asynchronously generate a completion for the provided chat history.
         
@@ -71,7 +71,7 @@ class BaseProvider(ABC):
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
                            model: Optional[str] = None,
-                           **kwargs) -> AsyncGenerator[Union[str, LLMResponse], None]:
+                           **kwargs) -> AsyncGenerator[Union[LLMResponse, ToolCallList], None]:
         """
         Asynchronously stream a completion for the provided chat history.
         

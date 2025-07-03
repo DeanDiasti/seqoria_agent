@@ -49,13 +49,11 @@ class LocalToolbox:  # noqa: D101 – public façade
     # Execution helpers
     # ------------------------------------------------------------------
 
-    async def call_tool(
-        self,
-        name: str,
-        arguments: Dict[str, Any] | None = None,
-        *,
-        server_args: Dict[str, Any] | None = None,
-    ) -> List[SimpleNamespace]:  # noqa: D401
+    async def call_tool(self,
+                        name: str,
+                        arguments: dict[str, Any] | None = None,
+                        *,
+                        server_args: dict[str, Any] | None = None) -> List[SimpleNamespace]:  # noqa: D401
         if name not in self._tools:
             raise XMCPError(code="UNKNOWN_TOOL", detail=name, retryable=False)
 
@@ -65,20 +63,18 @@ class LocalToolbox:  # noqa: D101 – public façade
 
         # Fabricate minimal request stub --------------------------------
         fake_req = SimpleNamespace(state=SimpleNamespace())
-        await self._auth_bridge.authenticate(fake_req)
-        self._auth_bridge.ensure_principal_or_error(name)
+        await self._auth_bridge.authenticate(request_like=fake_req)
+        self._auth_bridge.ensure_principal_or_error(tool_name=name)
 
         # Parameter injection (server-populated) ------------------------
         if info.server_params or server_args:
-            arguments = await self._core.inject_server_params(
-                request_or_ns=fake_req,
-                tool_name=name,
-                info=info,
-                arguments=arguments,
-                server_args=server_args,
-            )
+            arguments = await self._core.inject_server_params(request_or_ns=fake_req,
+                                                              tool_name=name,
+                                                              info=info,
+                                                              arguments=arguments,
+                                                              server_args=server_args)
 
-        xml = await self._core.run_tool(name, arguments)
+        xml = await self._core.run_tool(name=name, arguments=arguments)
         return [SimpleNamespace(text=xml)]
 
     # ------------------------------------------------------------------

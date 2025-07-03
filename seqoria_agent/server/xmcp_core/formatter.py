@@ -23,10 +23,7 @@ from seqoria_agent.server.formatters import (
     derive_formatter_from_data,
 )
 
-__all__: list[str] = [
-    "register_formatter",
-    "get_formatter",
-]
+__all__: list[str] = ["register_formatter", "get_formatter"]
 
 # ---------------------------------------------------------------------------
 # Internal state – kept private to this module

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Provider interaction utilities for *seqoria_agent*'s new AIClient implementation.
 
-This module is introduced in **Phase 4 – LLMInterface extraction** (see
+This module is introduced in **Phase 4 - LLMInterface extraction** (see
 ``client-migration.md``) and encapsulates *all* logic that interacts directly
 with Large-Language-Model providers.
 
@@ -33,39 +33,40 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from seqoria_agent.providers.base_provider import BaseProvider
 from seqoria_agent.providers.errors import LLMError
-from seqoria_agent.providers.schemas import LLMResponse
+from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
+from seqoria_agent.models.chunk import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, ToolCallRequestList, LLMUsage
 
-__all__: list[str] = [
-    "LLMInterface",
-]
+__all__: list[str] = ["LLMInterface"]
 
 
 class LLMInterface:  # noqa: D101 – module-level docstring provides context
     # LOC gate: keep implementation short (< 250 lines)
 
-    def __init__(self, providers: List[BaseProvider], *, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(self, 
+                 providers: List[BaseProvider], 
+                 *, 
+                 logger: Optional[logging.Logger] = None) -> None:
         if not providers:
             raise ValueError("'providers' must contain at least one BaseProvider instance.")
         self._providers: List[BaseProvider] = providers
+        # Cache index of provider that succeeded last time – optimistic fast-path
+        self._primary_provider_idx: int = 0
         if logger is not None:
             self._logger = logger
         else:
-            self._logger = (
-                structlog.get_logger("seqoria_agent.llm_interface") if structlog is not None else logging.getLogger("seqoria_agent.llm_interface")
-            )
+            # Use stdlib logging to avoid structlog API differences during testing
+            self._logger = logging.getLogger(name="seqoria_agent.llm_interface")
 
     # ------------------------------------------------------------------
     # Public API – synchronous generation
     # ------------------------------------------------------------------
 
-    async def generate(
-        self,
-        history: List[dict],
-        *,
-        tools: List[dict] | None = None,
-        tool_choice: str = "auto",
-        model: str | None = None,
-    ) -> LLMResponse:
+    async def generate(self,
+                       history: List[Any],
+                       *,
+                       tools: List[dict] | None = None,
+                       tool_choice: str = "auto",
+                       model: str | None = None) -> Union[AssistantMessage, ToolCallRequestList]:
         """Generate a single response using the first provider that succeeds.
 
         Parameters
@@ -77,7 +78,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
 
         Returns
         -------
-        LLMResponse
+        AssistantMessage or ToolCallRequestList
             The model's answer.
 
         Raises
@@ -87,65 +88,77 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         """
         last_err: Optional[Exception] = None
 
-        for provider in self._providers:
+        # Build provider iteration order: current primary first, then the rest.
+        provider_indices = list(range(len(self._providers)))
+        if self._primary_provider_idx in provider_indices:
+            provider_indices.remove(self._primary_provider_idx)
+        provider_indices.insert(0, self._primary_provider_idx)
+
+        kwargs_gen: dict[str, Any] = {"chat_history": history}
+
+        if tools is not None:
+            kwargs_gen["tools"] = tools
+            kwargs_gen["tool_choice"] = tool_choice
+        if model is not None:
+            kwargs_gen["model"] = model
+
+        raw_resp: Optional[Union[LLMResponse, ToolCallList]] = None
+        successful_idx: Optional[int] = None
+
+        for idx in provider_indices:
+            provider = self._providers[idx]
             try:
-                kwargs_gen: dict[str, Any] = {"chat_history": history}
-                if tools is not None:
-                    kwargs_gen["tools"] = tools
-                    kwargs_gen["tool_choice"] = tool_choice
-                if model is not None:
-                    kwargs_gen["model"] = model
-
-                raw_resp = await provider.async_generate(**kwargs_gen)  # type: ignore[arg-type]
-
-                # Coerce into LLMResponse for uniform downstream handling -----------------
-                if isinstance(raw_resp, LLMResponse):
-                    response = raw_resp
-                else:
-                    try:
-                        response = LLMResponse.model_validate(obj=raw_resp)  # type: ignore[arg-type]
-                    except Exception:
-                        # Minimal best-effort fallback – map common attributes if present
-                        response = LLMResponse(
-                            model_id=getattr(raw_resp, "model_id", "unknown"),
-                            text=getattr(raw_resp, "text", None) if isinstance(raw_resp, dict) else None,
-                            tool_calls=getattr(raw_resp, "tool_calls", None) if isinstance(raw_resp, dict) else None,
-                            usage=getattr(raw_resp, "usage", None) if isinstance(raw_resp, dict) else None,
-                            stop_reason=getattr(raw_resp, "stop_reason", None) if isinstance(raw_resp, dict) else None,
-                        )
-
-                self._logger.info(
-                    "LLM call successful",
-                    provider=provider.__class__.__name__,
-                    model=getattr(response, "model_id", "<unknown>"),
-                )
-                return response
+                raw_resp = await provider.async_generate(**kwargs_gen)
+                successful_idx = idx
+                break  # success
             except LLMError as e:
-                self._logger.warning(
-                    "LLM provider failed, trying next",
-                    provider=provider.__class__.__name__,
-                    error=str(e),
-                )
                 last_err = e
+                self._logger.warning("Provider %s failed to generate: %s", provider.__class__.__name__, e)
                 continue
-            except Exception:
-                # Do not swallow unexpected exceptions
+            except Exception as e:
+                # Non-LLM errors are not considered retryable – re-raise.
+                self._logger.warning("Provider %s failed to generate: %s", provider.__class__.__name__, e)
                 raise
 
-        raise RuntimeError(f"All LLM providers failed. Last error: {last_err}")
+        if raw_resp is None:
+            raise RuntimeError(f"All LLM providers failed. Last error: {last_err}")
+
+        # Update fast-path cache on success
+        if successful_idx is not None:
+            self._primary_provider_idx = successful_idx
+
+        if isinstance(raw_resp, LLMResponse):
+            response = AssistantMessage(role="assistant", 
+                                        content=raw_resp.text, 
+                                        model=raw_resp.model_id, 
+                                        usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
+                                                       completion_tokens=raw_resp.usage.completion_tokens,
+                                                       total_tokens=raw_resp.usage.total_tokens))
+        elif isinstance(raw_resp, ToolCallList):
+            response = ToolCallRequestList(tool_calls=[ToolCallRequest(role="tool_call",
+                                                                       id=tool_call.id,
+                                                                       type="function_call",
+                                                                       name=tool_call.function_name,
+                                                                       arguments=tool_call.arguments) for tool_call in raw_resp.tool_calls],
+                                           usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
+                                                          completion_tokens=raw_resp.usage.completion_tokens,
+                                                          total_tokens=raw_resp.usage.total_tokens))
+        else:
+            raise ValueError(f"Unknown response type: {type(raw_resp)}. Please use LLMResponse or ToolCallList.")
+
+        self._logger.info("LLM call successful from %s", self._providers[self._primary_provider_idx].__class__.__name__)
+        return response
 
     # ------------------------------------------------------------------
     # Public API – streaming generation
     # ------------------------------------------------------------------
 
-    async def stream(
-        self,
-        history: List[dict],
-        *,
-        tools: List[dict] | None = None,
-        tool_choice: str = "auto",
-        model: str | None = None,
-    ) -> AsyncGenerator[Union[str, LLMResponse], None]:
+    async def stream(self,
+                     history: List[Any],
+                     *,
+                     tools: List[dict] | None = None,
+                     tool_choice: str = "auto",
+                     model: str | None = None) -> AsyncGenerator[Union[ChatChunk, AssistantMessage, ToolCallRequestList], None]:
         """Yield incremental deltas followed by the final :class:`LLMResponse`.
 
         The method attempts each provider in order until a stream generator is
@@ -153,67 +166,73 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         finally yields the *full* ``LLMResponse`` once the provider signals
         completion.
         """
-        # ------------------------------------------------------------------
-        # 1) Select provider that successfully starts a stream
-        # ------------------------------------------------------------------
-        stream_gen: Optional[AsyncGenerator[Union[str, LLMResponse], None]] = None
+        stream_gen: Optional[AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None]] = None
         last_err: Optional[Exception] = None
 
-        for provider in self._providers:
+        provider_indices = list(range(len(self._providers)))
+        if self._primary_provider_idx in provider_indices:
+            provider_indices.remove(self._primary_provider_idx)
+        provider_indices.insert(0, self._primary_provider_idx)
+
+        kwargs_stream = {"chat_history": history}
+
+        if tools is not None:
+            kwargs_stream["tools"] = tools
+            kwargs_stream["tool_choice"] = tool_choice
+        if model is not None:
+            kwargs_stream["model"] = model
+
+        successful_idx: Optional[int] = None
+
+        for idx in provider_indices:
+            provider = self._providers[idx]
             try:
-                kwargs_stream = {"chat_history": history}
-                if tools is not None:
-                    kwargs_stream["tools"] = tools
-                    kwargs_stream["tool_choice"] = tool_choice
-                if model is not None:
-                    kwargs_stream["model"] = model
-
-                tmp = provider.async_stream(**kwargs_stream)  # type: ignore[arg-type]
-
-                # Guard against both async and sync implementations
-                stream_gen = await tmp if asyncio.iscoroutine(obj=tmp) else tmp
-
+                stream_gen = provider.async_stream(**kwargs_stream)
+                successful_idx = idx
                 break
             except LLMError as e:
-                self._logger.warning("Provider failed to start stream - trying next", 
-                                     provider=provider.__class__.__name__, 
-                                     error=str(object=e))
                 last_err = e
+                self._logger.warning("Provider %s failed to start stream: %s", provider.__class__.__name__, e)
                 continue
+            except Exception as e:
+                self._logger.warning("Provider %s failed to start stream: %s", provider.__class__.__name__, e)
+                raise
 
         if stream_gen is None:
             raise RuntimeError(f"All LLM providers failed to stream. Last error: {last_err}")
 
-        # ------------------------------------------------------------------
-        # 2) Proxy the provider stream while tracking the final answer
-        # ------------------------------------------------------------------
-        aggregated_text: list[str] = []
-        final_response: Optional[LLMResponse] = None
+        if successful_idx is not None:
+            self._primary_provider_idx = successful_idx
 
         async for chunk in stream_gen:
-            if isinstance(chunk, str):
-                aggregated_text.append(chunk)
-                yield chunk
-            else:
-                # Accept both LLMResponse and plain dict for provider flexibility
+            try:
+                # Forward recognised response types as-is. Allow raw strings (deltas) to flow through, too.
                 if isinstance(chunk, LLMResponse):
-                    final_response = chunk
-                elif isinstance(chunk, dict):
-                    try:
-                        final_response = LLMResponse.model_validate(obj=chunk)
-                    except Exception:
-                        final_response = LLMResponse(model_id=chunk.get("model_id", "unknown"),
-                                                     text=chunk.get("text"),
-                                                     tool_calls=chunk.get("tool_calls"),
-                                                     usage=chunk.get("usage"),
-                                                     stop_reason=chunk.get("stop_reason"))
+                    if chunk.type == "llm_delta":
+                        yield ChatChunk(role="assistant", 
+                                        content=chunk.text, 
+                                        model=chunk.model_id, 
+                                        usage=None)
+                    elif chunk.type == "llm_response":
+                        yield AssistantMessage(role="assistant", 
+                                               content=chunk.text,  # type: ignore
+                                               model=chunk.model_id, 
+                                               usage=LLMUsage(prompt_tokens=chunk.usage.prompt_tokens,
+                                                              completion_tokens=chunk.usage.completion_tokens,
+                                                              total_tokens=chunk.usage.total_tokens))
+                elif isinstance(chunk, ToolCallList):
+                    yield ToolCallRequestList(tool_calls=[ToolCallRequest(role="tool_call",
+                                                                         id=tool_call.id,
+                                                                         type="function_call",
+                                                                         name=tool_call.function_name,
+                                                                         arguments=tool_call.arguments) for tool_call in chunk.tool_calls],
+                                              usage=LLMUsage(prompt_tokens=chunk.usage.prompt_tokens,
+                                                             completion_tokens=chunk.usage.completion_tokens,
+                                                             total_tokens=chunk.usage.total_tokens))
                 else:
-                    self._logger.warning("Unknown chunk type from provider stream", type=str(type(chunk)))
-            # Yield non-string chunks only *after* they are processed (see below)
+                    self._logger.warning("Unknown chunk type from provider stream: %s", type(chunk))
+                    continue
 
-        # Some providers may finish without emitting a distinct LLMResponse
-        if final_response is None:
-            final_response = LLMResponse(model_id="unknown",
-                                         text="".join(aggregated_text))
-
-        yield final_response 
+            except Exception as e:
+                self._logger.warning("Provider %s failed to stream: %s", provider.__class__.__name__, e)
+                raise

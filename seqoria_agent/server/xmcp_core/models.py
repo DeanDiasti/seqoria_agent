@@ -4,9 +4,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict
 
-__all__: list[str] = [
-    "ToolInfo",
-]
+__all__: list[str] = ["ToolInfo"]
 
 
 class ToolInfo(BaseModel):

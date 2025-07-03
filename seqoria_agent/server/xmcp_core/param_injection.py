@@ -33,9 +33,7 @@ from seqoria_agent.models.errors import XMCPError
 # Local import – avoids circular dependency for typing only
 from .models import ToolInfo  # pylint: disable=cyclic-import  # noqa: F401
 
-__all__: list[str] = [
-    "ParamInjector",
-]
+__all__: list[str] = ["ParamInjector"]
 
 
 class ParamInjector:
@@ -47,16 +45,13 @@ class ParamInjector:
         self._providers: list[Callable] = list(providers) if not isinstance(providers, list) else providers
         self._strict = bool(strict_mode)
 
-    # ------------------------------------------------------------------
-    async def inject(  # noqa: D401 – public coroutine
-        self,
-        request_or_ns: Any,  # Starlette Request OR SimpleNamespace
-        tool_name: str,
-        info: ToolInfo,
-        *,
-        arguments: Dict[str, Any] | None = None,
-        server_args: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
+    async def inject(self,
+                     request_or_ns: Any,
+                     tool_name: str,
+                     info: ToolInfo,
+                     *,
+                     arguments: dict[str, Any] | None = None,
+                     server_args: dict[str, Any] | None = None) -> dict[str, Any]:
         """Return a new *arguments* mapping with SPP injected.
 
         Parameters
@@ -65,7 +60,7 @@ class ParamInjector:
             Either a real Starlette/FastAPI ``Request`` *or* the fabricated
             ``SimpleNamespace`` used by :class:`~seqoria_agent.toolbox.LocalToolbox`.
         tool_name : str
-            Name of the tool – only required for informative error messages.
+            Name of the tool - only required for informative error messages.
         info : ToolInfo
             Registry entry describing the tool.
         arguments : dict, optional
@@ -79,21 +74,14 @@ class ParamInjector:
             Fully-populated argument mapping suitable for invoking the tool
             callable.
         """
-        # ------------------------------------------------------------------
         arguments = dict(arguments or {})  # shallow copy – we will mutate
         server_args = dict(server_args or {})
 
-        # ------------------------------------------------------------------
-        # 1) Strict-override enforcement – LLM supplied forbidden param ------
-        # ------------------------------------------------------------------
         if self._strict:
             for protected in info.server_params:
                 if protected in arguments:
                     raise XMCPError(code="FORBIDDEN_PARAM_OVERRIDE", detail=protected, retryable=False)
 
-        # ------------------------------------------------------------------
-        # 2) Validate & merge *server_args* ---------------------------------
-        # ------------------------------------------------------------------
         for key in server_args:
             if key not in info.server_params:
                 raise XMCPError(code="UNKNOWN_SERVER_PARAM", detail=key, retryable=False)
@@ -104,9 +92,6 @@ class ParamInjector:
         if server_args:
             arguments.update(server_args)
 
-        # ------------------------------------------------------------------
-        # 3) Built-in injections: principal / user_id ----------------------
-        # ------------------------------------------------------------------
         principal_obj = None
         if hasattr(request_or_ns, "state"):
             principal_obj = getattr(request_or_ns.state, "principal", None)
@@ -124,9 +109,6 @@ class ParamInjector:
                 elif isinstance(principal_obj, dict) and "id" in principal_obj:
                     arguments["user_id"] = principal_obj["id"]
 
-        # ------------------------------------------------------------------
-        # 4) Custom provider chain -----------------------------------------
-        # ------------------------------------------------------------------
         for param in info.server_params:
             if param in arguments:
                 continue  # already resolved
@@ -135,7 +117,7 @@ class ParamInjector:
             for provider in self._providers:
                 try:
                     res = provider(request_or_ns, tool_name, param)
-                    if inspect.isawaitable(res):
+                    if inspect.isawaitable(object=res):
                         res = await res  # type: ignore[assignment]
                 except Exception:  # pragma: no cover – provider bug
                     continue  # skip faulty provider

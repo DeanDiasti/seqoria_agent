@@ -32,9 +32,7 @@ from seqoria_agent.server.xmcp_core.formatter import get_formatter
 from .models import ToolInfo
 from .param_injection import ParamInjector
 
-__all__: list[str] = [
-    "ToolCore",
-]
+__all__: list[str] = ["ToolCore"]
 
 
 # ---------------------------------------------------------------------------
@@ -42,9 +40,9 @@ __all__: list[str] = [
 # ---------------------------------------------------------------------------
 
 def _maybe_await(val):  # type: ignore[return-value, arg-type]
-    if inspect.isawaitable(val):
+    if inspect.isawaitable(object=val):
         return val  # caller awaits
-    async def _wrapper():
+    async def _wrapper() -> Any:
         return val
     return _wrapper()
 
@@ -307,7 +305,7 @@ class ToolCore:
                     raise XMCPError(code="FORBIDDEN_PARAM_OVERRIDE", detail=k, retryable=False)
             arguments = {**arguments, **server_args}
 
-        return await _maybe_await(info.func(**arguments))
+        return await _maybe_await(val=info.func(**arguments))
 
     # ------------------------------------------------------------------
     # Placeholder – ParamInjector arrives in Phase-2 --------------------
@@ -316,23 +314,17 @@ class ToolCore:
         self._param_providers.append(fn)
         return fn
 
-    # ------------------------------------------------------------------
     # Public helper – delegate to ParamInjector ------------------------
-    # ------------------------------------------------------------------
-    async def inject_server_params(
-        self,
-        *,
-        request_or_ns: Any,
-        tool_name: str,
-        info: ToolInfo,
-        arguments: Dict[str, Any] | None = None,
-        server_args: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:  # noqa: D401
+    async def inject_server_params(self,
+                                   *,
+                                   request_or_ns: Any,
+                                   tool_name: str,
+                                   info: ToolInfo,
+                                   arguments: dict[str, Any] | None = None,
+                                   server_args: dict[str, Any] | None = None) -> Dict[str, Any]:  # noqa: D401
         """Proxy to :pyclass:`ParamInjector.inject`."""
-        return await self._injector.inject(
-            request_or_ns=request_or_ns,
-            tool_name=tool_name,
-            info=info,
-            arguments=arguments,
-            server_args=server_args,
-        ) 
+        return await self._injector.inject(request_or_ns=request_or_ns,
+                                           tool_name=tool_name,
+                                           info=info,
+                                           arguments=arguments,
+                                           server_args=server_args) 

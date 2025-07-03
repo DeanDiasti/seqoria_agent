@@ -12,38 +12,23 @@ error handling, and response formatting.
 # accessible when someone imports the llm package. This simplifies
 # usage by avoiding the need to specify submodules.
 
-from .base_provider import BaseProvider
-from .errors import (
-    ConnectionError,
-    ContentFilterError,
-    ContextLengthExceededError,
-    EnvironmentError,
-    InvalidRequestError,
-    LLMError,
-    MaxRetriesExceededError,
-    ModelNotFoundError,
-    QuotaExceededError,
-    ServerError,
-)
+from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.errors import (ConnectionError,
+                                            ContentFilterError,
+                                            ContextLengthExceededError,
+                                            EnvironmentError,
+                                            InvalidRequestError,
+                                            LLMError,
+                                            MaxRetriesExceededError,
+                                            ModelNotFoundError,
+                                            QuotaExceededError,
+                                            ServerError)
 
 # Import and expose the provider classes themselves.
 # The provider classes are defined in separate files (e.g., groq.py, bedrock.py)
 # but are made available directly under the llm package for convenience.
-
-
-try:
-    from .openai_provider import OpenAIProvider
-except ImportError:
-    # Handle the case where the OpenAI library is not installed, allowing
-    # the rest of the system to function without it
-    OpenAIProvider = None  # Or a placeholder class/object
-
-try:
-    from .anthropic_provider import AnthropicProvider
-except ImportError:
-    # Handle the case where the Anthropic library is not installed, allowing
-    # the rest of the system to function without it
-    AnthropicProvider = None  # Or a placeholder class/object
+from seqoria_agent.providers.openai_provider import OpenAIProvider
+from seqoria_agent.providers.anthropic_provider import AnthropicProvider
 
 
 # Define a list of all exported names from this package. This is used when

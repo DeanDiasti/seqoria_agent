@@ -108,7 +108,7 @@ async def demo() -> None:
                 "arguments": json.dumps({"name": "Alice", "show_user": True}),
             },
         )
-        rt_greet = await client._run_tool(tc_greet)
+        rt_greet = await client.executor.run_calls(tc_greet)
         print(rt_greet)
 
         print("\n--- _run_tool (multiply) -----------------------------")

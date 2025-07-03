@@ -21,10 +21,9 @@ load_dotenv()
 
 async def main() -> None:
     async with AIClient(urls=[], providers=[OpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))]) as client:
-        history: list[dict] = []
-        client.prepare_history("ping", history)
-        resp = await client.llm_generate_once(history, use_tools=False)
-        print("AI replied:", resp.text)
+        history: list[dict] = [{"role": "user", "content": "ping"}]
+        resp = await client.llm_generate_once(history=history)
+        print("AI replied:", resp.content)
 
 
 if __name__ == "__main__":

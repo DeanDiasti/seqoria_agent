@@ -14,12 +14,12 @@ class DummyProvider(BaseProvider):
         pass
 
     async def async_generate(self, *, chat_history, tools, tool_choice="auto"):
-        return LLMResponse(model_id="dummy", text="Static answer", tool_calls=[])
+        return LLMResponse(model_id="dummy", type="llm_response", text="Static answer")
 
     async def async_stream(self, *args, **kwargs):  # noqa: ANN001
         async def _gen():
             yield "Static answer"
-            yield LLMResponse(model_id="dummy", text="Static answer", tool_calls=[])
+            yield LLMResponse(model_id="dummy", type="llm_response", text="Static answer")
 
         return _gen()
 

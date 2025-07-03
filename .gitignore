@@ -18,9 +18,7 @@ wheels/
 .coveragerc
 
 # Migration docs
-client-migration.md
-oauth-implementation.md
-xmcp-migration.md
+client-optimization.md
 
 # MkDocs
 site/

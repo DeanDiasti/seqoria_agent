@@ -30,7 +30,8 @@ from dotenv import load_dotenv
 from seqoria_agent import AIClient
 from seqoria_agent.client.cache import DictCache
 from seqoria_agent.client.parameters import ParamContext
-from seqoria_agent.providers import AnthropicProvider, OpenAIProvider
+from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.models.chunk import ChatChunk, AssistantMessage, ToolMessages
 
 load_dotenv()
 
@@ -83,26 +84,10 @@ async def main() -> None:
     # Build provider list – primary plus optional *backup* provider
     # ------------------------------------------------------------------
 
-    providers = []
-
-    # Primary OpenAI provider (requires OPENAI_API_KEY)
-    if os.getenv("OPENAI_API_KEY"):
-        providers.append(OpenAIProvider(model_id="gpt-4o"))
-
-    # Backup Anthropic provider (requires ANTHROPIC_API_KEY)
-    if os.getenv("ANTHROPIC_API_KEY"):
-        providers.append(AnthropicProvider())
-
-    if not providers:
-        print(
-            "❌ Error: No LLM providers could be initialised. Ensure at least OPENAI_API_KEY or ANTHROPIC_API_KEY is set."
-        )
-        return
-
     # Initialize AIClient **with caching enabled** (in-memory DictCache)
     client = AIClient(
         urls=servers,
-        providers=providers,
+        providers=[OpenAIProvider(model_id="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))],
         cache=DictCache(),  # Swap with RedisCache(...) in production
         cache_ttl=600,  # Cache tool results for 10 minutes
         # NEW: Adaptive concurrency & reliability settings
@@ -141,12 +126,10 @@ async def main() -> None:
 
                     # Stream the response incrementally -----------------------
                     async for chunk in client.stream_chat(user_query=user_input, history=chat_history, max_turns=5):
-                        if chunk.type == "llm_delta":
-                            # Stream token deltas inline
-                            print(chunk.text, end="", flush=True)
-                        elif chunk.type == "tool_display":
-                            print("\n[DISPLAY ENVELOPE]")
-                            print(json.dumps(chunk.envelope, indent=2))
+                        if isinstance(chunk, ChatChunk):
+                            print(chunk.content, end="", flush=True)
+                        elif isinstance(chunk, ToolMessages):
+                            print("tool call\n" * (len(chunk) // 2))
 
                     print("\n")  # Newline after streaming completes
 

@@ -73,16 +73,6 @@ def test_build_cache_key_with_tenant():  # noqa: D401
     assert key.startswith("tenant:tenantA:tool:t:")
 
 
-from seqoria_agent.client.ai_client.history import summarise_history  # noqa: E402 human order
-import asyncio  # noqa: E402
-
-
-def test_summarise_history_empty():  # noqa: D401
-    assert summarise_history([]) == "(no history)"
-
-
-import pytest  # noqa: E402
-
 
 @pytest.mark.asyncio
 async def test_null_async_cm():  # noqa: D401

@@ -9,6 +9,4 @@ Canonical import path::
 
 from .local_public import LocalToolbox  # noqa: F401
 
-__all__: list[str] = [
-    "LocalToolbox",
-] 
+__all__: list[str] = ["LocalToolbox"] 

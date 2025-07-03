@@ -1,37 +1,34 @@
 import asyncio
+import json
 import os
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import anthropic
 
 # Import specific exceptions from the anthropic library for better error handling
-from anthropic import (
-    APIConnectionError,
-    APIStatusError,
-    AuthenticationError,
-    BadRequestError,
-    InternalServerError,
-    NotFoundError,
-    PermissionDeniedError,
-    RateLimitError,
-)
+from anthropic import (APIConnectionError,
+                       APIStatusError,
+                       AuthenticationError,
+                       BadRequestError,
+                       InternalServerError,
+                       NotFoundError,
+                       PermissionDeniedError,
+                       RateLimitError)
 
 # Internal imports
 from .base_provider import BaseProvider
-from .errors import (
-    ConnectionError,
-    ContentFilterError,
-    ContextLengthExceededError,
-    EnvironmentError,
-    InvalidRequestError,
-    LLMError,
-    ModelNotFoundError,
-    QuotaExceededError,
-    ServerError,
-)
+from .errors import (ConnectionError,
+                     ContentFilterError,
+                     ContextLengthExceededError,
+                     EnvironmentError,
+                     InvalidRequestError,
+                     LLMError,
+                     ModelNotFoundError,
+                     QuotaExceededError,
+                     ServerError)
 
 # Use a relative import since we're in the same directory
-from .schemas import LLMResponse, LLMUsage, ToolCall
+from .schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
 
 class AnthropicProvider(BaseProvider):
     """
@@ -123,6 +120,7 @@ class AnthropicProvider(BaseProvider):
         """
         params = self.default_params.copy()
         params.update(kwargs)
+        
         params = {k: v for k, v in params.items() if v is not None}
         return params
 
@@ -196,12 +194,74 @@ class AnthropicProvider(BaseProvider):
     async def _execute_with_retry(self, operation: callable) -> Any:  # type: ignore[override]
         return await super()._execute_with_retry(operation=operation)
     
-    async def async_generate(self, 
-                             chat_history: List[Dict[str, Any]], 
+    async def _parse_tool_call(self, tool_call: List[Dict[str, Any]]) -> List[ToolCall]:  # noqa: D401
+        """Convert *tool_call* dictionaries into :class:`ToolCall` objects.
+
+        Ensures the *arguments* field is a mapping (JSON-decoded if it was
+        received as a JSON string) so it satisfies the schema.
+        """
+
+        processed_tool_calls: List[ToolCall] = []
+
+        for tc in tool_call:
+            # Decode argument payload if it is a JSON string
+            if isinstance(tc.arguments, str):
+                try:
+                    tc.arguments = json.loads(s=tc.arguments)
+                except Exception:  # noqa: BLE001 – fall back to empty mapping
+                    tc.arguments = {}
+
+            processed_tool_calls.append(ToolCall(**tc))
+
+        return processed_tool_calls
+    
+    async def _format_tool_call(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Format the tool calls into the format expected by the Anthropic API.
+        """
+        return [{"name": str(tool["function"]["name"]), 
+                 "description": tool["function"]["description"], 
+                 "input_schema": tool["function"]["parameters"]} for tool in tools]
+
+    async def _prepare_chat_history(self, chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Prepare the chat history for the Anthropic API.
+        """ 
+        prepared_chat_history: List[Dict[str, Any]] = []
+        system_message = ""
+
+        for message in chat_history:
+            if message.get("role") == "tool_result":
+                prepared_chat_history.append({"role": "user", "content": [{"tool_use_id": message.get("tool_call_id"),
+                                                                           "type": "tool_result",
+                                                                           "content": message.get("result")}]})
+                
+            elif message.get("role") == "tool_call":
+                prepared_chat_history.append({"role": "user", "content": [{"type": "tool_use",
+                                                                           "name": message.get("name"),
+                                                                           "id": message.get("id"),
+                                                                           "input": message.get("arguments")}]})
+                
+            elif message.get("role") == "assistant":
+                prepared_chat_history.append({"role": "assistant", 
+                                              "content": [{"type": "text",
+                                                           "text": message.get("content")}]})
+            elif message.get("role") == "user":
+                prepared_chat_history.append({"role": "user",
+                                              "content": [{"type": "text",
+                                                           "text": message.get("content")}]})
+
+            if message.get("role") == "system":
+                system_message += message["content"] + "\n\n"
+
+        return system_message.strip(), prepared_chat_history
+
+    async def async_generate(self,
+                             chat_history: List[Dict[str, Any]],
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
                              model: Optional[str] = None,
-                             **kwargs) -> LLMResponse:
+                             **kwargs) -> Union[LLMResponse, ToolCallList]:
         """
         Asynchronously generate a completion for the provided chat history.
         
@@ -218,7 +278,7 @@ class AnthropicProvider(BaseProvider):
             
         Returns
         -------
-            LLMResponse: Response containing:
+            Union[LLMResponse, ToolCallList]: Response containing:
                 - text (str | None): Generated text string. None if generation fails or is empty.
                 - usage (LLMUsage): Token usage information
                 - tool_calls (List[ToolCall] | None): List of tool calls made by the model, if any.
@@ -232,14 +292,19 @@ class AnthropicProvider(BaseProvider):
         
         # Add tools and tool_choice to params if provided
         if tools is not None:
-            params["tools"] = tools
+            params["tools"] = await self._format_tool_call(tools=tools)
         if tool_choice is not None:
-            params["tool_choice"] = tool_choice
+            params["tool_choice"] = {"type": tool_choice} if isinstance(tool_choice, str) else tool_choice
+
+        if chat_history:
+            system_message, formatted_chat_history = await self._prepare_chat_history(chat_history=chat_history)
 
         effective_model = model or self.model_id
-        async def _generate() -> LLMResponse:
+        async def _generate() -> Union[LLMResponse, ToolCallList]:
+            
             completion = await self.async_client.messages.create(model=effective_model,
-                                                                 messages=chat_history,
+                                                                 messages=formatted_chat_history,
+                                                                 system=system_message,
                                                                  **params)
             
             # Extract text content and tool calls
@@ -255,39 +320,45 @@ class AnthropicProvider(BaseProvider):
                         else:
                             text_content += content_block.text
                     elif hasattr(content_block, 'type') and content_block.type == 'tool_use':
-                        # Extract tool use information
-                        tool_call = {
-                            "id": content_block.id,
-                            "name": content_block.name,
-                            "input": content_block.input
-                        }
-                        tool_calls.append(tool_call)
+                        try:
+                            parsed_args = json.loads(s=content_block.input) if isinstance(content_block.input, str) else content_block.input
+                        except Exception:
+                            parsed_args = content_block.input
 
-            usage_data = {"prompt_tokens": 0, 
-                          "completion_tokens": 0, 
-                          "total_tokens": 0}
+                        # Extract tool use information
+                        tool_calls.append(ToolCall(id=content_block.id,
+                                                   type="function_call",
+                                                   function_name=content_block.name,
+                                                   arguments=parsed_args))
+
+            usage_data = LLMUsage(prompt_tokens=0, 
+                                  completion_tokens=0, 
+                                  total_tokens=0)
             
             if completion.usage:
-                usage_data = {"prompt_tokens": completion.usage.input_tokens or 0,
-                              "completion_tokens": completion.usage.output_tokens or 0,
-                              "total_tokens": (completion.usage.input_tokens or 0) + (completion.usage.output_tokens or 0)}
+                usage_data.prompt_tokens = completion.usage.input_tokens or 0
+                usage_data.completion_tokens = completion.usage.output_tokens or 0
+                usage_data.total_tokens = (completion.usage.input_tokens or 0) + (completion.usage.output_tokens or 0)
 
-            usage_obj = LLMUsage(**usage_data)
-            tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
+            if tool_calls:
+                return ToolCallList(model_id=effective_model,
+                                    tool_calls=tool_calls,
+                                    usage=usage_data)
+
             return LLMResponse(model_id=effective_model,
+                               type="llm_response",
                                text=text_content,
-                               tool_calls=tool_objs,
-                               usage=usage_obj,
+                               usage=usage_data,
                                stop_reason=completion.stop_reason)
         
         return await self._execute_with_retry(operation=_generate)
     
-    async def async_stream(self, 
-                           chat_history: List[Dict[str, Any]], 
+    async def async_stream(self,
+                           chat_history: List[Dict[str, Any]],
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
                            model: Optional[str] = None,
-                           **kwargs) -> AsyncGenerator[Union[str, LLMResponse], None]:
+                           **kwargs) -> AsyncGenerator[Union[str, LLMResponse, ToolCallList], None]:
         """
         Asynchronously stream a completion for the provided chat history.
         
@@ -320,29 +391,33 @@ class AnthropicProvider(BaseProvider):
         
         # Add tools and tool_choice to params if provided
         if tools is not None:
-            params["tools"] = tools
+            params["tools"] = await self._format_tool_call(tools=tools)
         if tool_choice is not None:
-            params["tool_choice"] = tool_choice
+            params["tool_choice"] = {"type": tool_choice} if isinstance(tool_choice, str) else tool_choice
+
+        if chat_history:
+            system_message, formatted_chat_history = await self._prepare_chat_history(chat_history=chat_history)
 
         effective_model = model or self.model_id
         async def _create_stream() -> Any:
             # Use the async client here
             return await self.async_client.messages.create(model=effective_model,
-                                                           messages=chat_history,
-                                                           stream=True,
-                                                           **params)
+                                                          messages=formatted_chat_history,
+                                                          system=system_message,
+                                                          stream=True,
+                                                          **params)
         
         full_completion_text = ""
-        tool_calls = []
+        tool_calls: List[Dict[str, Any]] = []
         current_tool_call = None
         current_tool_input_json = ""
-        final_usage_data = {"prompt_tokens": 0, 
-                            "completion_tokens": 0, 
-                            "total_tokens": 0}
+        final_usage_data = LLMUsage(prompt_tokens=0, 
+                                    completion_tokens=0, 
+                                    total_tokens=0)
         stop_reason = None
 
         try:
-            # Asynchronously iterate through the stream chunks
+            # Get the stream manager and iterate through chunks
             async for chunk in await self._execute_with_retry(operation=_create_stream):
                 # Handle different event types from Anthropic streaming
                 if chunk.type == "message_start":
@@ -354,9 +429,10 @@ class AnthropicProvider(BaseProvider):
                     if hasattr(chunk, 'content_block'):
                         if chunk.content_block.type == 'tool_use':
                             # Start of a tool use block
-                            current_tool_call = {"id": chunk.content_block.id,
-                                                 "name": chunk.content_block.name,
-                                                 "input": chunk.content_block.input}  # This might be empty initially
+                            current_tool_call = ToolCall(id=chunk.content_block.id,
+                                                         type="tool_use",
+                                                         function_name=chunk.content_block.name,
+                                                         arguments=chunk.content_block.input or {})  # May be empty initially
                             current_tool_input_json = ""  # Reset for accumulating JSON
                 elif chunk.type == "content_block_delta":
                     # Extract text delta from content block delta
@@ -366,7 +442,12 @@ class AnthropicProvider(BaseProvider):
                             delta_text = chunk.delta.text
                             if delta_text:
                                 full_completion_text += delta_text
-                                yield delta_text
+                                yield LLMResponse(model_id=effective_model, 
+                                                  type="llm_delta", 
+                                                  text=delta_text,
+                                                  usage=None,
+                                                  stop_reason=None)
+                                
                         elif hasattr(chunk.delta, 'partial_json') and current_tool_call:
                             # Tool use input delta (partial JSON)
                             # Accumulate the partial JSON strings
@@ -378,8 +459,7 @@ class AnthropicProvider(BaseProvider):
                         try:
                             # Parse the accumulated JSON if we have it
                             if current_tool_input_json:
-                                import json
-                                current_tool_call["input"] = json.loads(current_tool_input_json)
+                                current_tool_call["arguments"] = json.loads(s=current_tool_input_json)
                             # If no accumulated JSON, use what was in the start block
                             tool_calls.append(current_tool_call)
                         except json.JSONDecodeError:
@@ -391,19 +471,23 @@ class AnthropicProvider(BaseProvider):
                 elif chunk.type == "message_delta":
                     # Extract final usage and stop reason from message delta event
                     if hasattr(chunk, 'usage'):
-                        final_usage_data["completion_tokens"] = chunk.usage.output_tokens or 0
-                        final_usage_data["total_tokens"] = final_usage_data["prompt_tokens"] + final_usage_data["completion_tokens"]
+                        final_usage_data.completion_tokens = chunk.usage.output_tokens or 0
+                        final_usage_data.total_tokens = final_usage_data.prompt_tokens + final_usage_data.completion_tokens
                     if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'stop_reason'):
                         stop_reason = chunk.delta.stop_reason
             
-            # After the loop finishes, yield the final LLMResponse
-            usage_obj = LLMUsage(**final_usage_data)
-            tool_objs = [ToolCall(**tc) for tc in tool_calls] if tool_calls else None
-            yield LLMResponse(model_id=effective_model, 
-                              text=full_completion_text, 
-                              tool_calls=tool_objs, 
-                              usage=usage_obj, 
-                              stop_reason=stop_reason)
+
+            if tool_calls:
+                tool_calls_obj = await self._parse_tool_call(tool_call=tool_calls)
+                yield ToolCallList(model_id=effective_model,
+                                   tool_calls=tool_calls_obj,
+                                   usage=final_usage_data)
+            else:
+                yield LLMResponse(model_id=effective_model,
+                                  type="llm_response",
+                                  text=full_completion_text,
+                                  usage=final_usage_data,
+                                  stop_reason=stop_reason)
 
         except Exception as e:
             # Handle errors occurring during async stream iteration

@@ -2,6 +2,7 @@ import asyncio
 
 from seqoria_agent import AIClient
 from seqoria_agent.toolbox import LocalToolbox
+from seqoria_agent.models.chunk import AssistantMessage, ToolMessages
 from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.providers.openai_provider import OpenAIProvider
 
@@ -26,8 +27,11 @@ def shout(msg: str, show_user: bool = False):
 async def main():
     provider = OpenAIProvider(model_id="gpt-4o")
     async with AIClient(urls=[], providers=[provider], local_toolbox=toolbox) as ai:
-        result = await ai.chat("What is 2+3?", history=[])
-        print("Answer:", result["answer"])
+        async for chunk in ai.chat(user_query="What is 2+3?", history=[]):
+            if isinstance(chunk, AssistantMessage):
+                print(f"Answer\n: {chunk.content}")
+            elif isinstance(chunk, ToolMessages):
+                print("tool call\n" * (len(chunk) // 2))
 
 
 if __name__ == "__main__":

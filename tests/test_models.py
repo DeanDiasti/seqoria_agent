@@ -23,12 +23,12 @@ def test_display_envelope_roundtrip():
 
 
 def test_chat_chunk_dataclass():
-    chunk1 = ChatChunk(type="llm_delta", text="hi")
-    assert chunk1.type == "llm_delta"
-    assert chunk1.text == "hi"
-    assert chunk1.envelope is None
+    """Ensure ChatChunk model round-trips basic fields after refactor."""
 
-    env = {"type": "notification", "payload": "done"}
-    chunk2 = ChatChunk(type="tool_display", envelope=env)
-    assert chunk2.type == "tool_display"
-    assert chunk2.envelope == env 
+    chunk = ChatChunk(role="assistant", content="hi", model="stub")
+
+    assert chunk.role == "assistant"
+    assert chunk.content == "hi"
+    assert chunk.model == "stub"
+    # usage should be optional and None by default
+    assert chunk.usage is None 

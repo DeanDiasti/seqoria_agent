@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, Any
 import hashlib
+import xxhash
 
 # Phase 9 constant extraction
 from seqoria_agent.client.ai_client.consts_runtime import XML_ERROR_TAG  # noqa: F401
 
-__all__: list[str] = [
-    "null_async_cm",
-    "extract_error_from_xml",
-    "build_cache_key",
-]
+__all__: list[str] = ["null_async_cm", "extract_error_from_xml", "build_cache_key"]
 
 
 @asynccontextmanager
@@ -52,24 +48,17 @@ def extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D
             except Exception:
                 meta = meta_node.text.strip()
 
-        return {
-            "code": code,
-            "retryable": retryable,
-            "detail": detail_text,
-            "meta": meta,
-        }
+        return {"code": code,
+                "retryable": retryable,
+                "detail": detail_text,
+                "meta": meta}
     except Exception:
         return None
 
 
 def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str | None = None) -> str:  # noqa: D401
     """Return a deterministic cache key for *tool_name* + *arguments*.
-
-    This helper has been moved from :pymod:`seqoria_agent.client.cache` into the
-    *ai_client* utilities module during **Phase 5 – Helpers & Callbacks**.  The
-    original import path emits a ``DeprecationWarning`` and forwards to this
-    implementation.
-
+    
     Parameters
     ----------
     tool_name:
@@ -80,8 +69,14 @@ def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str
         Optional namespace prefix for multi-tenant deployments. When given, the
         resulting key is ``tenant:{tenant_id}:tool:{tool_name}:{hash}``.
     """
-    canonical_json = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
-    args_hash = hashlib.sha256(canonical_json.encode()).hexdigest()
+    canonical_json = json.dumps(obj=arguments, sort_keys=True, separators=(",", ":"))
+
+    # Try faster non-cryptographic hash when available ----------------------
+    try:
+        args_hash = xxhash.xxh3_64_hexdigest(canonical_json)
+    except Exception:
+        # Fallback to built-in SHA-256 to avoid hard dependency
+        args_hash = hashlib.sha256(string=canonical_json.encode()).hexdigest()
 
     prefix = f"tenant:{tenant_id}:" if tenant_id else ""
     return f"{prefix}tool:{tool_name}:{args_hash}" 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Phase 9 – Centralised settings object for *AIClient*.
+"""Centralised settings object for *AIClient*.
 
 The :class:`ClientSettings` dataclass groups the most commonly adjusted runtime
 configuration values for :class:`seqoria_agent.client.AIClient`.  Supplying a
