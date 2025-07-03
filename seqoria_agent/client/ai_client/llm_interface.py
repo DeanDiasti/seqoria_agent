@@ -86,6 +86,12 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         RuntimeError
             If *all* providers fail with :class:`LLMError`.
         """
+        kwargs_gen: dict[str, Any] = {"chat_history": history}
+
+        kwargs_gen["tools"] = tools if tools is not None else None   
+        kwargs_gen["tool_choice"] = (tool_choice or "auto") if tools else None
+        kwargs_gen["model"] = model
+            
         last_err: Optional[Exception] = None
 
         # Build provider iteration order: current primary first, then the rest.
@@ -93,14 +99,6 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         if self._primary_provider_idx in provider_indices:
             provider_indices.remove(self._primary_provider_idx)
         provider_indices.insert(0, self._primary_provider_idx)
-
-        kwargs_gen: dict[str, Any] = {"chat_history": history}
-
-        if tools is not None:
-            kwargs_gen["tools"] = tools
-            kwargs_gen["tool_choice"] = tool_choice
-        if model is not None:
-            kwargs_gen["model"] = model
 
         raw_resp: Optional[Union[LLMResponse, ToolCallList]] = None
         successful_idx: Optional[int] = None
@@ -128,26 +126,23 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
             self._primary_provider_idx = successful_idx
 
         if isinstance(raw_resp, LLMResponse):
-            response = AssistantMessage(role="assistant", 
-                                        content=raw_resp.text, 
-                                        model=raw_resp.model_id, 
-                                        usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
-                                                       completion_tokens=raw_resp.usage.completion_tokens,
-                                                       total_tokens=raw_resp.usage.total_tokens))
-        elif isinstance(raw_resp, ToolCallList):
-            response = ToolCallRequestList(tool_calls=[ToolCallRequest(role="tool_call",
-                                                                       id=tool_call.id,
-                                                                       type="function_call",
-                                                                       name=tool_call.function_name,
-                                                                       arguments=tool_call.arguments) for tool_call in raw_resp.tool_calls],
-                                           usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
-                                                          completion_tokens=raw_resp.usage.completion_tokens,
-                                                          total_tokens=raw_resp.usage.total_tokens))
-        else:
-            raise ValueError(f"Unknown response type: {type(raw_resp)}. Please use LLMResponse or ToolCallList.")
+            return AssistantMessage(role="assistant",
+                                    content=raw_resp.text,
+                                    model=raw_resp.model_id,
+                                    usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
+                                                   completion_tokens=raw_resp.usage.completion_tokens,
+                                                   total_tokens=raw_resp.usage.total_tokens))
 
-        self._logger.info("LLM call successful from %s", self._providers[self._primary_provider_idx].__class__.__name__)
-        return response
+        if isinstance(raw_resp, ToolCallList):
+            return ToolCallRequestList(tool_calls=[ToolCallRequest(role="tool_call",
+                                                                   id=tool_call.id,
+                                                                   type="function_call",
+                                                                   name=tool_call.function_name,
+                                                                   arguments=tool_call.arguments) for tool_call in raw_resp.tool_calls],
+                                       usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
+                                                      completion_tokens=raw_resp.usage.completion_tokens,
+                                                      total_tokens=raw_resp.usage.total_tokens))
+
 
     # ------------------------------------------------------------------
     # Public API – streaming generation
@@ -166,6 +161,13 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         finally yields the *full* ``LLMResponse`` once the provider signals
         completion.
         """
+
+        kwargs_stream: dict[str, Any] = {"chat_history": history}
+
+        kwargs_stream["tools"] = tools if tools is not None else None   
+        kwargs_stream["tool_choice"] = (tool_choice or "auto") if tools else None
+        kwargs_stream["model"] = model
+
         stream_gen: Optional[AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None]] = None
         last_err: Optional[Exception] = None
 
@@ -174,14 +176,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
             provider_indices.remove(self._primary_provider_idx)
         provider_indices.insert(0, self._primary_provider_idx)
 
-        kwargs_stream = {"chat_history": history}
-
-        if tools is not None:
-            kwargs_stream["tools"] = tools
-            kwargs_stream["tool_choice"] = tool_choice
-        if model is not None:
-            kwargs_stream["model"] = model
-
+        raw_resp: Optional[Union[LLMResponse, ToolCallList]] = None
         successful_idx: Optional[int] = None
 
         for idx in provider_indices:

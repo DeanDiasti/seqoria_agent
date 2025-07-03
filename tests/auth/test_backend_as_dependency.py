@@ -19,6 +19,7 @@ async def test_backend_as_dependency():
     token = jwt.encode({"id": "charlie"}, SECRET, algorithm=ALGO)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(base_url="http://test", transport=transport) as cli:
-        res = await cli.get("/me", cookies={"access_token": token})
+        cli.cookies.set("access_token", token)
+        res = await cli.get("/me")
         assert res.status_code == 200
         assert res.json()["id"] == "charlie" 

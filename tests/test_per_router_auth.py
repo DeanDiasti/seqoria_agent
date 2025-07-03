@@ -49,10 +49,10 @@ async def test_per_router_auth_override():
 
         # Protected tool succeeds with valid cookie
         token = jwt.encode({"id": "bob"}, SECRET, algorithm=ALGO)
+        client.cookies.set("access_token", token)
         res = await client.post(
             "/mcp/",
             json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "secret_tool", "arguments": {}}},
-            cookies={"access_token": token},
         )
         assert res.status_code == 200
         assert "bob" in res.text 

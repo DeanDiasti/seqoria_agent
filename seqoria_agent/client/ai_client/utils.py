@@ -10,6 +10,12 @@ import xxhash
 # Phase 9 constant extraction
 from seqoria_agent.client.ai_client.consts_runtime import XML_ERROR_TAG  # noqa: F401
 
+# Phase-2 optimisation: use orjson for faster canonical dumps when available
+try:
+    import orjson as _json_fast  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover – optional dependency
+    _json_fast = None
+
 __all__: list[str] = ["null_async_cm", "extract_error_from_xml", "build_cache_key"]
 
 
@@ -69,7 +75,11 @@ def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str
         Optional namespace prefix for multi-tenant deployments. When given, the
         resulting key is ``tenant:{tenant_id}:tool:{tool_name}:{hash}``.
     """
-    canonical_json = json.dumps(obj=arguments, sort_keys=True, separators=(",", ":"))
+    if _json_fast is not None:
+        # OPT_SORT_KEYS yields deterministic ordering equivalent to sort_keys=True
+        canonical_json = _json_fast.dumps(arguments, option=_json_fast.OPT_SORT_KEYS).decode()
+    else:
+        canonical_json = json.dumps(obj=arguments, sort_keys=True, separators=(",", ":"))
 
     # Try faster non-cryptographic hash when available ----------------------
     try:

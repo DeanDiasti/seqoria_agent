@@ -34,7 +34,7 @@ async def test_jwt_cookie_backend_matrix():
         assert res.status_code == 401
 
         # Invalid token should return 401
-        bad_cookie = {"access_token": "invalid"}
+        cli.cookies.set("access_token", "invalid")
         res = await cli.post(
             "/mcp/",
             json={
@@ -43,12 +43,12 @@ async def test_jwt_cookie_backend_matrix():
                 "method": "tools/call",
                 "params": {"name": "echo", "arguments": {}},
             },
-            cookies=bad_cookie,
         )
         assert res.status_code == 401
 
         # Valid token should return 200 and inject user_id
         token = jwt.encode({"id": "alice"}, SECRET, algorithm=ALGO)
+        cli.cookies.set("access_token", token)
         res = await cli.post(
             "/mcp/",
             json={
@@ -57,7 +57,6 @@ async def test_jwt_cookie_backend_matrix():
                 "method": "tools/call",
                 "params": {"name": "echo", "arguments": {}},
             },
-            cookies={"access_token": token},
         )
         assert res.status_code == 200
         assert "alice" in res.text 

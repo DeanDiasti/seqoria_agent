@@ -31,6 +31,8 @@ from seqoria_agent.providers.errors import (ConnectionError,
 from seqoria_agent.providers.schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
 from seqoria_agent.models.chunk import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult
 
+_EMPTY_JSON: str = "{}"
+
 class OpenAIProvider(BaseProvider):
     """
     Asynchronous provider implementation for OpenAI's LLM API.
@@ -224,7 +226,7 @@ class OpenAIProvider(BaseProvider):
                                               "tool_calls": [{"id": raw_msg.id,
                                                               "type": "function",
                                                               "function": {"name": raw_msg.name,
-                                                                           "arguments": json.dumps(obj=raw_msg.arguments or {})}}]})
+                                                                           "arguments": (_EMPTY_JSON if not raw_msg.arguments else json.dumps(obj=raw_msg.arguments))}}]})
                 continue
 
             if isinstance(raw_msg, ToolCallResult):
@@ -244,7 +246,7 @@ class OpenAIProvider(BaseProvider):
                                               "tool_calls": [{"id": raw_msg.get("id"),
                                                               "type": "function",
                                                               "function": {"name": raw_msg.get("name"),
-                                                                           "arguments": json.dumps(obj=raw_msg.get("arguments", {}))}}]})
+                                                                           "arguments": (_EMPTY_JSON if not raw_msg.get("arguments") else json.dumps(obj=raw_msg.get("arguments", {})))}}]})
             elif role == "tool_result":
                 prepared_chat_history.append({"role": "tool",
                                               "content": raw_msg.get("result"),
@@ -276,7 +278,7 @@ class OpenAIProvider(BaseProvider):
         return processed_tool_calls
     
     async def async_generate(self,
-                             chat_history: List[Dict[str, Any]],
+                             chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
                              model: Optional[str] = None,
@@ -371,7 +373,7 @@ class OpenAIProvider(BaseProvider):
         return await self._execute_with_retry(operation=_generate)
     
     async def async_stream(self, 
-                           chat_history: List[Dict[str, Any]], 
+                           chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]], 
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
                            model: Optional[str] = None,

@@ -27,8 +27,16 @@ from .errors import (ConnectionError,
                      QuotaExceededError,
                      ServerError)
 
+from seqoria_agent.models.chunk import (AssistantMessage,
+                                        SystemMessage,
+                                        UserMessage,
+                                        ToolCallRequest,
+                                        ToolCallResult)
+
 # Use a relative import since we're in the same directory
 from .schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
+
+_EMPTY_JSON: str = "{}"
 
 class AnthropicProvider(BaseProvider):
     """
@@ -219,7 +227,7 @@ class AnthropicProvider(BaseProvider):
         """
         Format the tool calls into the format expected by the Anthropic API.
         """
-        return [{"name": str(tool["function"]["name"]), 
+        return [{"name": str(object=tool["function"]["name"]), 
                  "description": tool["function"]["description"], 
                  "input_schema": tool["function"]["parameters"]} for tool in tools]
 
@@ -231,23 +239,43 @@ class AnthropicProvider(BaseProvider):
         system_message = ""
 
         for message in chat_history:
-            if message.get("role") == "tool_result":
+            if isinstance(message, ToolCallRequest):
+                prepared_chat_history.append({"role": "assistant",
+                                              "tool_calls": [{"id": message.id,
+                                                              "type": "function",
+                                                              "function": {"name": message.name,
+                                                                           "arguments": (_EMPTY_JSON if not message.arguments else json.dumps(obj=message.arguments))}}]})
+                continue
+
+            if isinstance(message, ToolCallResult):
+                prepared_chat_history.append({"role": "tool",
+                                              "content": message.result,
+                                              "tool_call_id": message.tool_call_id})
+                continue
+
+            if isinstance(message, (AssistantMessage, UserMessage)):
+                prepared_chat_history.append({"role": message.role,
+                                              "content": message.content})
+                continue
+
+            if isinstance(message, SystemMessage):
+                system_message += message.content + "\n\n"
+                continue
+
+            role = message.get("role")
+            if role == "tool_call":
+                prepared_chat_history.append({"role": "user", "content": [{"type": "tool_use",
+                                                                           "name": message.get("name"),
+                                                                           "id": message.get("id"),
+                                                                           "input": (_EMPTY_JSON if not message.get("arguments") else json.dumps(obj=message.get("arguments")))}]})
+                
+            elif role == "tool_result":
                 prepared_chat_history.append({"role": "user", "content": [{"tool_use_id": message.get("tool_call_id"),
                                                                            "type": "tool_result",
                                                                            "content": message.get("result")}]})
                 
-            elif message.get("role") == "tool_call":
-                prepared_chat_history.append({"role": "user", "content": [{"type": "tool_use",
-                                                                           "name": message.get("name"),
-                                                                           "id": message.get("id"),
-                                                                           "input": message.get("arguments")}]})
-                
-            elif message.get("role") == "assistant":
-                prepared_chat_history.append({"role": "assistant", 
-                                              "content": [{"type": "text",
-                                                           "text": message.get("content")}]})
-            elif message.get("role") == "user":
-                prepared_chat_history.append({"role": "user",
+            elif role in {"assistant", "user"}:    
+                prepared_chat_history.append({"role": role, 
                                               "content": [{"type": "text",
                                                            "text": message.get("content")}]})
 
@@ -257,7 +285,7 @@ class AnthropicProvider(BaseProvider):
         return system_message.strip(), prepared_chat_history
 
     async def async_generate(self,
-                             chat_history: List[Dict[str, Any]],
+                             chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
                              tools: Optional[List[Dict[str, Any]]] = None,
                              tool_choice: Optional[Dict[str, Any]] = None,
                              model: Optional[str] = None,
@@ -354,7 +382,7 @@ class AnthropicProvider(BaseProvider):
         return await self._execute_with_retry(operation=_generate)
     
     async def async_stream(self,
-                           chat_history: List[Dict[str, Any]],
+                           chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
                            tools: Optional[List[Dict[str, Any]]] = None,
                            tool_choice: Optional[Dict[str, Any]] = None,
                            model: Optional[str] = None,

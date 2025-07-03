@@ -104,8 +104,14 @@ class ConnectionPool:
     async def close(self) -> None:  # noqa: D401 – simple coro
         """Gracefully shut down all HTTP transports and reset state."""
         async with self._lock:
-            tasks = [conn.client.close() for conn in self._connections]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Close transports sequentially – AsyncClient.aclose already avoids
+            # expensive awaits when connections are idle; gather() adds overhead.
+            for conn in self._connections:
+                try:
+                    await conn.client.close()
+                except Exception:
+                    # Ignore individual close errors – pool is shutting down
+                    continue
             self._connections.clear()
             self._client_to_url.clear()
             # Leave breaker + fail logs intact - they are per URL and still
@@ -136,7 +142,7 @@ class ConnectionPool:
         if server_url is None:
             server_url = "<unknown>"
 
-        now = time.time()
+        now = time.monotonic()
         # Circuit breaker gate ----------------------------------------------
         if self._breaker_until.get(server_url, 0) > now:
             raise CircuitOpenError(f"Circuit open for server {server_url} - retry later.")

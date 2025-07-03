@@ -16,6 +16,7 @@ from typing import Any, List, Optional, Sequence
 import inspect
 
 import httpx
+from httpx import ASGITransport
 
 from seqoria_agent.auth.providers import BaseAuthProvider
 
@@ -73,8 +74,7 @@ class SimpleHTTPTransport:
         # ------------------------------------------------------------------
         if self._asgi_app is not None:
             try:
-                from httpx import ASGITransport  # type: ignore
-
+                
                 transport = ASGITransport(app=self._asgi_app)
                 client_kwargs["transport"] = transport
                 client_kwargs["base_url"] = self._base_url_override or self._url

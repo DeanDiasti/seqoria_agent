@@ -19,12 +19,21 @@ import json
 import logging
 from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Set
+from functools import lru_cache
 
 from seqoria_agent.client.ai_client.connection_pool import ConnectionPool
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.ai_client.constants import THINK_TOOL_NAME
 
 __all__: list[str] = ["ToolRegistry"]
+
+# Phase-2 optimisation ------------------------------------------------------
+# Use xxhash when available and cache fingerprint computations.
+
+try:
+    import xxhash  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover – optional dependency
+    xxhash = None
 
 
 class ToolRegistry:
@@ -81,6 +90,8 @@ class ToolRegistry:
         self._seen_schema_hash: Dict[str, str] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
         self._refresher_task: Optional[asyncio.Task] = None
+        # Version counter used by Executor cache (increments every successful refresh)
+        self._version: int = 0
         if self._refresh_interval > 0:
             self._refresher_task = asyncio.get_running_loop().create_task(coro=self._periodic_refresh())
 
@@ -100,6 +111,11 @@ class ToolRegistry:
     def depends_on(self, name: str) -> Set[str]:  # noqa: D401
         """Return dependency set for *name* (tools that must run first)."""
         return set(self._tool_deps.get(name, set()))
+
+    @property
+    def version(self) -> int:  # noqa: D401
+        """Monotonically increasing version number bumped on every refresh."""
+        return self._version
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -233,6 +249,9 @@ class ToolRegistry:
         async with self._lock:
             self._llm_tools = llm_tools
 
+            # Bump version after successful rebuild so dependants can invalidate caches
+            self._version += 1
+
         self._logger.info("ToolRegistry refreshed with %d tools", len(llm_tools))
 
     # ------------------------------------------------------------------
@@ -253,11 +272,25 @@ class ToolRegistry:
             # Normal shutdown path
             return 
 
+    # ------------------------------------------------------------------
+    # Internal hashing helpers (Phase-2 optimisation)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    @lru_cache(maxsize=4096)
+    def _fingerprint(canonical_json: str) -> str:  # noqa: D401
+        """Return an 8-char stable fingerprint for *canonical_json*."""
+        if xxhash is not None:
+            # xxhash expects bytes; encode once for efficiency
+            return xxhash.xxh3_64_hexdigest(canonical_json.encode())[:8]
+        # Fallback to cryptographic hash when xxhash unavailable
+        return hashlib.sha1(canonical_json.encode()).hexdigest()[:8]
+
     @staticmethod
     def _schema_hash(schema: dict[str, Any]) -> str:  # noqa: D401
-        """Return an 8-char SHA-1 fingerprint for *schema* (deterministic)."""
-        raw = json.dumps(obj=schema, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha1(string=raw.encode()).hexdigest()[:8]
+        """Return an 8-char fingerprint for *schema* (deterministic, cached)."""
+        canonical_json = json.dumps(obj=schema, sort_keys=True, separators=(",", ":"))
+        return ToolRegistry._fingerprint(canonical_json)
 
     @staticmethod
     def _get_annotation_field(annotations: Any, field: str):  # noqa: ANN401
