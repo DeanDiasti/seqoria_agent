@@ -7,15 +7,13 @@ from pydantic import BaseModel, Field
 # -----------------------------------------------------------------------------
 # Public constants
 # -----------------------------------------------------------------------------
-ValidDisplayType = Literal[
-    "chart",
-    "table",
-    "image",
-    "markdown",
-    "html",
-    "notification",
-    "text",
-]
+ValidDisplayType = Literal["chart", 
+                           "table", 
+                           "image", 
+                           "markdown", 
+                           "html", 
+                           "notification", 
+                           "text"]
 
 
 class DisplayEnvelope(BaseModel):

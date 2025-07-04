@@ -20,14 +20,12 @@ class XMCPError(Exception):
 
     __slots__ = ("code", "detail", "retryable", "meta")
 
-    def __init__(
-        self,
-        code: str,
-        detail: str | None = None,
-        *,
-        retryable: bool = False,
-        meta: dict | None = None,
-    ) -> None:
+    def __init__(self,
+                 code: str,
+                 detail: str | None = None,
+                 *,
+                 retryable: bool = False,
+                 meta: dict | None = None) -> None:
         """Initialise the structured error.
 
         Parameters
@@ -59,10 +57,8 @@ class XMCPError(Exception):
         return f"{self.code} - {self.detail}" if self.detail else self.code
 
     def __repr__(self) -> str:  # noqa: D401 – debug-friendly
-        return (
-            f"XMCPError(code={self.code!r}, detail={self.detail!r}, "
-            f"retryable={self.retryable}, meta={self.meta!r})"
-        )
+        return (f"XMCPError(code={self.code!r}, detail={self.detail!r}, "
+                f"retryable={self.retryable}, meta={self.meta!r})")
 
 
 class DependencyError(Exception):

@@ -27,7 +27,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict, deque
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple
 
 from seqoria_agent.client.ai_client.connection_pool import ConnectionPool
 from seqoria_agent.client.ai_client.constants import THINK_TOOL_NAME
@@ -81,41 +81,60 @@ class Executor:
         # Logger --------------------------------------------------------------
         self._logger = logger or logging.getLogger(name="seqoria_agent.executor")
 
-    async def run_calls(self,
-                        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList]) -> List[ToolCallResult]:
-        """Execute *tool_calls* respecting dependencies and return chat history entries.
+    async def run_call_stream(self,
+                             tool_calls: Union[List[ToolCallRequest], ToolCallRequestList]) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult]]:
+        """Yield :class:`ToolCallResult` objects as soon as they are ready.
 
-        The returned list contains one history entry per *ToolCall* in the same
-        execution order that callers can directly append to their *history*
-        list via ``history.extend(...)``.  The helper hides concurrency,
-        dependency ordering and error handling details.
+        The generator respects *dependency layers* computed by
+        :pyfunc:`compute_execution_layers`.  All tools within a layer start
+        concurrently (subject to the executor semaphore) and results are
+        yielded in the order they *finish*.  The next layer only starts once
+        every task of the current layer has completed, guaranteeing that
+        dependency prerequisites have run first.
         """
-        # Fast-path: single call – skip dependency sorting entirely
+        # Normalise convenience wrapper types ---------------------------------
         if isinstance(tool_calls, ToolCallRequestList):
             tool_calls = tool_calls.tool_calls
 
+        # Single-call fast-path ------------------------------------------------
         if len(tool_calls) == 1:
-            # Always return a *list* so callers can blindly extend chat history
-            t = [await self._run_tool(tool_call=tool_calls[0])]  # type: ignore[arg-type]
-            
-            return t
+            single_req = tool_calls[0]
+            yield (single_req, await self._run_tool(tool_call=single_req))  # type: ignore[arg-type]
+            return
 
-        # Multi-call execution with dependency handling
+        # Multi-call with dependency handling ---------------------------------
         try:
             layers = self.compute_execution_layers(tool_calls=tool_calls)
         except DependencyError as de:
-            # Surface dependency errors so callers can append an error answer.
-            self._logger.error(msg="Dependency resolution failed", 
-                               error=str(object=de))
-            return []
-        results = []
-        for layer in layers:
-            coros = [self._run_tool(tool_call=tc) for tc in layer]
-            results.extend(await asyncio.gather(*coros, return_exceptions=False))
+            # Surface dependency errors via logger and abort stream.
+            self._logger.error(msg="Dependency resolution failed", error=str(object=de))
+            return
 
-        return results
-    
-    # Comment: Do we need to return the updated history or is the object updated and we don't need to return it?
+        for layer in layers:
+            # Fire off tasks for the whole layer in parallel. Each task returns its
+            # request/result pair so we avoid fragile lookup gymnastics with
+            # internal ``as_completed`` coroutine wrappers.
+
+            async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest | ToolCallResult]:  # noqa: D401
+                return tc, await self._run_tool(tool_call=tc)
+
+            tasks = [asyncio.create_task(coro=_exec_pair(tc=tc)) for tc in layer]
+
+            for fut in asyncio.as_completed(fs=tasks):
+                pair = await fut  # (request, result)
+                yield pair
+
+    # ----------------------------------------------------------------------
+    # Backwards-compatibility wrapper – accumulate results into a list
+    # ----------------------------------------------------------------------
+    async def run_calls(self,
+                        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList]) -> List[ToolCallResult]:
+        """Execute *tool_calls* and return a list of results.
+
+        This is now implemented on top of :pyfunc:`run_call_stream` to avoid
+        duplicating the execution logic while preserving the original API.
+        """
+        return [res async for _, res in self.run_call_stream(tool_calls=tool_calls)]
 
     async def _run_tool(self,
                         tool_call: ToolCallRequest) -> ToolCallResult:

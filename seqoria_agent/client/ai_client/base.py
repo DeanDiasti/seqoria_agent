@@ -3,8 +3,7 @@ from __future__ import annotations
 """AIClient orchestrator (refactored)."""
 
 import asyncio, logging
-from typing import Any, AsyncGenerator, Iterable, List, Optional, Self, Union
-from io import StringIO  # Locally import to avoid module cost when unused
+from typing import Any, AsyncGenerator, Iterable, List, Self, Union
 
 try:  # Prefer structlog but fall back to stdlib
     import structlog  # type: ignore
@@ -12,7 +11,7 @@ except ModuleNotFoundError:  # pragma: no cover
     structlog = None  # type: ignore
 
 from seqoria_agent.client.ai_client.connection_pool import ConnectionPool
-from seqoria_agent.auth.providers import BaseAuthProvider, NoAuthProvider  # Phase-2
+from seqoria_agent.auth.providers import BaseAuthProvider, NoAuthProvider
 from seqoria_agent.client.ai_client.executor import Executor
 from seqoria_agent.client.ai_client.history import build_system_prompt
 from seqoria_agent.client.ai_client.llm_interface import LLMInterface
@@ -22,7 +21,7 @@ from seqoria_agent.client.parameters import ParameterProvider
 from seqoria_agent.providers.base_provider import BaseProvider
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.settings import ClientSettings  # noqa: F401
-from seqoria_agent.models.chunk import AssistantMessage, ToolCallRequest, ToolCallResult, ChatChunk, UserMessage, ToolCallRequestList, LLMUsage, ToolMessages
+from seqoria_agent.models.chunk import AssistantMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, UserMessage, ToolCallRequestList, LLMUsage, ToolMessages
 
 __all__ = ["AIClient"]
 
@@ -32,28 +31,27 @@ def _as_list(x) -> list:
 
 
 class AIClient:  # noqa: D101 – tiny glue layer
-    def __init__(
-        self,
-        providers: List[BaseProvider] | None = None,
-        *,
-        urls: Iterable[str] | None = None,
-        local_toolbox: LocalToolbox | list[LocalToolbox] | None = None,
-        logger: logging.Logger | None = None,
-        refresh_interval: float = 0,
-        cache: CacheProtocol | None = None,
-        cache_ttl: int | None = 300,
-        max_concurrency: int | None = None,
-        tool_timeout: float | None = None,
-        retry_policy: dict[str, Any] | None = None,
-        breaker_threshold: int = 5,
-        breaker_reset_after: int = 60,
-        param_providers: list[ParameterProvider] | None = None,
-        allow_override: bool = False,
-        enable_meta_tools: bool | Iterable[str] = True,
-        settings: ClientSettings | None = None,
-        auth_provider: BaseAuthProvider | None = None,
-        **client_kwargs: Any,
-    ) -> None:
+    def __init__(self,
+                 providers: List[BaseProvider] | None = None,
+                 *,
+                 urls: Iterable[str] | None = None,
+                 local_toolbox: LocalToolbox | list[LocalToolbox] | None = None,
+                 logger: logging.Logger | None = None,
+                 refresh_interval: float = 0,
+                 cache: CacheProtocol | None = None,
+                 cache_ttl: int | None = 300,
+                 max_concurrency: int | None = None,
+                 tool_timeout: float | None = None,
+                 retry_policy: dict[str, Any] | None = None,
+                 breaker_threshold: int = 5,
+                 breaker_reset_after: int = 60,
+                 param_providers: list[ParameterProvider] | None = None,
+                 allow_override: bool = False,
+                 enable_meta_tools: bool | Iterable[str] = True,
+                 settings: ClientSettings | None = None,
+                 auth_provider: BaseAuthProvider | None = None,
+                 system_prompt: str | None = None,
+                 **client_kwargs: Any) -> None:
         if settings is None:
             settings = ClientSettings()
 
@@ -109,8 +107,13 @@ class AIClient:  # noqa: D101 – tiny glue layer
                                  allow_override=allow_override,
                                  logger=self._logger)
         self.llm = LLMInterface(providers=self._providers, logger=self._logger)
-        self._system_prompt = build_system_prompt()
-        self._hist: Optional[List[dict]] = None
+        # System prompt handling ------------------------------------------------
+        if system_prompt == "":  # Explicitly disable automatic prompt
+            self._system_prompt: str | None = None
+        elif system_prompt is None:
+            self._system_prompt = build_system_prompt()
+        else:
+            self._system_prompt = system_prompt.strip()
 
     # ------------------------------------------------------------------ context
     async def __aenter__(self) -> Self:
@@ -155,6 +158,9 @@ class AIClient:  # noqa: D101 – tiny glue layer
         if history is None:
             raise ValueError("history required")
 
+        # Ensure system prompt present
+        self._ensure_system_prompt(history=history)
+
         if use_tools and self.tools_enabled():
             resp = await self.llm.generate(history=history,
                                            tools=self.registry.llm_tools,
@@ -177,6 +183,9 @@ class AIClient:  # noqa: D101 – tiny glue layer
         if history is None:
             raise ValueError("history required")
         
+        # Ensure system prompt present
+        self._ensure_system_prompt(history=history)
+
         if use_tools and self.tools_enabled():
             async for chunk in self.llm.stream(history=history, 
                                                tools=self.registry.llm_tools, 
@@ -197,10 +206,11 @@ class AIClient:  # noqa: D101 – tiny glue layer
         """Chat with the LLM."""
         if history is None:
             raise ValueError("history required")
-        if self._hist is not None:
-            raise RuntimeError("chat re-entered")
-        self._hist = history
+
         try:
+            # Inject system prompt before any new messages
+            self._ensure_system_prompt(history=history)
+            
             history.append(UserMessage(role="user", content=user_query))
             
             # LLM-only fast path --------------------------------------------------
@@ -255,10 +265,9 @@ class AIClient:  # noqa: D101 – tiny glue layer
                                        content="[Turn limit reached]", 
                                        model=None, 
                                        usage=total_usage)
+        except Exception as e:
+            raise e
 
-
-        finally:
-            self._hist = None
 
     # ------------------------------------------------------------------ streaming chat (refactored Phase-4)
 
@@ -274,6 +283,9 @@ class AIClient:  # noqa: D101 – tiny glue layer
         if user_query is None:
             raise ValueError("user_query required")
         
+        # Ensure system prompt present
+        self._ensure_system_prompt(history=history)
+
         history.append(UserMessage(role="user", 
                                    content=user_query))
 
@@ -347,8 +359,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
                                        model=None, 
                                        usage=total_usage)
 
-        finally:
-            self._hist = None
+        except Exception as e:
+            raise e
 
     # ------------------------------------------------------------------ auth
 
@@ -368,29 +380,18 @@ class AIClient:  # noqa: D101 – tiny glue layer
                 except Exception:
                     continue
 
-    def append_assistant_message(self, 
-                                 content: str, 
-                                 history: List[dict] | None = None, 
-                                 *, 
-                                 tool_calls: List[ToolCallRequest] | None = None) -> List[dict]:  # noqa: D401
-        """Append an *assistant* message to *history*.
+    # ------------------------------------------------------------------ internal helpers
 
-        When called from inside :pyfunc:`chat` or :pyfunc:`stream_chat` the
-        current internal history (``self._hist``) is used automatically.  For
-        external callers pass the *history* list explicitly.  The helper keeps
-        the message schema consistent with other parts of *AIClient* and
-        serialises *tool_calls* via :pyfunc:`ToolCall.model_dump` for
-        wire-compatibility.
+    def _ensure_system_prompt(self, history: List[dict]) -> None:  # noqa: D401
+        """Insert the system prompt at the beginning of *history* once.
+
+        The helper is idempotent - if the first entry is already a system
+        message, it does nothing.  Automatic injection can be disabled by
+        passing an empty string ("") for *system_prompt* in the constructor.
         """
-        # Resolve target history ------------------------------------------------
-        target = history if history is not None else self._hist
-        if target is None:
-            raise ValueError("history required - either pass *history* or call within chat/stream_chat")
+        if self._system_prompt is None:
+            return  # disabled
 
-        entry: dict[str, Any] = {"role": "assistant",
-                                 "content": content,}
-        if tool_calls:
-            entry["tool_calls"] = [tc.model_dump() for tc in tool_calls]
-
-        target.append(entry)
-        return target 
+        if not history or history[0].get("role") != "system":
+            history.insert(0, SystemMessage(role="system", 
+                                            content=self._system_prompt))
