@@ -390,6 +390,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
         if self._system_prompt is None:
             return  # disabled
 
-        if not history or history[0].get("role") != "system":
-            history.insert(0, SystemMessage(role="system", 
-                                            content=self._system_prompt))
+        if not history or ((isinstance(history[0], dict) and history[0].get("role") != "system") or
+                           (not isinstance(history[0], dict) and getattr(history[0], "role", None) != "system")):
+            # Use plain dict for backwards-compatibility with callers that
+            # treat history messages as mapping objects.
+            history.insert(0, {"role": "system", "content": self._system_prompt})

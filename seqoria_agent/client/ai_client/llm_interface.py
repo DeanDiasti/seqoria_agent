@@ -126,12 +126,13 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
             self._primary_provider_idx = successful_idx
 
         if isinstance(raw_resp, LLMResponse):
+            usage = raw_resp.usage or LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
             return AssistantMessage(role="assistant",
                                     content=raw_resp.text,
                                     model=raw_resp.model_id,
-                                    usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
-                                                   completion_tokens=raw_resp.usage.completion_tokens,
-                                                   total_tokens=raw_resp.usage.total_tokens))
+                                    usage=LLMUsage(prompt_tokens=usage.prompt_tokens,
+                                                   completion_tokens=usage.completion_tokens,
+                                                   total_tokens=usage.total_tokens))
 
         if isinstance(raw_resp, ToolCallList):
             return ToolCallRequestList(tool_calls=[ToolCallRequest(role="tool_call",

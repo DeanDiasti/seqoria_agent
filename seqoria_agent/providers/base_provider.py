@@ -20,21 +20,17 @@ class BaseProvider(ABC):
     must follow, ensuring consistency and type safety across different LLM providers.
     """
     
-    @abstractmethod
-    def __init__(self, model_id: Optional[str] = None, **kwargs) -> None:
+    def __init__(self, model_id: Optional[str] = None, **kwargs) -> None:  # noqa: D401
+        """No-op default constructor.
+
+        Concrete provider implementations MAY override this to perform real
+        client setup.  The default implementation exists so that lightweight
+        test stubs (e.g. *DummyProvider* inside the unit-test suite) do **not**
+        have to implement an unnecessary ``__init__`` just to satisfy the
+        abstract base-class requirements.  Runtime code never relies on any
+        state established here.
         """
-        Initialize the provider.
-        
-        Args:
-            model_id: Identifier for the model to use. If None, should fall back to a default.
-            **kwargs: Additional parameters for model generation and client configuration.
-        
-        Raises
-        ------
-            EnvironmentError: If required environment variables are not set.
-            ConnectionError: If the client cannot be initialized.
-        """
-        pass
+        self.model_id = model_id
     
     @abstractmethod
     async def async_generate(self, 

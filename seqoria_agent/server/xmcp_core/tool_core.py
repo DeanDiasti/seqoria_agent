@@ -82,6 +82,18 @@ def _json_schema_for_type(tp):  # noqa: ANN001
 
 
 # ---------------------------------------------------------------------------
+# Optional Pydantic integration – enrich parameter schema via Field metadata
+# ---------------------------------------------------------------------------
+try:
+    # Pydantic v1 & v2 expose FieldInfo in the same sub-module path
+    from pydantic.fields import FieldInfo as _PydanticFieldInfo  # type: ignore
+    from pydantic import create_model as _pyd_create_model  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover – pydantic not installed
+    _PydanticFieldInfo = None  # type: ignore
+    _pyd_create_model = None  # type: ignore
+
+
+# ---------------------------------------------------------------------------
 # Core implementation
 # ---------------------------------------------------------------------------
 
@@ -157,9 +169,52 @@ class ToolCore:
                 props: dict[str, Any] = {}
                 required: list[str] = []
                 for p_name, param in sig.parameters.items():
+                    # ------------------------------------------------------------------
+                    # Skip server-populated parameters – they are hidden from the LLM
+                    # ------------------------------------------------------------------
                     if p_name in (server_populated or []):
-                        continue  # hidden from LLM
+                        continue
+
                     ann = param.annotation if param.annotation is not inspect._empty else str
+
+                    # ------------------------------------------------------------------
+                    # Pydantic Field – leverage its rich JSON-schema generation
+                    # ------------------------------------------------------------------
+                    if (
+                        _PydanticFieldInfo is not None and  # pydantic import succeeded
+                        _pyd_create_model is not None and
+                        param.default is not inspect._empty and
+                        isinstance(param.default, _PydanticFieldInfo)
+                    ):
+                        # Build a tiny throw-away model so pydantic can derive the
+                        # correct JSON Schema for us (including constraints & docs).
+                        TmpModel = _pyd_create_model(  # type: ignore
+                            "_Tmp", **{p_name: (ann, param.default)}
+                        )
+
+                        if hasattr(TmpModel, "model_json_schema"):
+                            # Pydantic ≥2
+                            fld_schema = TmpModel.model_json_schema()["properties"][p_name]  # type: ignore[index]
+                        else:
+                            # Pydantic v1 – .schema()
+                            fld_schema = TmpModel.schema()["properties"][p_name]  # type: ignore[attr-defined]
+
+                        props[p_name] = fld_schema
+
+                        # FieldInfo helper – works across Pydantic versions.
+                        try:
+                            if param.default.is_required():  # type: ignore[attr-defined]
+                                required.append(p_name)
+                        except Exception:
+                            # Fallback check based on sentinel values
+                            if getattr(param.default, "default", Ellipsis) is Ellipsis:
+                                required.append(p_name)
+
+                        continue  # handled – next parameter
+
+                    # ------------------------------------------------------------------
+                    # Fallback to primitive scalar mapping (existing behaviour)
+                    # ------------------------------------------------------------------
                     props[p_name] = _json_schema_for_type(ann)
                     if param.default is inspect._empty:
                         required.append(p_name)

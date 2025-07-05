@@ -53,5 +53,5 @@ class LLMResponse(BaseModel):
     model_id: Optional[str] = Field(default=..., description="The actual model ID used for the response.")
     type: Literal["llm_delta", "llm_response"] = Field(default=..., description="The type of the response.")
     text: Optional[str] = Field(default=..., description="The text of the response.")
-    usage: Optional[LLMUsage] = Field(default=..., description="The usage of the response.")
-    stop_reason: Optional[str] = Field(default=..., description="The reason the response stopped.")
+    usage: Optional[LLMUsage] = Field(default=None, description="The usage of the response.")
+    stop_reason: Optional[str] = Field(default=None, description="The reason the response stopped.")
