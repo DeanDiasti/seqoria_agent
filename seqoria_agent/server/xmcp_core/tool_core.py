@@ -263,10 +263,13 @@ class ToolCore:
                     isinstance(p.default, _PydanticFieldInfo) and
                     not p.default.is_required()  # type: ignore[attr-defined]
                 ):
+                    # Use the underlying default even when it is None so we
+                    # never leak a FieldInfo instance.
                     default_val = getattr(p.default, "default", None)
-                    # Skip PydanticUndefined sentinel
-                    if default_val is not None and str(object=default_val) != "PydanticUndefined":
-                        _field_defaults[p_name] = default_val
+                    # Replace PydanticUndefined sentinel with None
+                    if str(object=default_val) == "PydanticUndefined":
+                        default_val = None
+                    _field_defaults[p_name] = default_val
 
         async def _async(*args: Any, **kwargs: Any) -> str:  # noqa: ANN401
             try:
