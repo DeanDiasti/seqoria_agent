@@ -7,6 +7,6 @@ Canonical import path::
     from seqoria_agent.toolbox import LocalToolbox
 """
 
-from .local_public import LocalToolbox  # noqa: F401
+from seqoria_agent.toolbox.local_public import LocalToolbox  # noqa: F401
 
 __all__: list[str] = ["LocalToolbox"] 

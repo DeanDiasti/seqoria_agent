@@ -3,7 +3,7 @@ from __future__ import annotations
 """AIClient orchestrator (refactored)."""
 
 import asyncio, logging
-from typing import Any, AsyncGenerator, Iterable, List, Self, Union
+from typing import Any, AsyncGenerator, Iterable, List, Self, Tuple, Union
 
 try:  # Prefer structlog but fall back to stdlib
     import structlog  # type: ignore
@@ -24,11 +24,6 @@ from seqoria_agent.client.settings import ClientSettings  # noqa: F401
 from seqoria_agent.models.chunk import AssistantMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, UserMessage, ToolCallRequestList, LLMUsage, ToolMessages
 
 __all__ = ["AIClient"]
-
-
-def _as_list(x) -> list:
-    return [] if x is None else (x if isinstance(x, list) else [x])
-
 
 class AIClient:  # noqa: D101 – tiny glue layer
     def __init__(self,
@@ -79,7 +74,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
             raise ValueError("'providers' may not be empty")
         self._providers = providers
         self._urls = list(dict.fromkeys(urls or []))
-        self._boxes = _as_list(local_toolbox)
+        self._boxes = [] if local_toolbox is None else (local_toolbox if isinstance(local_toolbox, list) else [local_toolbox])
         # Always use stdlib logging for internal library logs to avoid structlog API incompatibilities
         self._logger = logger or logging.getLogger(name="seqoria_agent")
         self._tool_map: dict[str, Any] = {}
@@ -137,15 +132,18 @@ class AIClient:  # noqa: D101 – tiny glue layer
 
     async def run_tool_calls(self, tool_calls: List[ToolCallRequest]) -> List[ToolCallResult]:
         return await self.executor.run_calls(tool_calls=tool_calls)
+    
+    def run_call_stream(self, tool_calls: List[ToolCallRequest]) -> AsyncGenerator[Tuple[ToolCallRequest, ToolCallResult], None]:
+        return self.executor.run_call_stream(tool_calls=tool_calls)
 
-    # ------------------------------------------------------------------ Phase-1 helpers (public)
+    # ------------------------------------------------------------------ helpers (public)
 
     def tools_enabled(self) -> bool:  # noqa: D401
         """Return *True* if any tool is available."""
 
         return bool(self._tool_map or self._boxes)
 
-    # ------------------------------------------------------------------ Phase-2 LLM single-shot helpers
+    # ------------------------------------------------------------------ LLM single-shot helpers
 
     async def llm_generate_once(self,
                                 history: List[dict],
@@ -177,7 +175,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
                               *,
                               use_tools: bool = True,
                               tool_choice: str = "auto",
-                              model: str | None = None) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequest], None]:
+                              model: str | None = None) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None]:
         """Stream a single LLM step"""
 
         if history is None:
@@ -269,7 +267,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
             raise e
 
 
-    # ------------------------------------------------------------------ streaming chat (refactored Phase-4)
+    # ------------------------------------------------------------------ streaming chat
 
     async def stream_chat(self, 
                           user_query: str, 

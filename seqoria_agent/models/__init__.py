@@ -4,9 +4,18 @@ Nothing in here should depend on higher-level client or server logic to avoid
 import cycles.
 """
 
-from .chunk import ToolCallRequest, ToolCallResult, ToolMessages, AssistantMessage, UserMessage, SystemMessage, LLMUsage, ChatChunk  # noqa: F401
-from .envelope import DisplayEnvelope  # noqa: F401
-from .errors import CircuitOpenError, ToolRemoteError, XMCPError  # noqa: F401
+from seqoria_agent.models.chunk import (LLMUsage, 
+                                        ChatChunk, 
+                                        SystemMessage, 
+                                        AssistantMessage,
+                                        UserMessage, 
+                                        ToolCallRequest, 
+                                        ToolCallRequestList, 
+                                        ToolCallResult, 
+                                        ToolMessages, 
+                                        ChatMessages)
+from seqoria_agent.models.envelope import DisplayEnvelope  # noqa: F401
+from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError, XMCPError  # noqa: F401
 
 __all__: list[str] = ["DisplayEnvelope",  
                       "ToolRemoteError",
@@ -14,9 +23,11 @@ __all__: list[str] = ["DisplayEnvelope",
                       "XMCPError",
                       "ToolCallRequest",
                       "ToolCallResult",
+                      "ToolCallRequestList",
                       "ToolMessages",
                       "AssistantMessage",
                       "UserMessage",
                       "SystemMessage",
                       "LLMUsage",
-                      "ChatChunk"] 
+                      "ChatChunk",
+                      "ChatMessages"] 

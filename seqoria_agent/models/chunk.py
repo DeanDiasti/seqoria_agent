@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, List, Optional
+from typing import Literal, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -94,7 +94,6 @@ class ToolCallResult(BaseModel):  # noqa: D101 – simple container
     name: str = Field(default=None, description="The name of the tool.")
     result: str = Field(default=None, description="The result of the tool call.")
     type: Literal["tool_use"] = Field(default="tool_use", description="The type of the message.")
-    usage: LLMUsage = Field(default=None, description="The usage of the message.")
 
 
 class ToolMessages(list):  # noqa: D101 – simple container
@@ -123,3 +122,5 @@ class ToolMessages(list):  # noqa: D101 – simple container
             if not isinstance(item, (ToolCallRequest, ToolCallResult)):
                 raise TypeError("ToolMessages may only contain ToolCallRequest or ToolCallResult instances")
         super().extend(__iterable)
+
+ChatMessages = Union[SystemMessage, AssistantMessage, UserMessage, ToolCallRequest, ToolCallResult]

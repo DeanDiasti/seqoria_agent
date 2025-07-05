@@ -53,7 +53,7 @@ async def main() -> None:  # noqa: D401 – simple demo
         ]
 
         print("Streaming tool execution - results will appear as soon as each tool finishes:\n")
-        async for req, result in ai.executor.run_call_stream(tool_calls=tool_calls):
+        async for req, result in ai.run_call_stream(tool_calls=tool_calls):
             print(f"• {req.name} (id={req.id}) → {result.result}")
 
 

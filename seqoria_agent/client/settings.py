@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, List
 import logging
 
-from seqoria_agent.client.cache import CacheProtocol, NullCache  # noqa: F401
+from seqoria_agent.client.cache import CacheProtocol  # noqa: F401
 from seqoria_agent.client.parameters import ParameterProvider
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.providers.base_provider import BaseProvider
