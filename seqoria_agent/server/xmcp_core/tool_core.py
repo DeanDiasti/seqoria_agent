@@ -249,8 +249,31 @@ class ToolCore:
             formatter_instance = formatter_cls() if isinstance(formatter_cls, type) else formatter_cls
         self._tool_formatters[tool_name] = formatter_instance
 
-        async def _async(*args: Any, **kwargs: Any):  # noqa: ANN401
+        # ------------------------------------------------------------------
+        # Pre-compute mapping of parameter → clean default value when the
+        # original default is a Pydantic FieldInfo. This avoids leaking the
+        # FieldInfo object to the actual tool implementation.
+        # ------------------------------------------------------------------
+        _field_defaults: dict[str, Any] = {}
+        sig = inspect.signature(func)
+        if _PydanticFieldInfo is not None:
+            for p_name, p in sig.parameters.items():
+                if (
+                    p.default is not inspect._empty and
+                    isinstance(p.default, _PydanticFieldInfo) and
+                    not p.default.is_required()  # type: ignore[attr-defined]
+                ):
+                    default_val = getattr(p.default, "default", None)
+                    # Skip PydanticUndefined sentinel
+                    if default_val is not None and str(object=default_val) != "PydanticUndefined":
+                        _field_defaults[p_name] = default_val
+
+        async def _async(*args: Any, **kwargs: Any) -> str:  # noqa: ANN401
             try:
+                # Apply default substitutions
+                if _field_defaults and kwargs is not None:
+                    for k, v in _field_defaults.items():
+                        kwargs.setdefault(k, v)
                 result = await func(*args, **kwargs)  # type: ignore[arg-type]
                 if self._strict_mode:
                     self._validate_payload(result)
@@ -260,6 +283,9 @@ class ToolCore:
 
         def _sync(*args: Any, **kwargs: Any):  # noqa: ANN401
             try:
+                if _field_defaults and kwargs is not None:
+                    for k, v in _field_defaults.items():
+                        kwargs.setdefault(k, v)
                 result = func(*args, **kwargs)
                 if self._strict_mode:
                     self._validate_payload(result)

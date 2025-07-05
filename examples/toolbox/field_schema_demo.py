@@ -1,6 +1,7 @@
 # Demonstration of Pydantic Field metadata expansion in Seqoria-Agent tools
 # Run with: python examples/toolbox/field_schema_demo.py
 
+import asyncio
 from pprint import pprint
 from typing import Literal
 from enum import Enum
@@ -23,10 +24,13 @@ class SearchType(str, Enum):
 
 @tb.tool()
 async def search(
-    query: Literal[SearchType.TEST, SearchType.DEMO] = Field(..., description="Free-text search query"),
-    limit: int = Field(10, ge=1, le=100, description="Maximum results to return"),
+    num: int=4,
+    query: Literal[SearchType.TEST, SearchType.DEMO] = Field(default=..., description="Free-text search query"),
+    limit: int = Field(default=10, ge=1, le=100, description="Maximum results to return"),
 ):
     """Dummy search tool."""
+    print(type(num), type(query), type(limit))
+    print(num, query, limit)
     return {"answer": "N/A"}
 
 
@@ -34,3 +38,5 @@ if __name__ == "__main__":
     tool_info = tb.list_tools()[0]
     print("JSON-schema for the 'search' tool parameters (what the AI sees):\n")
     pprint(tool_info.inputSchema) 
+
+    asyncio.run(search( query=SearchType.TEST))
