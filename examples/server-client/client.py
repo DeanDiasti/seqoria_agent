@@ -29,9 +29,9 @@ from dotenv import load_dotenv
 
 from seqoria_agent import AIClient
 from seqoria_agent.client.cache import DictCache
-from seqoria_agent.client.parameters import ParamContext
+from seqoria_agent.client.parameters import ParameterRegistry
 from seqoria_agent.providers import OpenAIProvider
-from seqoria_agent.models.chunk import ChatChunk, AssistantMessage, ToolMessages
+from seqoria_agent.models.chunk import ChatChunk, ToolMessages
 
 load_dotenv()
 
@@ -60,15 +60,6 @@ servers = ["http://localhost:8004/mcp",
 
 logger = structlog.get_logger("seqoria_agent_demo")
 
-# ------------------------------------------------------------------
-# Client-side parameter provider example
-# ------------------------------------------------------------------
-
-class DemoUserProvider:  # simple example
-    async def resolve(self, param_name: str, tool_name: str, context: ParamContext) -> str | None:  # type: ignore[override]
-        if param_name == "user_id":
-            return os.getenv(key="DEMO_USER_ID", default="abc123abc123")
-        return None
 
 async def main() -> None:
     """Interactive CLI that streams AI responses and display envelopes.
@@ -80,6 +71,8 @@ async def main() -> None:
     # ------------------------------------------------------------------
     # Build provider list – primary plus optional *backup* provider
     # ------------------------------------------------------------------
+
+    registry = ParameterRegistry(mapping={"tenant_id": "demo-tenant"})
 
     # Initialize AIClient **with caching enabled** (in-memory DictCache)
     client = AIClient(
@@ -93,7 +86,7 @@ async def main() -> None:
         retry_policy={"max_attempts": 3, "backoff_base": 0.5},
         breaker_threshold=5,  # Trip circuit after 5 consecutive failures
         breaker_reset_after=60,  # Auto-reset breaker after 60s
-        param_providers=[DemoUserProvider()],
+        param_registry=registry,
         # logger=logger,
     )
 

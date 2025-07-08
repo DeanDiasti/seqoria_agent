@@ -12,13 +12,13 @@ precedence over the values held in a :class:`ClientSettings` instance.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable, List
+from typing import Any, Iterable, List, Mapping
 import logging
 
 from seqoria_agent.client.cache import CacheProtocol  # noqa: F401
-from seqoria_agent.client.parameters import ParameterProvider
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.client.parameters import ParameterSource, ParameterRegistry
 
 __all__: list[str] = ["ClientSettings"]
 
@@ -40,7 +40,7 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
     retry_policy: dict[str, Any] | None = None
     breaker_threshold: int = 5
     breaker_reset_after: int = 60
-    param_providers: list[ParameterProvider] | None = None
+    param_registry: Mapping[str, ParameterSource] | ParameterRegistry | None = None
     allow_override: bool = False
 
     # Transport customisation ----------------------------------------------

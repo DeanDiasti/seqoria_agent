@@ -61,6 +61,12 @@ secure = FastXMCPRouter(auth_backend=BearerCookieBackend(secret="s", algorithm="
 Tools registered on that router inherit the stricter backend while the rest of
 your app can stay unauthenticated.
 
+## Server-Populated Parameters
+
+When a tool uses `server_populated=["user_id"]` the **client** must supply the
+value via the new `ParameterRegistry` (see the *Multi-Tenancy* topic).  The
+LLM never sees sensitive values; they are inserted on the wire by AIClient.
+
 ## Token refresh hook
 
 If your access token can expire, implement `refresh_token_if_needed` in your

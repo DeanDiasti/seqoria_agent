@@ -96,6 +96,30 @@ class ToolCallResult(BaseModel):  # noqa: D101 – simple container
     type: Literal["tool_use"] = Field(default="tool_use", description="The type of the message.")
 
 
+class ToolCallError(BaseModel):  # noqa: D101 – container for failed tool execution
+    """Represents a *failed* tool execution.
+
+    This mirrors :class:`ToolCallResult` so callers can treat both
+    objects uniformly (they both expose a ``result`` string).  The
+    :pyattr:`role` and :pyattr:`type` fields are set to ``tool_error``
+    which allows consumers to distinguish successes from failures while
+    preserving backwards-compatibility for code that only inspects the
+    ``result`` attribute.
+    """
+
+    tool_call_id: str = Field(default=None, description="The ID of the tool call that failed.")
+    role: Literal["tool_error"] = Field(default="tool_error", description="The role of the message.")
+    name: str = Field(default=None, description="The name of the tool.")
+    # Human-readable error description (e.g. timeout, circuit-breaker, …)
+    error: str = Field(default=None, description="A short error description.")
+    type: Literal["tool_error"] = Field(default="tool_error", description="The type of the message.")
+
+    # Backwards-compatibility alias so code accessing ``result`` still works.
+    @property
+    def result(self) -> str:  # noqa: D401 – simple redirect
+        return self.error
+
+
 class ToolMessages(list):  # noqa: D101 – simple container
     """Container list for grouped *tool_call*/*tool_result* message pairs.
 

@@ -22,5 +22,19 @@
 ### Added
 - Initial public release of xmcp library, containing `AIClient`, `XMCP` server wrapper, `DisplayEnvelope`, dependency graph execution, streaming API, structured errors, hot-reloadable tool registry, multi-provider support, and a comprehensive test suite and documentation.
 
+## [0.4.0] - 2025-07-08
+### Breaking Changes
+* **ParameterProvider removed** – client code must migrate to the new dict-based `ParameterRegistry` with `ParamContext` support.
+* AIClient constructor now accepts `param_registry=`; passing the removed `param_providers=` kwarg raises `TypeError`.
+
+### Added
+* `ParameterRegistry`, `ParameterSource`, `ParamContext` utilities.
+* Comprehensive documentation & migration guide (`docs/migration/parameter_registry.md`).
+* New `examples/param_demo/` demonstrating constant and callable parameter sources.
+
+### Changed
+* Executor and AIClient fully integrated with the registry; server-populated parameters are injected via async resolution.
+* Version bumped to `0.4.0`.
+
 [Unreleased]: https://github.com/deandiasti/xmcp/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/deandiasti/xmcp/releases/tag/v0.1.0 

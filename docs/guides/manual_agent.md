@@ -124,7 +124,7 @@ Repeat 2️⃣ until the model either returns a direct answer *or* a tool produc
 | `refresh_interval` | Auto-refresh remote tool catalogue (seconds). |
 | `max_concurrency` | Semaphore limit for concurrent tool execution. |
 | `tool_timeout` | Per-tool hard timeout (seconds). |
-| `param_providers` | List of **ParameterProvider** instances for server-populated params. |
+| `param_registry` | `ParameterRegistry` mapping for server-populated params. |
 | `enable_meta_tools` | `True` / `False` / list – controls `__think__`, `__clarify__`, `__summarize__`. |
 
 ### Meta-tools in a manual loop
@@ -197,7 +197,7 @@ background.
 
 * **Cache** – supply a `CacheProtocol` implementation (e.g. Redis).  The helper
   `build_cache_key()` is used internally.
-* **ParameterProvider** – populate sensitive fields (like `user_id`) without
+* **ParameterRegistry** – populate sensitive fields (like `user_id`) without
   exposing them to the model.  Each provider gets `(param_name, tool_name, context)`.
 
 ---

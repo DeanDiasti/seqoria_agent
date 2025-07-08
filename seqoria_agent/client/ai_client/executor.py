@@ -27,7 +27,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict, deque
-from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple
+from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple, Mapping
 
 from seqoria_agent.client.ai_client.connection_pool import ConnectionPool
 from seqoria_agent.client.ai_client.constants import THINK_TOOL_NAME
@@ -35,10 +35,10 @@ from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
 from seqoria_agent.client.ai_client.callbacks import (on_error as _on_error_cb,
                                                       on_metadata as _on_metadata_cb)
 from seqoria_agent.client.cache import CacheProtocol, NullCache
-from seqoria_agent.client.parameters import ParameterProvider
+from seqoria_agent.client.parameters import ParameterRegistry, ParameterSource, ParamContext
 from seqoria_agent.models.errors import CircuitOpenError, DependencyError, ToolRemoteError
 from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY 
-from seqoria_agent.models.chunk import ToolCallResult, ToolCallRequest, ToolCallRequestList
+from seqoria_agent.models.chunk import ToolCallResult, ToolCallError, ToolCallRequest, ToolCallRequestList
 
 __all__: list[str] = ["Executor"]
 
@@ -53,7 +53,7 @@ class Executor:
                  cache_ttl: int | None = None,
                  tool_semaphore: Optional[asyncio.Semaphore] = None,
                  tool_timeout: float | None = None,
-                 param_providers: Optional[List[ParameterProvider]] = None,
+                 param_registry: Optional[Union[Mapping[str, ParameterSource], ParameterRegistry]] = None,
                  allow_override: bool = False,
                  on_error=None,
                  on_metadata=None,
@@ -71,7 +71,10 @@ class Executor:
         self._tool_timeout = tool_timeout
 
         # Parameter injection -------------------------------------------------
-        self._param_providers = list(param_providers or [])
+        if isinstance(param_registry, ParameterRegistry):
+            self._param_registry = param_registry
+        else:
+            self._param_registry = ParameterRegistry(mapping=param_registry or {})
         self._allow_override = bool(allow_override)
 
         # Callbacks -----------------------------------------------------------
@@ -82,7 +85,9 @@ class Executor:
         self._logger = logger or logging.getLogger(name="seqoria_agent.executor")
 
     async def run_call_stream(self,
-                             tool_calls: Union[List[ToolCallRequest], ToolCallRequestList]) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult]]:
+                              tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
+                              *,
+                              context: ParamContext | None = None) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult]]:
         """Yield :class:`ToolCallResult` objects as soon as they are ready.
 
         The generator respects *dependency layers* computed by
@@ -99,7 +104,7 @@ class Executor:
         # Single-call fast-path ------------------------------------------------
         if len(tool_calls) == 1:
             single_req = tool_calls[0]
-            yield (single_req, await self._run_tool(tool_call=single_req))  # type: ignore[arg-type]
+            yield (single_req, await self._run_tool(tool_call=single_req, context=context or {}))  # type: ignore[arg-type]
             return
 
         # Multi-call with dependency handling ---------------------------------
@@ -115,8 +120,8 @@ class Executor:
             # request/result pair so we avoid fragile lookup gymnastics with
             # internal ``as_completed`` coroutine wrappers.
 
-            async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest | ToolCallResult]:  # noqa: D401
-                return tc, await self._run_tool(tool_call=tc)
+            async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest, ToolCallResult]:  # noqa: D401
+                return tc, await self._run_tool(tool_call=tc, context=context or {})
 
             tasks = [asyncio.create_task(coro=_exec_pair(tc=tc)) for tc in layer]
 
@@ -128,16 +133,20 @@ class Executor:
     # Backwards-compatibility wrapper – accumulate results into a list
     # ----------------------------------------------------------------------
     async def run_calls(self,
-                        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList]) -> List[ToolCallResult]:
+                        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
+                        *,
+                        context: ParamContext | None = None) -> List[ToolCallResult]:
         """Execute *tool_calls* and return a list of results.
 
         This is now implemented on top of :pyfunc:`run_call_stream` to avoid
         duplicating the execution logic while preserving the original API.
         """
-        return [res async for _, res in self.run_call_stream(tool_calls=tool_calls)]
+        return [res async for _, res in self.run_call_stream(tool_calls=tool_calls, context=context or {})]
 
     async def _run_tool(self,
-                        tool_call: ToolCallRequest) -> ToolCallResult:
+                        tool_call: ToolCallRequest,
+                        *,
+                        context: ParamContext) -> ToolCallResult:
         """Execute *tool_call* and return a fully-formed chat *history* entry.
 
         No tuple or additional metadata is returned - early-exit or metadata
@@ -157,23 +166,17 @@ class Executor:
                     arguments.pop(fld, None)
 
             missing = [fld for fld in spp_fields if fld not in arguments]
-            if missing and self._param_providers:
-                for fld in list(missing):
-                    for prov in self._param_providers:
-                        try:
-                            res = prov.resolve(param_name=fld, 
-                                               tool_name=tool_name)
-                            if asyncio.iscoroutine(obj=res):
-                                res = await res  # type: ignore[assignment]
-                        except Exception:  # noqa: BLE001 – provider errors are ignored
-                            continue
-                        if res is not None:
-                            server_args[fld] = res
-                            break
+            for fld in list(missing):
+                try:
+                    res = await self._param_registry.resolve(name=fld, context=context)
+                except Exception:  # pragma: no cover – safety guard
+                    res = None
+                if res is not None:
+                    server_args[fld] = res
 
             still_missing = [fld for fld in spp_fields if fld not in arguments and fld not in server_args]
             if still_missing:
-                raise RuntimeError(msg=f"Missing server-populated parameters for tool '{tool_name}': {', '.join(still_missing)}")
+                raise RuntimeError(f"Missing server-populated parameters for tool '{tool_name}': {', '.join(still_missing)}")
 
         # Synthetic meta-tools
         if tool_name == THINK_TOOL_NAME:
@@ -188,8 +191,6 @@ class Executor:
             return history_entry
         
         # Regular tool execution (with timeout, circuit-breaker, …)
-        raw_output: Any | None = None
-
         if getattr(self._logger, "isEnabledFor", lambda *_: True)(logging.DEBUG):
             self._logger.debug(msg="Executing tool", tool=tool_name, args=arguments)
 
@@ -202,17 +203,32 @@ class Executor:
                     exec_coro = asyncio.wait_for(fut=exec_coro,
                                                  timeout=self._tool_timeout)
                 tool_result = await exec_coro
-        except asyncio.TimeoutError:
-            raw_output = f"Tool '{tool_name}' timed out after {self._tool_timeout}s"
-        except CircuitOpenError as e:
-            raw_output = f"Circuit open - {e}"
-        except ToolRemoteError as e:
-            raw_output = f"Error executing tool: {e}"
-        else:
+
+            # --------------------------- success path ---------------------------
+            raw_output: Any | None = None
             if tool_result and hasattr(tool_result[0], "text"):
                 raw_output = tool_result[0].text  # type: ignore[assignment]
             else:
                 raw_output = "Tool executed successfully with no textual output."
+
+        except (asyncio.TimeoutError, CircuitOpenError, ToolRemoteError, Exception) as exc:
+            # -------------------------------------------------------------------
+            # Failure path – encapsulate the error in a ToolCallError instance so
+            # callers can react without relying on side-band callbacks.
+            # -------------------------------------------------------------------
+            err_msg = (f"Tool '{tool_name}' failed: {exc}" if not isinstance(exc, asyncio.TimeoutError)
+                       else f"Tool '{tool_name}' timed out after {self._tool_timeout}s")
+
+            # Structured callback so external apps can log/telemetry the error
+            _on_error_cb(error_payload={"tool": tool_name,
+                                        "tool_call_id": tool_call.id,
+                                        "message": err_msg},
+                         cb=self._on_error)
+
+            return ToolCallError(tool_call_id=tool_call.id,
+                                 name=tool_name,
+                                 error=err_msg)
+        # --------------------------------------------------------------------
 
         # Display envelope & structured metadata extraction ----------------
         metadata_block: Optional[dict[str, Any]] = None

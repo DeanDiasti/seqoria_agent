@@ -3,7 +3,7 @@ from __future__ import annotations
 """AIClient orchestrator (refactored)."""
 
 import asyncio, logging
-from typing import Any, AsyncGenerator, Iterable, List, Self, Tuple, Union
+from typing import Any, AsyncGenerator, Iterable, List, Self, Tuple, Union, Mapping
 
 try:  # Prefer structlog but fall back to stdlib
     import structlog  # type: ignore
@@ -17,7 +17,7 @@ from seqoria_agent.client.ai_client.history import build_system_prompt
 from seqoria_agent.client.ai_client.llm_interface import LLMInterface
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
 from seqoria_agent.client.cache import CacheProtocol, NullCache  # noqa: F401
-from seqoria_agent.client.parameters import ParameterProvider
+from seqoria_agent.client.parameters import ParameterSource, ParamContext, ParameterRegistry
 from seqoria_agent.providers.base_provider import BaseProvider
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.settings import ClientSettings  # noqa: F401
@@ -40,7 +40,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
                  retry_policy: dict[str, Any] | None = None,
                  breaker_threshold: int = 5,
                  breaker_reset_after: int = 60,
-                 param_providers: list[ParameterProvider] | None = None,
+                 param_registry: Union[Mapping[str, ParameterSource], "ParameterRegistry", None] = None,
                  allow_override: bool = False,
                  enable_meta_tools: bool | Iterable[str] = True,
                  settings: ClientSettings | None = None,
@@ -63,7 +63,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
         retry_policy = retry_policy if retry_policy is not None else settings.retry_policy
         breaker_threshold = breaker_threshold if breaker_threshold != 5 else settings.breaker_threshold
         breaker_reset_after = (breaker_reset_after if breaker_reset_after != 60 else settings.breaker_reset_after)
-        param_providers = param_providers if param_providers is not None else settings.param_providers
+        param_registry = param_registry if param_registry is not None else getattr(settings, "param_registry", None)
 
         self._auth_provider: BaseAuthProvider = auth_provider or NoAuthProvider()
         if "auth_provider" not in client_kwargs:
@@ -98,7 +98,7 @@ class AIClient:  # noqa: D101 – tiny glue layer
                                  cache_ttl=cache_ttl,
                                  tool_semaphore=asyncio.Semaphore(value=max_concurrency) if max_concurrency else None,
                                  tool_timeout=tool_timeout,
-                                 param_providers=param_providers,
+                                 param_registry=param_registry,
                                  allow_override=allow_override,
                                  logger=self._logger)
         self.llm = LLMInterface(providers=self._providers, logger=self._logger)
@@ -124,17 +124,31 @@ class AIClient:  # noqa: D101 – tiny glue layer
         await self.pool.close(); await self.registry.close(); self._tool_map.clear()
 
     # ------------------------------------------------------------------ util & compat
-    async def call_mcp_tool(self, name: str, arguments: dict[str, Any], *, server_args: dict | None = None):
-        return await self.pool.call_tool(name=name, arguments=arguments, server_args=server_args)
+    async def call_mcp_tool(self, 
+                            name: str, 
+                            arguments: dict[str, Any], 
+                            *,
+                            server_args: dict | None = None) -> ToolCallResult:
+        return await self.pool.call_tool(name=name, 
+                                         arguments=arguments, 
+                                         server_args=server_args)
 
     async def refresh_tools(self) -> None:  # manual refresh
         await self.registry.refresh()
 
-    async def run_tool_calls(self, tool_calls: List[ToolCallRequest]) -> List[ToolCallResult]:
-        return await self.executor.run_calls(tool_calls=tool_calls)
+    async def run_tool_calls(self, 
+                             tool_calls: List[ToolCallRequest], 
+                             *, 
+                             context: "ParamContext | None" = None) -> List[ToolCallResult]:
+        return await self.executor.run_calls(tool_calls=tool_calls, 
+                                             context=context or {})
     
-    def run_call_stream(self, tool_calls: List[ToolCallRequest]) -> AsyncGenerator[Tuple[ToolCallRequest, ToolCallResult], None]:
-        return self.executor.run_call_stream(tool_calls=tool_calls)
+    def run_call_stream(self, 
+                        tool_calls: List[ToolCallRequest], 
+                        *, 
+                        context: "ParamContext | None" = None) -> AsyncGenerator[Tuple[ToolCallRequest, ToolCallResult], None]:
+        return self.executor.run_call_stream(tool_calls=tool_calls, 
+                                             context=context or {})
 
     # ------------------------------------------------------------------ helpers (public)
 
@@ -200,7 +214,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
                    history: List[dict], 
                    *, 
                    max_turns: int = 5,
-                   model: str | None = None) -> AsyncGenerator[Union[AssistantMessage, ToolCallRequestList, ToolMessages], None]:  # noqa: D401
+                   model: str | None = None,
+                   context: "ParamContext | None" = None) -> AsyncGenerator[Union[AssistantMessage, ToolCallRequestList, ToolMessages], None]:  # noqa: D401
         """Chat with the LLM."""
         if history is None:
             raise ValueError("history required")
@@ -245,7 +260,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
 
                 if isinstance(resp, ToolCallRequestList):
                     # Assistant decided to use tool(s) – no textual answer yet
-                    tool_results = await self.executor.run_calls(tool_calls=resp.tool_calls)
+                    tool_results = await self.executor.run_calls(tool_calls=resp.tool_calls, 
+                                                                 context=dict(context or {}))
 
                     # Interleave requests and results so each tool_call is immediately
                     # followed by its corresponding tool_result.
@@ -274,7 +290,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
                           history: List[dict], 
                           *, 
                           max_turns: int = 5, 
-                          model: str | None = None) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolMessages], None]:  # noqa: D401
+                          model: str | None = None,
+                          context: "ParamContext | None" = None) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolMessages], None]:  # noqa: D401
         """Stream a chat session."""
         if history is None:
             raise ValueError("history required")
@@ -334,7 +351,8 @@ class AIClient:  # noqa: D101 – tiny glue layer
                             return
 
                         elif isinstance(c, ToolCallRequestList):
-                            tool_results = await self.executor.run_calls(tool_calls=c.tool_calls)
+                            tool_results = await self.executor.run_calls(tool_calls=c.tool_calls, 
+                                                                         context=dict(context or {}))
 
                             # Interleave requests and results so each tool_call is immediately
                             # followed by its corresponding tool_result.

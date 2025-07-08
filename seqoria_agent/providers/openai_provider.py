@@ -223,7 +223,7 @@ class OpenAIProvider(BaseProvider):
             # Handle *pydantic model* inputs first
             if isinstance(raw_msg, ToolCallRequest):
                 prepared_chat_history.append({"role": "assistant",
-                                              "tool_calls": [{"id": raw_msg.id,
+                                              "tool_calls": [{"id": str(object=raw_msg.id),
                                                               "type": "function",
                                                               "function": {"name": raw_msg.name,
                                                                            "arguments": (_EMPTY_JSON if not raw_msg.arguments else json.dumps(obj=raw_msg.arguments))}}]})
@@ -231,8 +231,8 @@ class OpenAIProvider(BaseProvider):
 
             if isinstance(raw_msg, ToolCallResult):
                 prepared_chat_history.append({"role": "tool",
-                                              "content": raw_msg.result,
-                                              "tool_call_id": raw_msg.tool_call_id})
+                                              "content": str(object=raw_msg.result),
+                                              "tool_call_id": str(object=raw_msg.tool_call_id)})
                 continue
 
             if isinstance(raw_msg, (AssistantMessage, UserMessage, SystemMessage)):
@@ -243,14 +243,14 @@ class OpenAIProvider(BaseProvider):
             role = raw_msg.get("role")
             if role == "tool_call":
                 prepared_chat_history.append({"role": "assistant",
-                                              "tool_calls": [{"id": raw_msg.get("id"),
+                                              "tool_calls": [{"id": str(object=raw_msg.get("id")),
                                                               "type": "function",
                                                               "function": {"name": raw_msg.get("name"),
                                                                            "arguments": (_EMPTY_JSON if not raw_msg.get("arguments") else json.dumps(obj=raw_msg.get("arguments", {})))}}]})
             elif role == "tool_result":
                 prepared_chat_history.append({"role": "tool",
-                                              "content": raw_msg.get("result"),
-                                              "tool_call_id": raw_msg.get("tool_call_id")})
+                                              "content": str(object=raw_msg.get("result")),
+                                              "tool_call_id": str(object=raw_msg.get("tool_call_id"))})
             elif role in {"assistant", "system", "user"}:
                 prepared_chat_history.append({"role": role, 
                                               "content": raw_msg.get("content")})

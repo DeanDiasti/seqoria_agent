@@ -71,6 +71,7 @@ nav:
     - Streaming Responses: topics/streaming.md
     - Caching: topics/caching.md
     - Meta-Tools: topics/meta_tools.md
+    - Multi-Tenancy: topics/multi_tenancy.md
     - Structured Error Handling: topics/error_handling.md
     - DisplayEnvelope: display_envelope.md
   - API Reference:
@@ -80,7 +81,8 @@ nav:
     - Providers: reference/providers.md
   - Coming Soon:
     - Token Accounting: future/token_accounting.md
-    - Multi-Tenancy: future/multi_tenancy.md
     - Frontend Guide: future/frontend_guide.md
   - Migration:
-    - XMCP Server Upgrade: migration/xmcp_server.md 
+    - XMCP Server Upgrade: migration/xmcp_server.md
+    - SPP Roadmap: migration/spp_update.md
+    - Parameter Registry Migration: migration/parameter_registry.md 

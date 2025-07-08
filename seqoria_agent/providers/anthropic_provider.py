@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union, Tuple
 
 import anthropic
 
@@ -231,12 +231,34 @@ class AnthropicProvider(BaseProvider):
                  "description": tool["function"]["description"], 
                  "input_schema": tool["function"]["parameters"]} for tool in tools]
 
-    async def _prepare_chat_history(self, chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def _prepare_chat_history(self,
+                                    chat_history: List[Dict[str, Any]],
+                                    *,
+                                    enable_cache: bool = False) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Prepare the chat history for the Anthropic API.
+
+        Parameters
+        ----------
+        chat_history : List[Dict[str, Any]]
+            Raw chat history provided by the caller (can include dataclass based
+            messages as well as plain ``dict``s).
+        enable_cache : bool, optional
+            When *True*, the method will tag **system** blocks with
+            ``{"cache_control": {"type": "ephemeral"}}`` so that the Anthropic
+            backend will attempt to reuse these blocks across subsequent calls
+            (see Anthropic prompt-caching documentation). Defaults to *False* so
+            existing behaviour is preserved.
+
+        Returns
+        -------
+        Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
+            Two lists representing the formatted ``system`` blocks and the
+            conversation ``messages`` respectively, ready to be forwarded to
+            ``anthropic.messages.create``.
         """
-        Prepare the chat history for the Anthropic API.
-        """ 
+
         prepared_chat_history: List[Dict[str, Any]] = []
-        system_message = ""
+        system_message: List[Dict[str, Any]] = []
 
         for message in chat_history:
             if isinstance(message, ToolCallRequest):
@@ -259,8 +281,12 @@ class AnthropicProvider(BaseProvider):
                 continue
 
             if isinstance(message, SystemMessage):
-                system_message += message.content + "\n\n"
-                continue
+                sys_block = {"type": "text", 
+                             "text": message.content}
+                if enable_cache:
+                    sys_block["cache_control"] = {"type": "ephemeral"}
+
+                system_message.append(sys_block)
 
             role = message.get("role")
             if role == "tool_call":
@@ -280,9 +306,21 @@ class AnthropicProvider(BaseProvider):
                                                            "text": message.get("content")}]})
 
             if message.get("role") == "system":
-                system_message += message["content"] + "\n\n"
+                sys_block = {"type": "text", "text": message["content"]}
+                if enable_cache:
+                    sys_block["cache_control"] = {"type": "ephemeral"}
 
-        return system_message.strip(), prepared_chat_history
+                system_message.append(sys_block)
+
+        if enable_cache and not system_message and prepared_chat_history:
+            first_msg = prepared_chat_history[0]
+            # We can only add cache_control on rich content blocks (list form)
+            content = first_msg.get("content")
+            if isinstance(content, list) and content:
+                # Attach marker to the final block of the list
+                content[-1]["cache_control"] = {"type": "ephemeral"}
+
+        return system_message, prepared_chat_history
 
     async def async_generate(self,
                              chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
