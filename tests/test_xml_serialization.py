@@ -2,7 +2,6 @@
 
 import xml.etree.ElementTree as ET
 
-from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.server.formatters import DeclarativeXMLFormatter
 from seqoria_agent.server.fastxmcp import FastXMCP
 
@@ -33,22 +32,4 @@ def test_formatter_whitelist():
 
     # The <keep> tag should be present; <drop> should be filtered out
     assert _tag_present(xml_payload, "keep")
-    assert not _tag_present(xml_payload, "drop")
-
-
-def test_display_envelope_serialization():
-    mcp = FastXMCP(name="display")
-
-    def disp_tool():  # noqa: D401
-        return DisplayEnvelope(type="notification", payload="hi")
-
-    wrapper = mcp._wrap_tool_with_error_handling(
-        func=disp_tool, tool_name="disp_tool", formatter_cls=None
-    )
-    xml_payload = wrapper()
-
-    root = ET.fromstring(xml_payload)
-    display_node = root.find("display")
-    assert display_node is not None
-    # Ensure llm_output absent because DisplayEnvelope path should not emit it
-    assert root.find("llm_output") is None 
+    assert not _tag_present(xml_payload, "drop") 

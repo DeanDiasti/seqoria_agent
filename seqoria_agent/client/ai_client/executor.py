@@ -115,19 +115,74 @@ class Executor:
             self._logger.error(msg="Dependency resolution failed", error=str(object=de))
             return
 
+        # ------------------------------------------------------------------
+        # New failure-propagation logic
+        # ------------------------------------------------------------------
+
+        failed_names: Set[str] = set()
+
         for layer in layers:
-            # Fire off tasks for the whole layer in parallel. Each task returns its
-            # request/result pair so we avoid fragile lookup gymnastics with
-            # internal ``as_completed`` coroutine wrappers.
+            # --------------------------------------------------------------
+            # Partition the layer into *blocked* (dependency failed) and
+            # *ready* tool calls.
+            # --------------------------------------------------------------
+            blocked_calls: List[ToolCallRequest] = []
+            ready_calls: List[ToolCallRequest] = []
 
-            async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest, ToolCallResult]:  # noqa: D401
-                return tc, await self._run_tool(tool_call=tc, context=context or {})
+            for tc in layer:
+                deps = self._registry.depends_on(name=tc.name)
+                if deps & failed_names:
+                    blocked_calls.append(tc)
+                else:
+                    ready_calls.append(tc)
 
-            tasks = [asyncio.create_task(coro=_exec_pair(tc=tc)) for tc in layer]
+            # Track per-name success flags for this layer so we can decide
+            # which tool names "globally" failed (all calls resulted in
+            # errors or were skipped).
+            per_name_success: Dict[str, List[bool]] = defaultdict(list)
 
-            for fut in asyncio.as_completed(fs=tasks):
-                pair = await fut  # (request, result)
-                yield pair
+            # --------------------------------------------------------------
+            # Emit skipped errors for blocked calls *before* executing ready
+            # calls (so consumers see the skip ASAP).
+            # --------------------------------------------------------------
+            for tc in blocked_calls:
+                bad_deps = sorted(self._registry.depends_on(name=tc.name) & failed_names)
+                err_msg = ("Skipped because dependency failure: " + ", ".join(bad_deps)) if bad_deps else "Skipped due to dependency failure"
+
+                if getattr(self._logger, "isEnabledFor", lambda *_: True)(logging.INFO):
+                    self._logger.info(msg="Skipping tool due to failed dependency", tool=tc.name, deps=bad_deps)
+
+                error_entry = ToolCallError(tool_call_id=tc.id,
+                                            name=tc.name,
+                                            error=err_msg)
+
+                per_name_success[tc.name].append(False)
+                yield (tc, error_entry)
+
+            # --------------------------------------------------------------
+            # Execute *ready* tool calls concurrently and stream back their
+            # results as they finish.
+            # --------------------------------------------------------------
+            if ready_calls:
+
+                async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest, ToolCallResult]:  # noqa: D401
+                    res = await self._run_tool(tool_call=tc, context=context or {})
+                    return tc, res
+
+                tasks = [asyncio.create_task(coro=_exec_pair(tc=tc)) for tc in ready_calls]
+
+                for fut in asyncio.as_completed(fs=tasks):
+                    tc, res = await fut
+                    per_name_success[tc.name].append(not isinstance(res, ToolCallError))
+                    yield (tc, res)
+
+            # --------------------------------------------------------------
+            # Post-layer aggregation – mark a tool *name* as failed when
+            # **all** of its calls in this layer failed (or were skipped).
+            # --------------------------------------------------------------
+            for name, flags in per_name_success.items():
+                if not any(flags):
+                    failed_names.add(name)
 
     # ----------------------------------------------------------------------
     # Backwards-compatibility wrapper – accumulate results into a list

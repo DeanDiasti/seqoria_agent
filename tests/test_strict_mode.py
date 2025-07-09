@@ -2,7 +2,6 @@
 
 import xml.etree.ElementTree as ET
 
-from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.server.fastxmcp import FastXMCP
 
 
@@ -12,25 +11,11 @@ def _error_code(xml_str: str) -> str:
     return err.attrib["code"] if err is not None else ""
 
 
-def test_display_envelope_passes_strict_mode():
-    mcp = FastXMCP(name="strict", strict_mode=True)
-
-    def ok_tool():  # noqa: D401
-        return DisplayEnvelope(type="markdown", payload="hi")
-
-    # Manually wrap with the XMCP error/validation handler
-    wrapped = mcp._wrap_tool_with_error_handling(func=ok_tool, tool_name="ok_tool", formatter_cls=None)
-    xml_payload = wrapped()
-
-    root = ET.fromstring(xml_payload)
-    assert root.find("display") is not None
-
-
 def test_invalid_payload_yields_error():
     mcp = FastXMCP(name="strict", strict_mode=True)
 
     def bad_tool():  # noqa: D401
-        return {"foo": "bar"}  # Not a valid DisplayEnvelope
+        return 123  # Invalid payload type (neither dict/list nor XML)
 
     wrapped = mcp._wrap_tool_with_error_handling(bad_tool, "bad_tool")
     xml = wrapped()

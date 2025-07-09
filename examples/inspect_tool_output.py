@@ -2,12 +2,11 @@ import asyncio
 import json
 import uuid
 
-from seqoria_agent.client.client import AIClient
-from seqoria_agent.models.envelope import DisplayEnvelope
+from seqoria_agent import AIClient
 from seqoria_agent.providers.base_provider import BaseProvider
 from seqoria_agent.providers.schemas import LLMResponse, ToolCall
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.server.formatters import DeclarativeXMLFormatter, make_formatter
+from seqoria_agent.server.formatters import make_formatter
 
 
 # -----------------------------------------------------------------------------
@@ -54,15 +53,6 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-@box.display_tool
-def greet(name: str, show_user: bool = False):
-    """Return a greeting as a DisplayEnvelope when *show_user* is True."""
-    envelope = DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
-    if show_user:
-        return envelope
-    return {"message": f"Hello {name}"}
-
-
 # -----------------------------------------------------------------------------
 # 2b) Multiply tool – demonstrates explicit formatter passed in ---------------
 # -----------------------------------------------------------------------------
@@ -71,6 +61,16 @@ def greet(name: str, show_user: bool = False):
 def multiply(a: int, b: int):  # noqa: D401
     """Return a dict so the formatter emits <product> tag automatically."""
     return {"product": int(a) * int(b)}
+
+
+# -----------------------------------------------------------------------------
+# 2c) Greet tool – demonstrates a tool that returns a simple dict -------------
+# -----------------------------------------------------------------------------
+
+@box.tool()
+def greet(name: str):
+    """Return a greeting message."""
+    return {"message": f"Hello {name}"}
 
 
 # -----------------------------------------------------------------------------
@@ -100,17 +100,6 @@ async def demo() -> None:
         print("History entry captured by AIClient:")
         print(rt_add[1])
 
-        print("\n--- _run_tool (greet display) -----------------------")
-        tc_greet = ToolCall(
-            id=str(uuid.uuid4()),
-            function={
-                "name": "greet",
-                "arguments": json.dumps({"name": "Alice", "show_user": True}),
-            },
-        )
-        rt_greet = await client.executor.run_calls(tc_greet)
-        print(rt_greet)
-
         print("\n--- _run_tool (multiply) -----------------------------")
         tc_mul = ToolCall(
             id=str(uuid.uuid4()),
@@ -118,6 +107,17 @@ async def demo() -> None:
         )
         rt_mul = await client._run_tool(tc_mul)
         print(rt_mul)
+
+        print("\n--- _run_tool (greet) ---------------------------------")
+        tc_greet = ToolCall(
+            id=str(uuid.uuid4()),
+            function={
+                "name": "greet",
+                "arguments": json.dumps({"name": "Alice"}),
+            },
+        )
+        rt_greet = await client._run_tool(tc_greet)
+        print(rt_greet)
 
 
 # -----------------------------------------------------------------------------

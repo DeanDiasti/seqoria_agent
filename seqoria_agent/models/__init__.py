@@ -14,11 +14,9 @@ from seqoria_agent.models.chunk import (LLMUsage,
                                         ToolCallResult, 
                                         ToolMessages, 
                                         ChatMessages)
-from seqoria_agent.models.envelope import DisplayEnvelope  # noqa: F401
 from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError, XMCPError  # noqa: F401
 
-__all__: list[str] = ["DisplayEnvelope",  
-                      "ToolRemoteError",
+__all__: list[str] = ["ToolRemoteError",
                       "CircuitOpenError",
                       "XMCPError",
                       "ToolCallRequest",

@@ -44,7 +44,6 @@ class FastXMCPRouter(APIRouter):  # noqa: D101
             json_wrapper=json_wrapper,
         )
         self.tool = self._core.tool  # type: ignore[attr-defined]
-        self.display_tool = self._core.display_tool  # type: ignore[attr-defined]
 
         # Expose internals so parent app can merge -----------------------
         self._tools: Dict[str, _ToolInfo] = self._core.tools  # type: ignore[assignment]

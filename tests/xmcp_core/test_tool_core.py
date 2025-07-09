@@ -40,7 +40,7 @@ async def test_sync_and_async_execution(core):
     def hello(name: str):
         return {"greeting": f"hi {name}"}
 
-    @core.display_tool
+    @core.tool
     async def wave():
         return {"wave": True}
 

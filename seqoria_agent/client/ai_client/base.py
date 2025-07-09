@@ -68,7 +68,14 @@ class AIClient:  # noqa: D101 – tiny glue layer
         self._auth_provider: BaseAuthProvider = auth_provider or NoAuthProvider()
         if "auth_provider" not in client_kwargs:
             client_kwargs["auth_provider"] = self._auth_provider
-        final_client_kwargs = {**settings.client_kwargs, **client_kwargs}
+        # Allow callers to pass ``client_kwargs={...}`` (legacy style). Flatten
+        # the nested mapping so the transport receives only the expected
+        # keyword arguments.
+
+        nested = client_kwargs.pop("client_kwargs", None)
+        merged_kwargs = {**settings.client_kwargs, **(nested or {}), **client_kwargs}
+
+        final_client_kwargs = merged_kwargs
 
         if not providers:
             raise ValueError("'providers' may not be empty")

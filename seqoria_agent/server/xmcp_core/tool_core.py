@@ -7,9 +7,8 @@ LocalToolbox.
 The goal of *ToolCore* is to centralise **tool registration** and **execution**
 so the public facades can delegate without copying hundreds of lines.
 
-Phase-1 only – parameter injection & auth are handled by the caller just like
-before.  ToolCore focuses on:
-• @tool / @display_tool decorator factories with JSON-schema generation
+ToolCore focuses on:
+• @tool decorator factories with JSON-schema generation
 • duplicate-name detection
 • runtime wrappers that serialise return values into the <tool_response> XML
 • strict-mode payload validation
@@ -23,9 +22,7 @@ import json as _json
 import logging
 import time as _time
 
-from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.models.errors import XMCPError
-from seqoria_agent.server.formatters import BaseXMLFormatter  # only for type hints
 from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY
 from seqoria_agent.server.xmcp_core.formatter import get_formatter
 
@@ -100,9 +97,8 @@ except ModuleNotFoundError:  # pragma: no cover – pydantic not installed
 class ToolCore:
     """Registry & execution engine for XMCP tools (framework agnostic)."""
 
-    # public decorator attributes – initialised in __init__
+    # public decorator attribute – initialised in __init__
     tool: Callable  # filled in at runtime
-    display_tool: Callable  # dito
 
     def __init__(
         self,
@@ -122,9 +118,8 @@ class ToolCore:
         self._tool_formatters: dict[str, Any] = {}
         self._param_providers: list[Callable] = []  # Phase-2
 
-        # create decorator factories ------------------------------------
-        self.tool = self._make_reg(display=False)
-        self.display_tool = self._make_reg(display=True)
+        # create decorator factory -------------------------------------
+        self.tool = self._make_reg()
 
         # ------------------------------------------------------------------
         # Parameter injection service (Phase-2) ----------------------------
@@ -143,8 +138,8 @@ class ToolCore:
     # Decorator factory
     # ------------------------------------------------------------------
 
-    def _make_reg(self, *, display: bool):  # noqa: D401
-        """Return @tool / @display_tool decorator."""
+    def _make_reg(self):  # noqa: D401
+        """Return @tool decorator."""
 
         def _decorator(
             func: Callable | None = None,
@@ -225,7 +220,6 @@ class ToolCore:
                 self._tools[name] = ToolInfo(
                     func=wrapped,
                     description=description,
-                    display=display,
                     server_params=list(server_populated or []),
                     depends_on=list(depends_on or []),
                     input_schema=input_schema,
@@ -302,13 +296,7 @@ class ToolCore:
 
     # ------------------------------------------------------------------
     def _validate_payload(self, value: Any):  # noqa: D401, ANN001
-        if isinstance(value, DisplayEnvelope):
-            return value
         if isinstance(value, (dict, list)):
-            try:
-                DisplayEnvelope.model_validate(value)  # type: ignore[arg-type]
-            except Exception as exc:
-                raise XMCPError(code="INVALID_PAYLOAD", retryable=False, detail=str(exc))
             return value
         if isinstance(value, str) and value.lstrip().startswith("<tool_response"):
             import xml.etree.ElementTree as _ET
@@ -317,7 +305,7 @@ class ToolCore:
                 return value
             except Exception as exc:
                 raise XMCPError(code="INVALID_XML", retryable=False, detail=str(exc))
-        raise XMCPError(code="INVALID_PAYLOAD", retryable=False, detail="Return value must be DisplayEnvelope or <tool_response> XML")
+        raise XMCPError(code="INVALID_PAYLOAD", retryable=False, detail="Return value must be dict/list or <tool_response> XML")
 
     # ------------------------------------------------------------------
     def _wrap_json(self, tool_name: str, xml_str: str, meta_extra: dict[str, Any] | None = None):  # noqa: ANN001
@@ -350,16 +338,10 @@ class ToolCore:
         if isinstance(value, str) and value.lstrip().startswith("<tool_response"):
             return value
 
-        display_block = ""
-        llm_output_block = ""
-        if isinstance(value, DisplayEnvelope):
-            display_block = f"\n  <display><![CDATA[{_json.dumps(value.dict_for_transport(), separators=(',', ':'))}]]></display>"
-        else:
-            if formatter is None:
-                formatter = get_formatter(value, strict_mode=self._strict_mode)
-            formatted = formatter(value, indent_level=2)
-            llm_output_block = f"\n  <llm_output><![CDATA[\n{formatted}\n  ]]></llm_output>"
-        xml_out = f"<tool_response tool_name=\"{tool_name}\">{llm_output_block}{display_block}\n</tool_response>"
+        if formatter is None:
+            formatter = get_formatter(value, strict_mode=self._strict_mode)
+        formatted = formatter(value, indent_level=2)
+        xml_out = f"<tool_response tool_name=\"{tool_name}\">\n  <llm_output><![CDATA[\n{formatted}\n  ]]></llm_output>\n</tool_response>"
         if self._json_wrapper:
             return self._wrap_json(tool_name, xml_out)
         return xml_out

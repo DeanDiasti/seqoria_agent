@@ -40,22 +40,4 @@ async def test_local_tool_execution():
     async with build_ai_client(tb) as client:
         result = await client.call_mcp_tool("add", {"a": 2, "b": 3})
         xml = result[0].text
-        assert "5" in xml
-
-
-@pytest.mark.asyncio
-async def test_inline_display_tool():
-    from seqoria_agent.models.envelope import DisplayEnvelope
-
-    tb = LocalToolbox()
-
-    @tb.display_tool()
-    def greet(name: str, show_user: bool = False):
-        if show_user:
-            return DisplayEnvelope(type="markdown", payload=f"Hello {name}")
-        return f"Hi {name}"
-
-    async with build_ai_client(tb) as client:
-        # Invoke with show_user flag to trigger display path
-        res = await client.call_mcp_tool("greet", {"name": "Bob", "show_user": True})
-        assert "<display>" in res[0].text 
+        assert "5" in xml 

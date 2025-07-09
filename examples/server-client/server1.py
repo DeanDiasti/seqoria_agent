@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import random
 
-from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.models.errors import XMCPError
 from seqoria_agent.server.fastxmcp import FastXMCP
 

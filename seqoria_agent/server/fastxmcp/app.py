@@ -81,7 +81,6 @@ class FastXMCP(FastAPI):  # noqa: D101 – public server class
             json_wrapper=json_wrapper,
         )
         self.tool = self._core.tool  # type: ignore[attr-defined]
-        self.display_tool = self._core.display_tool  # type: ignore[attr-defined]
 
         # Provide legacy-visible registries
         self._tools = self._core.tools  # type: ignore[attr-defined]
@@ -128,7 +127,7 @@ class FastXMCP(FastAPI):  # noqa: D101 – public server class
                 case "tools/list":
                     items: List[Dict[str, Any]] = []
                     for name, info in self._tools.items():
-                        ann = {"is_display_tool": info.display}
+                        ann = {}
                         if info.server_params:
                             ann["server_populated"] = info.server_params
                         if info.depends_on:

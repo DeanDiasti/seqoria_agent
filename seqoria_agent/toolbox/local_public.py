@@ -35,7 +35,6 @@ class LocalToolbox:  # noqa: D101 – public façade
             json_wrapper=json_wrapper,
         )
         self.tool = self._core.tool  # type: ignore[attr-defined]
-        self.display_tool = self._core.display_tool  # type: ignore[attr-defined]
 
         # Expose internals (legacy)
         self._tools: Dict[str, _ToolInfo] = self._core.tools  # type: ignore[assignment]
@@ -84,7 +83,7 @@ class LocalToolbox:  # noqa: D101 – public façade
     def list_tools(self):  # noqa: D401 – mimic MCP list_tools
         items: List[Any] = []
         for name, info in self._tools.items():
-            ann = {"is_display_tool": info.display}
+            ann = {}
             if info.server_params:
                 ann["server_populated"] = info.server_params
             if info.depends_on:

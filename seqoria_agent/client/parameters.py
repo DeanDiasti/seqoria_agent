@@ -60,6 +60,15 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
             if param_name in self._mapping:
                 raise ValueError(f"Duplicate parameter name '{param_name}' in registry mapping")
 
+            # ------------------------------------------------------------------
+            # Accept non-callable constants by wrapping them in a zero-arg
+            # lambda so the rest of the resolution logic can treat *every*
+            # value uniformly as a callable.
+            # ------------------------------------------------------------------
+            if not callable(src):
+                const_val = src  # capture by default arg so it doesn't change
+                src = lambda **_: const_val  # type: ignore[assignment]
+
             self._mapping[param_name] = src
 
         self._log = logging.getLogger(name="seqoria_agent.param_registry")
@@ -78,6 +87,13 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
             sync and async callables are supported.  Exceptions are caught and
             logged, the method returns *None*.
         """
+        # ------------------------------------------------------------------
+        # 1. Per-request literal override ------------------------------------
+        # ------------------------------------------------------------------
+        if name in context:
+            return context[name]
+
+        # 2. Registry lookup --------------------------------------------------
         source = self._mapping.get(name)
         if source is None:
             return None

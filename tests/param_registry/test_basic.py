@@ -84,3 +84,10 @@ async def test_callable_exception_swallowed(caplog):
     with caplog.at_level("WARNING"):
         assert await reg.resolve("bad", context=ctx) is None
         assert any("failed to resolve" in rec.message for rec in caplog.records) 
+
+
+@pytest.mark.asyncio
+async def test_context_override_takes_precedence():
+    reg = ParameterRegistry({"foo": lambda: "registry"})
+    ctx: ParamContext = {"foo": "context"}
+    assert await reg.resolve("foo", context=ctx) == "context" 

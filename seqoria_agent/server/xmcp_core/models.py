@@ -12,7 +12,6 @@ class ToolInfo(BaseModel):
 
     func: Callable[..., Any]
     description: str | None = None
-    display: bool = False  # is it a display tool?
     # Names of parameters that are populated by the server (not the LLM)
     server_params: list[str] = []
     # Explicit DAG dependency declaration

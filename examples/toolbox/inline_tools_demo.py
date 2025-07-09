@@ -3,7 +3,6 @@ import asyncio
 from seqoria_agent import AIClient
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.chunk import AssistantMessage, ToolMessages
-from seqoria_agent.models.envelope import DisplayEnvelope
 from seqoria_agent.providers.openai_provider import OpenAIProvider
 
 
@@ -16,11 +15,9 @@ def add(a: int, b: int) -> int:
     return int(a) + int(b)
 
 
-@toolbox.display_tool()
-def shout(msg: str, show_user: bool = False):
-    """Display tool demonstrating inline DisplayEnvelope."""
-    if show_user:
-        return DisplayEnvelope(type="markdown", payload=f"## {msg.upper()} 🙌")
+@toolbox.tool()
+def shout(msg: str):
+    """Simple shouting tool returns uppercase version of the message."""
     return msg.upper()
 
 
