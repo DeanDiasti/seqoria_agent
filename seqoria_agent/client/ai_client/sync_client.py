@@ -104,8 +104,6 @@ class AIClient:
         Server-populated parameter sources.
     allow_override : bool
         Allow LLM to override server-populated params.
-    enable_meta_tools : bool | Iterable[str]
-        Enable built-in meta-tools.
     settings : ClientSettings | None
         Default settings (overridden by explicit args).
     auth_provider : BaseAuthProvider | None
@@ -153,8 +151,6 @@ class AIClient:
             Mapping[str, ParameterSource], ParameterRegistry, None
         ] = None,
         allow_override: bool = False,
-        # Meta-tools
-        enable_meta_tools: bool | Iterable[str] = True,
         # Settings
         settings: ClientSettings | None = None,
         # Auth
@@ -194,7 +190,6 @@ class AIClient:
             breaker_reset_after=breaker_reset_after,
             param_registry=param_registry,
             allow_override=allow_override,
-            enable_meta_tools=enable_meta_tools,
             settings=settings,
             auth_provider=auth_provider,
             system_prompt=system_prompt,
@@ -310,6 +305,10 @@ class AIClient:
     def tools_enabled(self) -> bool:
         """Return True if any tools are available."""
         return self._async_client.tools_enabled()
+
+    def list_tools(self) -> List[dict]:
+        """List currently available tools (OpenAI-compatible tool schema)."""
+        return self._async_client.list_tools()
 
     # -------------------------------------------------------------------------
     # LLM interaction methods (sync)

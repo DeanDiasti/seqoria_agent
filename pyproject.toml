@@ -15,7 +15,7 @@ classifiers = [
 ]
 # Core dependencies - minimal footprint
 dependencies = [
-    "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
     "mcp[cli]>=1.25.0",
     "pydantic>=2.12.5",
     "structlog>=25.5.0",

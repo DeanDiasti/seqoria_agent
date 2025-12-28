@@ -23,7 +23,7 @@ advanced fall-back logic can evolve without touching the surrounding
 from typing import Any, AsyncGenerator, List, Optional, Union
 
 import logging
-import asyncio
+from contextlib import suppress
 
 # Prefer structlog when available for key-value logging like elsewhere in the codebase
 try:
@@ -86,11 +86,9 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         RuntimeError
             If *all* providers fail with :class:`LLMError`.
         """
-        kwargs_gen: dict[str, Any] = {"chat_history": history}
-
-        kwargs_gen["tools"] = tools if tools is not None else None   
-        kwargs_gen["tool_choice"] = (tool_choice or "auto") if tools else None
-        kwargs_gen["model"] = model
+        kwargs_gen_base: dict[str, Any] = {"chat_history": history}
+        kwargs_gen_base["tool_choice"] = (tool_choice or "auto") if tools else None
+        kwargs_gen_base["model"] = model
             
         last_err: Optional[Exception] = None
 
@@ -106,6 +104,8 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         for idx in provider_indices:
             provider = self._providers[idx]
             try:
+                kwargs_gen = dict(kwargs_gen_base)
+                kwargs_gen["tools"] = tools if tools is not None else None
                 raw_resp = await provider.async_generate(**kwargs_gen)
                 successful_idx = idx
                 break  # success
@@ -163,11 +163,9 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         completion.
         """
 
-        kwargs_stream: dict[str, Any] = {"chat_history": history}
-
-        kwargs_stream["tools"] = tools if tools is not None else None   
-        kwargs_stream["tool_choice"] = (tool_choice or "auto") if tools else None
-        kwargs_stream["model"] = model
+        kwargs_stream_base: dict[str, Any] = {"chat_history": history}
+        kwargs_stream_base["tool_choice"] = (tool_choice or "auto") if tools else None
+        kwargs_stream_base["model"] = model
 
         stream_gen: Optional[AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None]] = None
         last_err: Optional[Exception] = None
@@ -183,6 +181,8 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         for idx in provider_indices:
             provider = self._providers[idx]
             try:
+                kwargs_stream = dict(kwargs_stream_base)
+                kwargs_stream["tools"] = tools if tools is not None else None
                 stream_gen = provider.async_stream(**kwargs_stream)
                 successful_idx = idx
                 break
@@ -200,35 +200,74 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         if successful_idx is not None:
             self._primary_provider_idx = successful_idx
 
-        async for chunk in stream_gen:
-            try:
-                # Forward recognised response types as-is. Allow raw strings (deltas) to flow through, too.
-                if isinstance(chunk, LLMResponse):
-                    if chunk.type == "llm_delta":
-                        yield ChatChunk(role="assistant", 
-                                        content=chunk.text, 
-                                        model=chunk.model_id, 
-                                        usage=None)
-                    elif chunk.type == "llm_response":
-                        yield AssistantMessage(role="assistant", 
-                                               content=chunk.text,  # type: ignore
-                                               model=chunk.model_id, 
-                                               usage=LLMUsage(prompt_tokens=chunk.usage.prompt_tokens,
-                                                              completion_tokens=chunk.usage.completion_tokens,
-                                                              total_tokens=chunk.usage.total_tokens))
-                elif isinstance(chunk, ToolCallList):
-                    yield ToolCallRequestList(tool_calls=[ToolCallRequest(role="tool_call",
-                                                                         id=tool_call.id,
-                                                                         type="function_call",
-                                                                         name=tool_call.function_name,
-                                                                         arguments=tool_call.arguments) for tool_call in chunk.tool_calls],
-                                              usage=LLMUsage(prompt_tokens=chunk.usage.prompt_tokens,
-                                                             completion_tokens=chunk.usage.completion_tokens,
-                                                             total_tokens=chunk.usage.total_tokens))
-                else:
-                    self._logger.warning("Unknown chunk type from provider stream: %s", type(chunk))
-                    continue
+        try:
+            async for chunk in stream_gen:
+                try:
+                    # Forward recognised response types as-is.
+                    if isinstance(chunk, LLMResponse):
+                        if chunk.type == "llm_delta":
+                            # Some providers (e.g. Ollama with think=True) may emit "thinking" deltas
+                            # with text=None. Do not emit invalid ChatChunk(content=None).
+                            if chunk.text is None:
+                                thinking_delta = chunk.thinking
+                                if not thinking_delta:
+                                    continue
+                                # Forward thinking deltas via the explicit field.
+                                yield ChatChunk(
+                                    role="assistant",
+                                    content="",
+                                    thinking=thinking_delta,
+                                    model=chunk.model_id,
+                                    usage=None,
+                                )
+                                continue
+                            yield ChatChunk(
+                                role="assistant",
+                                content=chunk.text,
+                                thinking=None,
+                                model=chunk.model_id,
+                                usage=None,
+                            )
+                        elif chunk.type == "llm_response":
+                            usage = chunk.usage or LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                            yield AssistantMessage(
+                                role="assistant",
+                                content=chunk.text or "",
+                                thinking=chunk.thinking,
+                                model=chunk.model_id,
+                                usage=LLMUsage(
+                                    prompt_tokens=usage.prompt_tokens,
+                                    completion_tokens=usage.completion_tokens,
+                                    total_tokens=usage.total_tokens,
+                                ),
+                            )
+                    elif isinstance(chunk, ToolCallList):
+                        usage = chunk.usage or LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                        yield ToolCallRequestList(
+                            tool_calls=[
+                                ToolCallRequest(
+                                    role="tool_call",
+                                    id=tool_call.id,
+                                    type="function_call",
+                                    name=tool_call.function_name,
+                                    arguments=tool_call.arguments,
+                                )
+                                for tool_call in chunk.tool_calls
+                            ],
+                            usage=LLMUsage(
+                                prompt_tokens=usage.prompt_tokens,
+                                completion_tokens=usage.completion_tokens,
+                                total_tokens=usage.total_tokens,
+                            ),
+                        )
+                    else:
+                        self._logger.warning("Unknown chunk type from provider stream: %s", type(chunk))
+                        continue
 
-            except Exception as e:
-                self._logger.warning("Provider %s failed to stream: %s", provider.__class__.__name__, e)
-                raise
+                except Exception as e:
+                    self._logger.warning("Provider %s failed to stream: %s", provider.__class__.__name__, e)
+                    raise
+        finally:
+            # Best-effort cleanup of provider stream generator.
+            with suppress(Exception):
+                await stream_gen.aclose()

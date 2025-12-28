@@ -124,6 +124,23 @@ class _OllamaProviderMixin:
         params = self.default_params.copy()
         params.update(kwargs)
         params = {k: v for k, v in params.items() if v is not None}
+
+        # ------------------------------------------------------------------
+        # keep_alive support
+        #
+        # Ollama's `keep_alive` controls how long the model stays resident in memory
+        # *after* a request completes (e.g. "5m" or "0" to unload immediately).
+        #
+        # Some users want the option to:
+        # - refresh the keep-alive timer after *each* request (default behavior), or
+        # - only apply keep_alive once and let the server's default behavior apply thereafter.
+        # ------------------------------------------------------------------
+        if "keep_alive" not in params:
+            keep_alive_value = getattr(self, "keep_alive", None)
+            if keep_alive_value is not None:
+                # Send keep_alive on every request so the timer refreshes automatically.
+                params["keep_alive"] = keep_alive_value
+
         return params
     
     def _build_options(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -352,7 +369,9 @@ class _OllamaProviderMixin:
         Ollama uses a format similar to OpenAI's function calling.
         
         Args:
-            tools: List of tool definitions with 'name', 'description', 'input_schema'.
+            tools: Tool definitions. Supports:
+                - OpenAI-style: {"type":"function","function":{"name":..., "description":..., "parameters":...}}
+                - Legacy internal style: {"name":..., "description":..., "input_schema"/"parameters":...}
         
         Returns:
             List of tools in Ollama's format, or None if no tools.
@@ -360,14 +379,31 @@ class _OllamaProviderMixin:
         if not tools:
             return None
         
-        ollama_tools = []
+        ollama_tools: List[Dict[str, Any]] = []
         for tool in tools:
+            # Prefer OpenAI-style tool definitions produced by ToolRegistry.
+            function_block = tool.get("function")
+            if isinstance(function_block, dict):
+                name = function_block.get("name") or tool.get("name")
+                description = function_block.get("description") or tool.get("description", "") or ""
+                parameters = (
+                    function_block.get("parameters")
+                    or tool.get("input_schema")
+                    or tool.get("parameters", {})
+                    or {}
+                )
+            else:
+                # Legacy/internal style
+                name = tool.get("name")
+                description = tool.get("description", "") or ""
+                parameters = tool.get("input_schema", tool.get("parameters", {})) or {}
+
             ollama_tool = {
                 "type": "function",
                 "function": {
-                    "name": tool.get("name"),
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get("input_schema", tool.get("parameters", {}))
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
                 }
             }
             ollama_tools.append(ollama_tool)
@@ -524,12 +560,12 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
         print(response.text)
         ```
     """
-    
     def __init__(
         self,
         model_id: str,
         host: Optional[str] = "http://localhost:11434",
         api_key: Optional[str] = None,
+        keep_alive: Optional[str] = None,
         **kwargs
     ) -> None:
         """
@@ -553,6 +589,8 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
                     - format (str|dict): Output format ("json" or JSON schema).
                     - keep_alive (str|int): Model keep-alive duration.
                     - think (bool|str): Enable thinking output.
+                Provider lifecycle:
+                    - keep_alive (str): Keep the model loaded for this duration after a request (e.g. "5m" or "0").
                 Client options:
                     - max_retries (int): Maximum retries for retryable errors (default: 3).
                     - auto_pull (bool): Auto-pull model if not found (default: True).
@@ -568,6 +606,9 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
                 message="ollama package is not installed. Install with: pip install ollama",
                 missing_vars=[]
             )
+
+        # Provider-level lifecycle knobs (not passed via kwargs)
+        self.keep_alive = keep_alive
         
         (
             self.host,
@@ -828,6 +869,7 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
         host: Optional[str] = None,
         api_key: Optional[str] = None,
         validate_on_init: bool = False,
+        keep_alive: Optional[str] = None,
         **kwargs
     ) -> None:
         """
@@ -852,6 +894,8 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
                     - format (str|dict): Output format ("json" or JSON schema).
                     - keep_alive (str|int): Model keep-alive duration.
                     - think (bool|str): Enable thinking output.
+                Provider lifecycle:
+                    - keep_alive (str): Keep the model loaded for this duration after a request (e.g. "5m" or "0").
                 Client options:
                     - max_retries (int): Maximum retries for retryable errors (default: 3).
                     - auto_pull (bool): Auto-pull model if not found (default: True).
@@ -868,6 +912,9 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
                 message="ollama package is not installed. Install with: pip install ollama",
                 missing_vars=[]
             )
+
+        # Provider-level lifecycle knobs (not passed via kwargs)
+        self.keep_alive = keep_alive
         
         (
             self.host,

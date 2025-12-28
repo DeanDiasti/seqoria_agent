@@ -25,7 +25,7 @@ def build_system_prompt(extra_instructions: str | None = None) -> str:  # noqa: 
     """Return the default system prompt used by *AIClient*.
 
     The prompt outlines the agent's capabilities and briefly introduces the
-    available meta-tools.  Callers may supply **extra instructions** that are
+    available tools. Callers may supply **extra instructions** that are
     appended *verbatim* as an additional paragraph separated by a newline.
     """
 
@@ -35,9 +35,6 @@ def build_system_prompt(extra_instructions: str | None = None) -> str:  # noqa: 
         "to call a tool or to respond directly. If you call a tool, you will receive the result "
         "and must then formulate a final, user-facing response based on that result. "
         "Always provide the final answer in a clear and friendly manner."
-        "\nIf you need to reason through intermediate steps before the next tool, call the `__think__` tool with your thought."
-        "\nIf the conversation has grown long, you may call the `__summarize__` tool to compress the history before continuing."
-        "\nIf you need additional information from the user, call the `__clarify__` tool with a concise question."
     )
 
     if extra_instructions:

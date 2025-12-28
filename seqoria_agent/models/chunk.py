@@ -20,7 +20,8 @@ class ChatChunk(BaseModel):  # noqa: D101 – simple container
     """
     model_config = ConfigDict(slots=True)
     role: Literal["assistant"] = Field(default="assistant", description="The role of the message.")
-    content: str = Field(default=None, description="The content of the message.")
+    content: str = Field(default="", description="The content of the message.")
+    thinking: Optional[str] = Field(default=None, description="Provider thinking/reasoning delta (if supported).")
     model: Optional[str] = Field(default=None, description="The model used to generate the message.")
     usage: Optional[LLMUsage] = Field(default=None, description="The usage of the message.")
 
@@ -36,7 +37,8 @@ class AssistantMessage(BaseModel):  # noqa: D101 – simple container
     """
     model_config = ConfigDict(slots=True)
     role: Literal["user", "assistant", "system"] = Field(default=None, description="The role of the message.")
-    content: str = Field(default=None, description="The content of the message.")
+    content: str = Field(default="", description="The content of the message.")
+    thinking: Optional[str] = Field(default=None, description="Provider thinking/reasoning (if supported).")
     model: Optional[str] = Field(default=None, description="The model used to generate the message.")
     usage: Optional[LLMUsage] = Field(default=None, description="The usage of the message.")
 

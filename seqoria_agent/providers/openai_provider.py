@@ -243,6 +243,33 @@ class _OpenAIProviderMixin:
                     converted.append(block)
         
         return converted
+
+    @staticmethod
+    def _make_strict_json_schema(schema: Any) -> Any:  # noqa: ANN401
+        """Return a strict-compliant JSON schema copy for OpenAI tool parameters.
+
+        OpenAI requires, for strict function tools, that object schemas explicitly
+        specify `additionalProperties: false` (at minimum at the top-level).
+
+        We conservatively enforce this only for object schemas that declare
+        `properties` (i.e., typical function-parameter objects). For mapping-style
+        schemas (object without properties, or explicit additionalProperties schema),
+        callers should disable strict.
+        """
+        if isinstance(schema, list):
+            return [ _OpenAIProviderMixin._make_strict_json_schema(x) for x in schema ]
+        if not isinstance(schema, dict):
+            return schema
+
+        out: Dict[str, Any] = {k: _OpenAIProviderMixin._make_strict_json_schema(v) for k, v in schema.items()}
+
+        if out.get("type") == "object":
+            props = out.get("properties")
+            if isinstance(props, dict) and props:
+                # For strict tools, OpenAI requires this to be explicitly present and false.
+                out["additionalProperties"] = False
+
+        return out
     
     def _prepare_input_responses(
         self, 
@@ -379,12 +406,26 @@ class _OpenAIProviderMixin:
             
             if tool_type == "function":
                 func_def = tool.get("function", tool)
+                parameters = func_def.get("parameters", {}) or {}
+                strict = func_def.get("strict", True)
+
+                # If schema looks like a typical function parameter object, make it strict-compliant.
+                # If it's mapping-style (no properties or custom additionalProperties schema),
+                # disable strict to avoid OpenAI 400s.
+                if isinstance(parameters, dict) and parameters.get("type") == "object":
+                    props = parameters.get("properties")
+                    if isinstance(props, dict) and props:
+                        parameters = self._make_strict_json_schema(parameters)
+                    else:
+                        # Mapping-style object or empty schema: strict mode is not compatible.
+                        strict = False
+
                 formatted_tools.append({
                     "type": "function",
                     "name": func_def.get("name"),
                     "description": func_def.get("description", ""),
-                    "parameters": func_def.get("parameters", {}),
-                    "strict": func_def.get("strict", True)
+                    "parameters": parameters,
+                    "strict": strict,
                 })
             else:
                 # Pass through other tool types (web_search, file_search, etc.)

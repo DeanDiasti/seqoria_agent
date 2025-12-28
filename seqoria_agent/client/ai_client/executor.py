@@ -12,9 +12,7 @@ Executor then
 3. Handles client-side cache lookup / storage
 4. Applies timeout, retry & circuit-breaker protections delegated to
    :class:`~seqoria_agent.client.ai_client.connection_pool.ConnectionPool`
-5. Implements synthetic meta-tools (``__think__`` / ``__summarize__`` /
-   ``__clarify__``)
-6. Detects early-exit display envelopes and surfaces structured error metadata
+5. Detects early-exit display envelopes and surfaces structured error metadata
    via the provided callbacks.
 
 The class purposefully stays agnostic of the surrounding *AIClient* orchestra
@@ -29,7 +27,6 @@ from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple, Mapping
 
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
-from seqoria_agent.client.ai_client.constants import THINK_TOOL_NAME
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
 from seqoria_agent.client.ai_client.callbacks import (on_error as _on_error_cb,
                                                       on_metadata as _on_metadata_cb)
@@ -243,18 +240,6 @@ class Executor:
             if still_missing:
                 raise RuntimeError(f"Missing server-populated parameters for tool '{tool_name}': {', '.join(still_missing)}")
 
-        # Synthetic meta-tools
-        if tool_name == THINK_TOOL_NAME:
-            thought_text = f"<think>\n{arguments.get('thought', '').strip()}\n</think>"
-            history_entry = ToolCallResult(tool_call_id=tool_call.id,
-                                           role="tool_result",
-                                           type="tool_use",
-                                           name=tool_name,
-                                           result=thought_text)
-            if getattr(self._logger, "isEnabledFor", lambda *_: True)(logging.DEBUG):
-                self._logger.info(msg="LLM thinking step recorded")
-            return history_entry
-        
         # --------------------------------------------------------------------
         # Client-side caching (best-effort)
         #

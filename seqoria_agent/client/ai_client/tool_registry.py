@@ -8,7 +8,6 @@ Features:
 - Schema deduplication via fingerprinting
 - Server-populated parameter tracking
 - Tool dependency tracking
-- Meta-tools (e.g., __think__)
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from typing import Any, Dict, List, Optional, Set
 from mcp import ClientSession
 
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
-from seqoria_agent.client.ai_client.constants import THINK_TOOL_NAME
 from seqoria_agent.client.ai_client.utils import json_dumps, fast_hash
 from seqoria_agent.toolbox import LocalToolbox
 
@@ -43,8 +41,6 @@ class ToolRegistry:
         Interval for automatic background refresh (0 = disabled).
     logger : logging.Logger | None
         Logger for registry events.
-    enable_meta_tools : bool | Iterable[str]
-        Whether to include built-in meta-tools.
     """
 
     def __init__(self,
@@ -53,22 +49,13 @@ class ToolRegistry:
                  local_toolboxes: Optional[List[LocalToolbox]] = None,
                  tool_map: Optional[Dict[str, Any]] = None,
                  refresh_interval: float = 0.0,
-                 logger: Optional[logging.Logger] = None,
-                 enable_meta_tools: bool | Iterable[str] = True) -> None:
+                 logger: Optional[logging.Logger] = None) -> None:
         self._pool = pool
         self._local_boxes: List[LocalToolbox] = list(local_toolboxes or [])
         self._tool_map: Dict[str, Any] = tool_map if tool_map is not None else {}
 
         self._refresh_interval: float = float(refresh_interval)
         self._logger = logger or logging.getLogger(name="seqoria_agent.tool_registry")
-
-        # Meta-tool configuration
-        if enable_meta_tools is True:
-            self._enabled_meta_names: Set[str] = {THINK_TOOL_NAME}
-        elif enable_meta_tools is False:
-            self._enabled_meta_names = set()
-        else:
-            self._enabled_meta_names = set(enable_meta_tools)
 
         # Internal state
         self._llm_tools: List[dict] = []
@@ -146,12 +133,6 @@ class ToolRegistry:
 
         # 2) Merge local toolbox tools
         await self._refresh_local_tools(llm_tools, base_to_primary_alias)
-
-        # 3) Add meta-tools
-        if self._enabled_meta_names:
-            for tool in _META_TOOLS:
-                if tool["function"]["name"] in self._enabled_meta_names:
-                    llm_tools.append(tool)
 
         # Atomically update state
         async with self._lock:
@@ -359,26 +340,3 @@ class ToolRegistry:
         return None
 
 
-# Built-in meta-tools
-_META_TOOLS: List[dict] = [
-    {
-        "type": "function",
-        "function": {
-            "name": THINK_TOOL_NAME,
-            "description": (
-                "Internal helper - allows the assistant to think out loud "
-                "without exposing the thought to the user."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "thought": {
-                        "type": "string",
-                        "description": "The assistant's internal reasoning.",
-                    }
-                },
-                "required": ["thought"],
-            },
-        },
-    }
-]

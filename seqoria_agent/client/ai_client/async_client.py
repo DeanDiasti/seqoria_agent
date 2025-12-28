@@ -82,8 +82,6 @@ class AsyncAIClient:
         Server-populated parameter sources.
     allow_override : bool
         Allow LLM to override server-populated params.
-    enable_meta_tools : bool | Iterable[str]
-        Enable built-in meta-tools.
     settings : ClientSettings | None
         Default settings (overridden by explicit args).
     auth_provider : BaseAuthProvider | None
@@ -128,7 +126,6 @@ class AsyncAIClient:
         ] = None,
         allow_override: bool = False,
         # Meta-tools
-        enable_meta_tools: bool | Iterable[str] = True,
         # Settings
         settings: ClientSettings | None = None,
         # Auth
@@ -223,7 +220,6 @@ class AsyncAIClient:
             tool_map=self._tool_map,
             refresh_interval=refresh_interval,
             logger=self._logger,
-            enable_meta_tools=enable_meta_tools,
         )
 
         self.executor = Executor(
@@ -325,6 +321,17 @@ class AsyncAIClient:
     def tools_enabled(self) -> bool:
         """Return True if any tools are available."""
         return bool(self._tool_map or self._boxes)
+
+    def list_tools(self) -> List[dict]:
+        """List currently available tools (OpenAI-compatible tool schema).
+
+        Notes
+        -----
+        - This reflects the most recent `ToolRegistry.refresh()` results.
+        - For MCP-backed tools, you typically want to call this after entering the client
+          context (`async with client:`) or after calling `await client.refresh_tools()`.
+        """
+        return self.registry.llm_tools
 
     # LLM interaction methods
     async def llm_generate_once(
