@@ -1,13 +1,14 @@
-import asyncio
+"""Tests for LocalToolbox in-process tool execution."""
+
 import pytest
 
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.client import AIClient
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.client import AsyncAIClient
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
 from seqoria_agent.providers.schemas import LLMResponse
 
 
-class DummyProvider(BaseProvider):
+class DummyProvider(AsyncBaseProvider):
     """Bare-bones provider that just echoes a static response."""
 
     def __init__(self, *args, **kwargs):
@@ -16,7 +17,7 @@ class DummyProvider(BaseProvider):
     async def async_generate(self, *, chat_history, tools, tool_choice="auto"):
         return LLMResponse(model_id="dummy", type="llm_response", text="Static answer")
 
-    async def async_stream(self, *args, **kwargs):  # noqa: ANN001
+    async def async_stream(self, *args, **kwargs):
         async def _gen():
             yield "Static answer"
             yield LLMResponse(model_id="dummy", type="llm_response", text="Static answer")
@@ -26,11 +27,12 @@ class DummyProvider(BaseProvider):
 
 def build_ai_client(toolbox: LocalToolbox):
     provider = DummyProvider()
-    return AIClient(urls=[], providers=[provider], local_toolbox=toolbox)
+    return AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=toolbox)
 
 
 @pytest.mark.asyncio
 async def test_local_tool_execution():
+    """LocalToolbox executes tools in-process."""
     tb = LocalToolbox()
 
     @tb.tool()
@@ -39,5 +41,85 @@ async def test_local_tool_execution():
 
     async with build_ai_client(tb) as client:
         result = await client.call_mcp_tool("add", {"a": 2, "b": 3})
-        xml = result[0].text
-        assert "5" in xml 
+        text = result[0].text
+        assert "5" in text
+
+
+@pytest.mark.asyncio
+async def test_local_tool_with_server_params():
+    """LocalToolbox handles server-populated parameters."""
+    tb = LocalToolbox()
+
+    @tb.tool(server_populated=["user_id"])
+    def greet(name: str, user_id: str) -> str:
+        return f"Hello {name}, user {user_id}!"
+
+    # Register a param provider
+    @tb.register_param_provider
+    def provide_user_id(request, tool_name, param_name):
+        if param_name == "user_id":
+            return "test-user-123"
+        return None
+
+    result = await tb.call_tool("greet", {"name": "Alice"})
+    assert "Hello Alice" in result[0].text
+    assert "test-user-123" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_local_tool_list():
+    """LocalToolbox lists registered tools."""
+    tb = LocalToolbox()
+
+    @tb.tool(description="Add two numbers")
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    @tb.tool(description="Subtract two numbers", depends_on=["add"])
+    def subtract(a: int, b: int) -> int:
+        return a - b
+
+    tools = tb.list_tools()
+    assert len(tools) == 2
+
+    add_tool = next(t for t in tools if t.name == "add")
+    assert add_tool.description == "Add two numbers"
+
+    sub_tool = next(t for t in tools if t.name == "subtract")
+    assert "add" in sub_tool.annotations.get("depends_on", [])
+
+
+@pytest.mark.asyncio
+async def test_local_tool_async():
+    """LocalToolbox supports async tools."""
+    tb = LocalToolbox()
+
+    @tb.tool()
+    async def async_add(a: int, b: int) -> int:
+        return a + b
+
+    result = await tb.call_tool("async_add", {"a": 5, "b": 7})
+    assert "12" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_local_tool_error_propagation():
+    """LocalToolbox propagates tool exceptions to executor."""
+    tb = LocalToolbox()
+
+    @tb.tool()
+    def fail_tool() -> str:
+        raise ValueError("Something went wrong!")
+
+    # Exceptions are propagated so executor can handle them
+    with pytest.raises(ValueError, match="Something went wrong"):
+        await tb.call_tool("fail_tool", {})
+
+
+@pytest.mark.asyncio
+async def test_local_tool_not_found():
+    """LocalToolbox raises ValueError for unknown tools."""
+    tb = LocalToolbox()
+
+    with pytest.raises(ValueError, match="not found"):
+        await tb.call_tool("nonexistent", {})

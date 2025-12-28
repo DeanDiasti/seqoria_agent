@@ -2,12 +2,12 @@ import asyncio
 import pytest
 
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.client import AIClient
+from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.models.chunk import ToolCallRequest, ToolCallError, ToolCallResult
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
 
 
-class DummyProvider(BaseProvider):
+class DummyProvider(AsyncBaseProvider):
     async def async_generate(self, *, chat_history, **kwargs):  # noqa: ANN001
         raise RuntimeError("LLM call should not be reached in executor tests")
 
@@ -49,7 +49,7 @@ async def test_dep_skip_basic():
     def ok_tool():  # noqa: D401
         return "ok"
 
-    async with AIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="fail_tool", arguments={}),
             ToolCallRequest(id="2", name="ok_tool", arguments={}),
@@ -86,7 +86,7 @@ async def test_dep_skip_duplicates():
     def dep_tool():  # noqa: D401
         return "dep ok"
 
-    async with AIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="flaky_tool", arguments={"val": 0}),
             ToolCallRequest(id="2", name="flaky_tool", arguments={"val": 1}),
@@ -127,7 +127,7 @@ async def test_dep_skip_transitive():
     def dep_c():  # noqa: D401
         return "c"
 
-    async with AIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="fail_a", arguments={}),
             ToolCallRequest(id="2", name="dep_b", arguments={}),

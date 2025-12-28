@@ -12,14 +12,14 @@ python examples/manual_loop/system_prompt_demo.py
 import asyncio
 from typing import List
 
-from seqoria_agent.client import AIClient
+from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.chunk import ToolCallRequest
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
 from seqoria_agent.providers.schemas import LLMResponse
 
 
-class DummyProvider(BaseProvider):
+class DummyProvider(AsyncBaseProvider):
     async def async_generate(self, *, chat_history, tools=None, tool_choice="auto", model=None):  # noqa: ANN001
         return LLMResponse(model_id="dummy", type="llm_response", text="Hello! (dummy)")
 
@@ -41,7 +41,7 @@ async def echo(message: str) -> str:
 async def main() -> None:  # noqa: D401
     custom_prompt = "You are a very friendly assistant that always says please and thank you."
 
-    async with AIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb, system_prompt=custom_prompt) as ai:
+    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb, system_prompt=custom_prompt) as ai:
         history: List[dict] = []
 
         # First illustrate that the system prompt was automatically injected

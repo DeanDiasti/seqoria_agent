@@ -11,8 +11,8 @@ OpenAIProvider / AnthropicProvider (and provide keys) to see live numbers.
 """
 
 import asyncio
-from seqoria_agent.client.ai_client.base import AIClient
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent import AsyncAIClient
+from seqoria_agent.providers import AsyncOpenAIProvider
 from seqoria_agent.providers.schemas import LLMResponse, LLMUsage
 import os
 from dotenv import load_dotenv
@@ -21,7 +21,7 @@ from seqoria_agent.models.chunk import AssistantMessage, ToolMessages, ChatChunk
 load_dotenv()
 
 async def main() -> None:
-    ai = AIClient(providers=[OpenAIProvider(api_key=os.getenv(key="OPENAI_API_KEY"))], urls=[])
+    ai = AsyncAIClient(providers=[AsyncOpenAIProvider(api_key=os.getenv(key="OPENAI_API_KEY"))], urls=[])
     hist: list[dict] = [{"role": "user", "content": "Hello, how are you?"}]
     # Single-shot generation -------------------------------------------------
     result = await ai.llm_generate_once(history=hist)

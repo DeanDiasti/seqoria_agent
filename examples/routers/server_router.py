@@ -1,64 +1,59 @@
-from __future__ import annotations
-
-"""Example FastXMCP server demonstrating *router* usage.
+"""Example SeqoriaMCP server demonstrating tool grouping.
 
 Run with:
-    uvicorn examples.servers.server_router:app --reload --port 8006
+    python examples/routers/server_router.py
 
-This server mounts a ``FastXMCPRouter`` which groups math-related tools under
-``/math`` HTTP prefix (irrelevant for MCP usage) while exposing the tools to
-LLMs via the normal MCP interface.
+This server defines math-related tools with dependency annotations.
 """
 
-from seqoria_agent.server.fastxmcp import FastXMCP, FastXMCPRouter
-from seqoria_agent.models.errors import XMCPError
+from __future__ import annotations
+
+from seqoria_agent.server import SeqoriaMCP
 
 # ------------------------------------------------------------------
-# Create router and define tools
+# Create SeqoriaMCP server
 # ------------------------------------------------------------------
 
-math_router = FastXMCPRouter(prefix="/math", tags=["math"])
+app = SeqoriaMCP("Math Tools Server")
 
 
-@math_router.tool()
+# ------------------------------------------------------------------
+# Define math tools
+# ------------------------------------------------------------------
+
+
+@app.tool()
 def add(a: int, b: int) -> int:
-    """Return *a + b*."""
+    """Return a + b."""
     try:
         return int(a) + int(b)
-    except Exception as exc:  # pragma: no cover – input validation for demo
-        raise XMCPError(code="INVALID_ARG", detail=str(exc), retryable=False)
+    except Exception as exc:
+        raise ValueError(f"Invalid arguments: {exc}")
 
 
-@math_router.tool()
+@app.tool()
 def multiply(a: int, b: int) -> int:
-    """Return *a * b*."""
+    """Return a * b."""
     try:
         return int(a) * int(b)
     except Exception as exc:
-        raise XMCPError(code="INVALID_ARG", detail=str(exc), retryable=False)
+        raise ValueError(f"Invalid arguments: {exc}")
 
 
-@math_router.tool(depends_on=["add", "multiply"])
+@app.tool(depends_on=["add", "multiply"])
 def add_then_multiply(a: int, b: int, c: int) -> int:
-    """Compute *(a + b) × c* to showcase dependency annotations (for LLM).
+    """Compute (a + b) x c.
 
-    The function executes after ``add`` and ``multiply`` if the LLM asks for all
-    three in a single turn, letting the client parallelise the first two.
+    This tool depends on add and multiply, so if the LLM requests all three
+    in a single turn, add and multiply will run first (in parallel), then
+    this tool will run.
     """
     return (int(a) + int(b)) * int(c)
 
 
 # ------------------------------------------------------------------
-# Build main FastXMCP app and mount router
-# ------------------------------------------------------------------
-
-app = FastXMCP(title="Math Router Server")
-app.include_router(math_router)
-
-
-# ------------------------------------------------------------------
-# Entry-point helper for local runs
+# Entry-point
 # ------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8006) 
+    app.run(transport="streamable-http")

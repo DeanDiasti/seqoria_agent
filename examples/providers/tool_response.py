@@ -24,8 +24,8 @@ import os
 import sys
 from typing import Any, AsyncGenerator, Union
 
-from seqoria_agent.providers.openai_provider import OpenAIProvider
-from seqoria_agent.providers.anthropic_provider import AnthropicProvider
+from seqoria_agent.providers.openai_provider import AsyncOpenAIProvider
+from seqoria_agent.providers.anthropic_provider import AsyncAnthropicProvider
 from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
 
 from dotenv import load_dotenv
@@ -68,7 +68,7 @@ def main() -> None:  # noqa: D401
         sys.stderr.write("ERROR: set the OPENAI_API_KEY environment variable first.\n")
         sys.exit(1)
 
-    provider = OpenAIProvider(api_key=api_key)
+    provider = AsyncOpenAIProvider(api_key=api_key)
 
     # Tool declaration following the OpenAI function-calling schema
     dice_tool: dict[str, Any] = {
@@ -115,7 +115,7 @@ def main() -> None:  # noqa: D401
     # ------------------------------------------------------------------
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     if anthropic_key:
-        provider_a = AnthropicProvider(api_key=anthropic_key)
+        provider_a = AsyncAnthropicProvider(api_key=anthropic_key)
 
         print("\nAnthropic streaming response - watch for tool_calls in the final object…\n")
 
@@ -126,7 +126,7 @@ def main() -> None:  # noqa: D401
         )
         _render_stream(stream=stream_a)
     else:
-        print("\n[info] Skipping AnthropicProvider demo - set ANTHROPIC_API_KEY to enable it.\n")
+        print("\n[info] Skipping AsyncAnthropicProvider demo - set ANTHROPIC_API_KEY to enable it.\n")
 
 
 if __name__ == "__main__":

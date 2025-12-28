@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Literal, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class LLMUsage(BaseModel):
     """Usage information for an LLM call.
     """
+    model_config = ConfigDict(slots=True)
     prompt_tokens: int = Field(default=None, description="The number of tokens in the prompt.")
     completion_tokens: int = Field(default=None, description="The number of tokens in the completion.")
     total_tokens: int = Field(default=None, description="The total number of tokens in the call.")
@@ -17,6 +18,7 @@ class LLMUsage(BaseModel):
 class ChatChunk(BaseModel):  # noqa: D101 – simple container
     """Incremental piece of a streamed chat response.
     """
+    model_config = ConfigDict(slots=True)
     role: Literal["assistant"] = Field(default="assistant", description="The role of the message.")
     content: str = Field(default=None, description="The content of the message.")
     model: Optional[str] = Field(default=None, description="The model used to generate the message.")
@@ -25,12 +27,14 @@ class ChatChunk(BaseModel):  # noqa: D101 – simple container
 class SystemMessage(BaseModel):  # noqa: D101 – simple container
     """Incremental piece of a streamed chat response.
     """
+    model_config = ConfigDict(slots=True)
     role: Literal["system"] = Field(default=None, description="The role of the message.")
     content: str = Field(default=None, description="The content of the message.")
 
 class AssistantMessage(BaseModel):  # noqa: D101 – simple container
     """Incremental piece of a streamed chat response.
     """
+    model_config = ConfigDict(slots=True)
     role: Literal["user", "assistant", "system"] = Field(default=None, description="The role of the message.")
     content: str = Field(default=None, description="The content of the message.")
     model: Optional[str] = Field(default=None, description="The model used to generate the message.")
@@ -40,6 +44,7 @@ class AssistantMessage(BaseModel):  # noqa: D101 – simple container
 class UserMessage(BaseModel):  # noqa: D101 – simple container
     """Incremental piece of a streamed chat response.
     """
+    model_config = ConfigDict(slots=True)
     role: Literal["user"] = Field(default=None, description="The role of the message.")
     content: str = Field(default=None, description="The content of the message.")
 
@@ -61,6 +66,7 @@ class ToolCallRequest(BaseModel):  # noqa: D101 – simple container
         The arguments of the tool call.
     """
 
+    model_config = ConfigDict(slots=True)
     id: str = Field(default=None, description="The ID of the tool call.")
     role: Literal["tool_call"] = Field(default="tool_call", description="The role of the tool call.")
     type: Literal["function_call"] = Field(default="function_call", description="The type of the tool call.")
@@ -71,6 +77,7 @@ class ToolCallRequest(BaseModel):  # noqa: D101 – simple container
 class ToolCallRequestList(BaseModel):  # noqa: D101 – simple container
     """Incremental piece of a streamed chat response.
     """
+    model_config = ConfigDict(slots=True)
     tool_calls: List[ToolCallRequest] = Field(default=None, description="The tool calls of the message.")
     usage: LLMUsage = Field(default=None, description="The usage of the message.")
 
@@ -89,6 +96,7 @@ class ToolCallResult(BaseModel):  # noqa: D101 – simple container
         The type of the message.
     """
 
+    model_config = ConfigDict(slots=True)
     tool_call_id: str = Field(default=None, description="The ID of the tool call.")
     role: Literal["tool_result"] = Field(default="tool_result", description="The role of the message.")
     name: str = Field(default=None, description="The name of the tool.")
@@ -107,6 +115,7 @@ class ToolCallError(BaseModel):  # noqa: D101 – container for failed tool exec
     ``result`` attribute.
     """
 
+    model_config = ConfigDict(slots=True)
     tool_call_id: str = Field(default=None, description="The ID of the tool call that failed.")
     role: Literal["tool_error"] = Field(default="tool_error", description="The role of the message.")
     name: str = Field(default=None, description="The name of the tool.")

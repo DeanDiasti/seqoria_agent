@@ -3,13 +3,13 @@ import time
 import pytest
 
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.client import AIClient
+from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.models.chunk import ToolCallRequest
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
 from seqoria_agent.providers.schemas import LLMResponse
 
 
-class DummyProvider(BaseProvider):
+class DummyProvider(AsyncBaseProvider):
     """Provider stub that always returns the same static response."""
 
     def __init__(self, *args, **kwargs):
@@ -26,9 +26,9 @@ class DummyProvider(BaseProvider):
         return _gen()
 
 
-def _build_client(tb: LocalToolbox) -> AIClient:
-    """Helper to build an AIClient instance with *tb* registered."""
-    return AIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb)
+def _build_client(tb: LocalToolbox) -> AsyncAIClient:
+    """Helper to build an AsyncAIClient instance with *tb* registered."""
+    return AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb)
 
 
 @pytest.mark.asyncio

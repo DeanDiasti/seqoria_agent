@@ -1,7 +1,11 @@
-"""Server-side helpers and decorators for seqoria_agent-powered servers."""
+"""Server-side MCP components for seqoria_agent.
 
-from seqoria_agent.server.fastxmcp import FastXMCP  # noqa: F401
-from seqoria_agent.server.fastxmcp.router import FastXMCPRouter  # noqa: F401
+This module exports:
+- SeqoriaMCP: Extended MCP FastMCP with Seqoria features
+"""
 
-__all__: list[str] = ["FastXMCP",
-                      "FastXMCPRouter"]
+from seqoria_agent.server.seqoria_mcp import SeqoriaMCP
+
+__all__ = [
+    "SeqoriaMCP",
+]

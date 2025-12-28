@@ -1,10 +1,10 @@
 import pytest
 
-from seqoria_agent.client import AIClient  # type: ignore
+from seqoria_agent.client import AsyncAIClient  # type: ignore
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
 
-class StubProvider(BaseProvider):
+class StubProvider(AsyncBaseProvider):
     """Provider that does nothing but satisfy the interface for tests."""
 
     def __init__(self):
@@ -30,7 +30,7 @@ class StubProvider(BaseProvider):
 async def test_tools_enabled_toggle():  # noqa: D401
     provider = StubProvider()
     # No tools (LLM-only)
-    ai = AIClient(urls=[], providers=[provider])
+    ai = AsyncAIClient(urls=[], providers=[provider])
     async with ai as client:
         assert client.tools_enabled() is False
 
@@ -41,6 +41,6 @@ async def test_tools_enabled_toggle():  # noqa: D401
     def foo():  # noqa: D401, ANN001
         return 1
 
-    ai2 = AIClient(urls=[], providers=[provider], local_toolbox=box)
+    ai2 = AsyncAIClient(urls=[], providers=[provider], local_toolbox=box)
     async with ai2 as client:
         assert client.tools_enabled() is True 

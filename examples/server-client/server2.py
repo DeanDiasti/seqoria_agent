@@ -1,8 +1,15 @@
-"""Example FastXMCP server 2: Math and Time Tools.
+"""Example SeqoriaMCP server 2: Math and Time Tools.
 
 This server provides simple utility tools:
 - `current_time`: Returns the current server time.
-- `divide`: Demonstrates structured `XMCPError` handling.
+- `divide`: Demonstrates error handling.
+- `timestamped_divide`: Tool with dependency on current_time.
+
+To run:
+    python examples/server-client/server2.py
+
+Or with uvicorn:
+    uvicorn examples.server-client.server2:app --reload --port 8005
 """
 
 from __future__ import annotations
@@ -10,14 +17,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from seqoria_agent.models.errors import XMCPError
-from seqoria_agent.server.fastxmcp import FastXMCP
+from seqoria_agent.server import SeqoriaMCP
 
 # ------------------------------------------------------------------
 # Application instance
 # ------------------------------------------------------------------
 
-app = FastXMCP(title="Utility Server")
+# Run on port 8005 to avoid conflict with server1.py (port 8000)
+app = SeqoriaMCP("Utility Server", port=8005)
 logger = logging.getLogger(name=__name__)
 
 
@@ -52,28 +59,23 @@ def divide(a: float, b: float) -> float:
 
     Raises
     ------
-    XMCPError
-        If `b` is zero, a structured error with code "DIV_BY_ZERO" is raised.
+    ValueError
+        If `b` is zero or if inputs are not valid numbers.
     """
     try:
         a = float(a)
         b = float(b)
     except Exception:
-        raise XMCPError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
+        raise ValueError("a and b must be numbers")
 
     if b == 0:
-        raise XMCPError(
-            code="DIV_BY_ZERO",
-            detail="Parameter 'b' cannot be zero",
-            retryable=False,
-            meta={"a": a, "b": b},
-        )
+        raise ValueError("Parameter 'b' cannot be zero (division by zero)")
 
     return a / b
 
 
 # ------------------------------------------------------------------
-# New tool with dependency on current_time -------------------------
+# Tool with dependency on current_time
 # ------------------------------------------------------------------
 
 
@@ -88,16 +90,16 @@ def timestamped_divide(a: float, b: float) -> str:
         a = float(a)
         b = float(b)
     except Exception:
-        raise XMCPError(code="INVALID_ARG", detail="a and b must be numbers", retryable=False)
+        raise ValueError("a and b must be numbers")
 
     result = divide(a, b)
     ts = current_time()
     return f"{ts} → {a} / {b} = {result}"
 
 
-# Provide user_id via request header on this server too
-
-
+# ------------------------------------------------------------------
+# Entry-point
+# ------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8005) 
+    app.run(transport="streamable-http")

@@ -8,12 +8,12 @@ Assumes a local FastXMCP server exposing a tool `hello` that requires
 
 import asyncio
 import os
-from seqoria_agent import AIClient
+from seqoria_agent import AsyncAIClient
 from seqoria_agent.client.parameters import ParameterRegistry
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.providers import AsyncOpenAIProvider
 from dotenv import load_dotenv
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.client.ai_client.base import ToolCallRequest
+from seqoria_agent.models.chunk import ToolCallRequest
 from pydantic import BaseModel
 
 load_dotenv()
@@ -66,7 +66,7 @@ registry = ParameterRegistry(mapping={"user_id": get_user_id,
                                       "user_secret": get_user_secret_value})
 
 async def main() -> None:
-    async with AIClient(providers=[OpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))],
+    async with AsyncAIClient(providers=[AsyncOpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))],
                         param_registry=registry,
                         local_toolbox=tb) as client:
         res = await client.run_tool_calls(tool_calls=[ToolCallRequest(id="0",

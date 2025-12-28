@@ -1,139 +1,127 @@
 """Interactive command-line client for demonstrating the seqoria_agent AIClient.
 
-This script connects to the example **FastXMCP** servers (`server1.py`, `server2.py`),
-initializes an `AIClient` with multiple LLM providers, and enters an
-interactive loop where the user can issue commands.
+This script connects to example MCP servers, initializes an AIClient with
+LLM providers, and enters an interactive loop where the user can chat.
 
-It demonstrates:
-- Connecting to multiple servers.
-- Using multiple LLM providers with fallback.
-- Streaming responses (`stream_chat`).
-- Rendering `DisplayEnvelope` objects received from tools.
-- Maintaining a stateless conversation history.
+Demonstrates:
+- Connecting to multiple MCP servers
+- Using multiple LLM providers with fallback
+- Streaming responses
+- Server-populated parameter injection
+- Caching and resilience features
 
-To run this demo:
-1. Make sure you have an OpenAI or Anthropic API key set as an
-   environment variable (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`).
-2. Run the example servers in separate terminals:
-   `uvicorn examples.servers.server1:app --reload --port 8004`
-   `uvicorn examples.servers.server2:app --reload --port 8005`
+To run:
+1. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in your environment
+2. Start the example servers:
+   python examples/server-client/server1.py
+   python examples/server-client/server2.py
 3. Run this script:
-   `python examples/clients/demo.py`
+   python examples/server-client/client.py
 """
+
 import asyncio
-import json
 import os
 
-import structlog
 from dotenv import load_dotenv
 
-from seqoria_agent import AIClient
+from seqoria_agent import AsyncAIClient
 from seqoria_agent.client.cache import DictCache
 from seqoria_agent.client.parameters import ParameterRegistry
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.providers import AsyncOpenAIProvider
 from seqoria_agent.models.chunk import ChatChunk, ToolMessages
 
 load_dotenv()
 
 # ------------------------------------------------------------------
-# MCP server endpoints discovered by the demo client
+# MCP server endpoints
+# Note: The /mcp endpoint is automatically appended by MCPTransportFactory
 # ------------------------------------------------------------------
 
-servers = ["http://localhost:8004/mcp", 
-           "http://localhost:8005/mcp"]
-
-# ------------------------------------------------------------------
-# Structured logging setup for the demo
-# ------------------------------------------------------------------
-
-# logging.basicConfig(level=logging.INFO, format="%(message)s")
-# structlog.configure(
-#     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-#     processors=[
-#         structlog.processors.TimeStamper(fmt="iso"),
-#         structlog.processors.add_log_level,
-#         structlog.processors.StackInfoRenderer(),
-#         structlog.processors.dict_tracebacks,
-#         structlog.processors.JSONRenderer(),
-#     ],
-# )
-
-logger = structlog.get_logger("seqoria_agent_demo")
+servers = [
+    "http://localhost:8000",  # server1.py - Agentic Tools Server
+    "http://localhost:8005",  # server2.py - Utility Server
+]
 
 
 async def main() -> None:
-    """Interactive CLI that streams AI responses and display envelopes.
+    """Interactive CLI that streams AI responses."""
 
-    Demonstrates the *serverArgs* channel for server-populated parameters –
-    no HTTP headers are used; the AIClient injects ``user_id`` into the
-    JSON-RPC body under the ``serverArgs`` key.
-    """
-    # ------------------------------------------------------------------
-    # Build provider list – primary plus optional *backup* provider
-    # ------------------------------------------------------------------
+    # Parameter registry for server-populated parameters
+    registry = ParameterRegistry(mapping={
+        "tenant_id": "demo-tenant",
+        "user_id": "cli-user-123",
+    })
 
-    registry = ParameterRegistry(mapping={"tenant_id": "demo-tenant"})
-
-    # Initialize AIClient **with caching enabled** (in-memory DictCache)
-    client = AIClient(
-        urls=servers,
-        providers=[OpenAIProvider(model_id="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))],
-        cache=DictCache(),  # Swap with RedisCache(...) in production
-        cache_ttl=600,  # Cache tool results for 10 minutes
-        # NEW: Adaptive concurrency & reliability settings
-        max_concurrency=5,  # Allow up to 5 simultaneous tool calls
-        tool_timeout=8.0,  # Cancel a tool if it runs >8s
+    # Initialize AsyncAIClient with caching and resilience
+    client = AsyncAIClient(
+        mcp_servers=servers,
+        providers=[
+            AsyncOpenAIProvider(
+                model_id="gpt-4o",
+                api_key=os.getenv("OPENAI_API_KEY"),
+            ),
+        ],
+        # Caching
+        cache=DictCache(),
+        cache_ttl=600,
+        # Concurrency and resilience
+        max_concurrency=5,
+        tool_timeout=8.0,
         retry_policy={"max_attempts": 3, "backoff_base": 0.5},
-        breaker_threshold=5,  # Trip circuit after 5 consecutive failures
-        breaker_reset_after=60,  # Auto-reset breaker after 60s
+        breaker_threshold=5,
+        breaker_reset_after=60,
+        # Parameter injection
         param_registry=registry,
-        # logger=logger,
     )
 
     try:
         async with client:
-            print("===================================================")
+            print("=" * 60)
             print("Welcome to the Seqoria-Agent Multi-Tool Client!")
-            print("I have discovered tools from the connected MCP server.")
-            print("\n--- Try out the HYBRID tool! ---")
-            print("  - Ask me to 'change the color to pink' (Display Mode)")
-            print("  - Ask me 'what is the hex code for blue?' (Data Mode)")
-            print("\n--- Try out the DISPLAY-ONLY tool! ---")
-            print("  - Ask me to 'flash the screen 3 times with green'")
-            print("\n--- Dependency-graph demo ---")
-            print("  - Ask me to 'roll 5 dice and give me the sum' → rolls first, then sums (depends_on).")
-            print("  - Ask me to 'what time is it and also divide 10 by 2 with timestamp' → executes in two layers.")
-            print("\nType 'exit' or 'quit' to end the session.")
-            print("===================================================")
+            print("Connected to MCP servers and discovered tools.")
+            print()
+            print("Try these commands:")
+            print("  - 'Roll 5 dice'")
+            print("  - 'What is the sum of rolling 3 dice?'")
+            print("  - 'Greet me as Alice'")
+            print()
+            print("Type 'exit' or 'quit' to end the session.")
+            print("=" * 60)
 
-            chat_history = []  # To maintain conversation context
+            chat_history = []
+
             while True:
                 try:
-                    user_input = input("You:\n")
-                    if user_input.lower() in ["exit", "quit"]:
+                    user_input = input("\nYou:\n").strip()
+                    if not user_input:
+                        continue
+                    if user_input.lower() in ("exit", "quit"):
                         print("Goodbye!")
                         break
 
-                    # Stream the response incrementally -----------------------
-                    async for chunk in client.stream_chat(user_query=user_input, history=chat_history, max_turns=5):
+                    print("\nAssistant: ", end="", flush=True)
+
+                    # Stream the response
+                    async for chunk in client.stream_chat(
+                        user_query=user_input,
+                        history=chat_history,
+                        max_turns=5,
+                    ):
                         if isinstance(chunk, ChatChunk):
                             print(chunk.content, end="", flush=True)
                         elif isinstance(chunk, ToolMessages):
-                            print("tool call\n" * (len(chunk) // 2))
+                            tool_count = len(chunk) // 2
+                            print(f"\n[Executing {tool_count} tool(s)...]", end="")
 
-                    print("\n")  # Newline after streaming completes
-
-                    # chat_history is mutated in-place during streaming
-                    chat_history = chat_history
+                    print()  # Newline after streaming
 
                 except KeyboardInterrupt:
                     print("\nGoodbye!")
                     break
 
-    except RuntimeError as e:
-        print(f"❌ A critical error occurred: {e}")
-        logger.error("Critical error in demo", error=str(object=e))
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main=main()) 
+    asyncio.run(main())

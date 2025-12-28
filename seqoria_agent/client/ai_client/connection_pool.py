@@ -1,72 +1,119 @@
-from __future__ import annotations
+"""MCP Connection Pool with resilience features.
 
-"""Connection management utilities for *seqoria_agent*'s new AIClient implementation.
-
-The pool is responsible _only_ for maintaining network connections to one or more
-FastMCP servers and providing a thin, retry-aware wrapper around the ``tools/call``
-JSON-RPC method.  All higher-level concerns (tool registry, caching, meta-tools, …)
-remain outside the scope of this component.
+This module manages connections to MCP servers with:
+- Multi-transport support (HTTP, SSE, stdio)
+- Circuit breaker pattern
+- Retry with exponential backoff
+- Connection pooling and lifecycle management
 
 Public API
 ==========
 ```
-async with ConnectionPool(urls=[...]) as pool:
+async with MCPConnectionPool(servers=["http://localhost:8000/mcp"]) as pool:
     result = await pool.call_tool("my_tool", {"foo": "bar"})
 ```
-
-The class purposefully exposes a **narrow** interface so later phases can swap the
-transport or add more sophisticated load-balancing without affecting callers.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Self
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Self
 
-from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError  # noqa: F401
+from mcp import ClientSession
+from mcp.types import TextContent
+
+from seqoria_agent.client.mcp_transport import (MCPServerConfig,
+                                                MCPTransportFactory,
+                                                TransportType,
+                                                HTTPClientPool)
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.client.simple_http_transport import SimpleHTTPTransport  # type: ignore
+from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError
 
-__all__: list[str] = ["ConnectionPool"]
+__all__ = ["MCPConnectionPool", "ConnectionPool"]
 
 
-class _Connection(NamedTuple):
-    client: SimpleHTTPTransport
+@dataclass
+class _ActiveConnection:
+    """Internal wrapper for an active MCP connection."""
+
+    session: ClientSession
     url: str
+    transport_type: TransportType
+    _context_manager: Any = field(default=None, repr=False)
 
-class ConnectionPool:
-    """Maintain HTTP connections + retry / circuit-breaker resiliency logic.
 
-    The pool is configured via constructor but _lazy-connects_ in :pyfunc:`start` so
-    expensive network hand-shakes only happen when explicitly required.
+@dataclass(slots=True)
+class _TextItem:
+    """Lightweight text wrapper matching the `.text` contract used by Executor."""
+    text: str
+
+
+class MCPConnectionPool:
+    """Manage MCP server connections with resilience features.
+
+    The pool supports multiple transport types (HTTP, SSE, stdio) and provides:
+    - Lazy connection establishment
+    - Circuit breaker pattern for fault tolerance
+    - Retry with exponential backoff
+    - Tool routing to appropriate servers
+
+    Parameters
+    ----------
+    servers : Iterable[str | MCPServerConfig] | None
+        Server URLs or configurations to connect to.
+    logger : logging.Logger | None
+        Logger instance for connection events.
+    retry_policy : dict | None
+        Retry configuration with "max_attempts" and "backoff_base" keys.
+    breaker_threshold : int
+        Number of consecutive failures before circuit trips.
+    breaker_reset_after : int
+        Seconds before tripped circuit resets.
+    tool_map : dict | None
+        Mutable mapping of tool_name -> connection (shared with ToolRegistry).
     """
 
     def __init__(self,
-                 urls: Iterable[str] | None = None,
+                 servers: Iterable[str | MCPServerConfig] | None = None,
                  *,
                  logger: Optional[logging.Logger] = None,
                  retry_policy: Optional[Dict[str, Any]] = None,
                  breaker_threshold: int = 5,
                  breaker_reset_after: int = 60,
-                 transport_cls: type[SimpleHTTPTransport] = SimpleHTTPTransport,
                  tool_map: Optional[Dict[str, Any]] = None,
-                 client_kwargs: Optional[Dict[str, Any]] = None) -> None:
-        self._urls: List[str] = list(dict.fromkeys(urls or []))
+                 http_client_pool: Optional[HTTPClientPool] = None) -> None:
+        # Normalize server configs
+        self._server_configs: List[MCPServerConfig] = []
+        for server in servers or []:
+            if isinstance(server, str):
+                self._server_configs.append(MCPServerConfig(url=server))
+            else:
+                self._server_configs.append(server)
+
         self._logger = logger or logging.getLogger(name="seqoria_agent.connection_pool")
 
+        # Connection state
         self._lock: asyncio.Lock = asyncio.Lock()
-        self._connections: List[_Connection] = []
-        self._transport_cls: type[SimpleHTTPTransport] = transport_cls
-        self._client_kwargs: Dict[str, Any] = client_kwargs or {}
+        self._connections: List[_ActiveConnection] = []
+        self._context_managers: List[Any] = []  # Keep context managers alive
 
+        # Shared HTTP client pool for connection reuse
+        self._http_client_pool: Optional[HTTPClientPool] = http_client_pool
+        self._owns_http_pool: bool = False  # Track if we created the pool
+
+        # Resilience configuration
         self._retry_policy: Dict[str, Any] = retry_policy or {}
         self._breaker_threshold: int = int(breaker_threshold)
         self._breaker_reset_after: int = int(breaker_reset_after)
         self._fail_log: Dict[str, int] = {}
         self._breaker_until: Dict[str, float] = {}
 
+        # Tool routing
         self._tool_map: Dict[str, Any] = tool_map if tool_map is not None else {}
-        self._client_to_url: Dict[SimpleHTTPTransport, str] = {}
+        self._session_to_url: Dict[ClientSession, str] = {}
 
     async def __aenter__(self) -> Self:
         await self.start()
@@ -76,124 +123,196 @@ class ConnectionPool:
         await self.close()
 
     @property
-    def connections(self) -> List[_Connection]:
-        """Return a *copy* of the current connection list (read-only helper)."""
+    def connections(self) -> List[_ActiveConnection]:
+        """Return a copy of the current connection list (read-only)."""
         return list(self._connections)
 
     @property
-    def has_servers(self) -> bool:  # noqa: D401 – keep short
-        """Quick check whether *any* remote server connection is alive."""
+    def has_servers(self) -> bool:
+        """Check whether any remote server connection is alive."""
         return bool(self._connections)
 
-    async def start(self) -> None:  # noqa: D401 – simple coro
-        """Establish connections to all configured URLs (idempotent)."""
+    async def start(self) -> None:
+        """Establish connections to all configured servers (idempotent)."""
         async with self._lock:
-            if self._connections:  # Already connected
+            if self._connections:
                 return
 
-            connect_tasks = [self._connect(url=url) for url in self._urls]
-            results = await asyncio.gather(*connect_tasks)
-            self._connections = [c for c in results if c is not None]
+            # Initialize shared HTTP client pool if not provided
+            if self._http_client_pool is None:
+                self._http_client_pool = await HTTPClientPool.get_shared()
 
-            # Build reverse lookup mapping in one go (faster than per-call scan)
-            self._client_to_url = {conn.client: conn.url for conn in self._connections}
+            connect_tasks = [self._connect(config) for config in self._server_configs]
+            results = await asyncio.gather(*connect_tasks, return_exceptions=True)
 
-            if not self._connections:
-                self._logger.warning("ConnectionPool initialized without any reachable servers")
+            for result in results:
+                if isinstance(result, _ActiveConnection):
+                    self._connections.append(result)
+                    self._session_to_url[result.session] = result.url
+                elif isinstance(result, Exception):
+                    self._logger.warning("Connection failed: %s", result)
 
-    async def close(self) -> None:  # noqa: D401 – simple coro
-        """Gracefully shut down all HTTP transports and reset state."""
+            if not self._connections and self._server_configs:
+                self._logger.warning("MCPConnectionPool initialized without any reachable servers")
+
+    async def close(self) -> None:
+        """Gracefully shut down all connections."""
         async with self._lock:
-            # Close transports sequentially – AsyncClient.aclose already avoids
-            # expensive awaits when connections are idle; gather() adds overhead.
-            for conn in self._connections:
+            # Close all context managers
+            for cm in self._context_managers:
                 try:
-                    await conn.client.close()
+                    await cm.__aexit__(None, None, None)
                 except Exception:
-                    # Ignore individual close errors – pool is shutting down
-                    continue
-            self._connections.clear()
-            self._client_to_url.clear()
-            # Leave breaker + fail logs intact - they are per URL and still
-            # relevant if the app re-connects later in its lifetime.
+                    pass
 
-    # --------------------------------------------------------------
-    # Tool invocation (remote OR local via tool_map)
-    # --------------------------------------------------------------
+            self._connections.clear()
+            self._context_managers.clear()
+            self._session_to_url.clear()
 
     async def call_tool(self,
                         name: str,
                         arguments: Dict[str, Any],
                         *,
                         server_args: Optional[Dict[str, Any]] = None) -> List[Any]:
-        """Invoke *name* on the appropriate server with retry & breaker logic."""
-        # Resolve the transport based on registration done by ToolRegistry/AIClient
-        client = self._tool_map.get(name)
-        if client is None:
+        """Invoke a tool on the appropriate server with resilience guards.
+
+        Parameters
+        ----------
+        name : str
+            Tool name to invoke.
+        arguments : dict
+            Arguments to pass to the tool.
+        server_args : dict | None
+            Server-populated arguments (injected by executor).
+
+        Returns
+        -------
+        List[Any]
+            List of content items from the tool response.
+
+        Raises
+        ------
+        ValueError
+            If tool is not found in any connected server.
+        CircuitOpenError
+            If circuit breaker is tripped for the server.
+        ToolRemoteError
+            If tool execution fails after retries.
+        """
+        # Resolve the session for this tool
+        target = self._tool_map.get(name)
+        if target is None:
             raise ValueError(f"Tool '{name}' not found on any connected server.")
 
-        if isinstance(client, LocalToolbox):
-            return await client.call_tool(name=name, 
-                                          arguments=arguments, 
+        # Handle LocalToolbox (non-MCP)
+
+
+        if isinstance(target, LocalToolbox):
+            return await target.call_tool(name=name,
+                                          arguments=arguments,
                                           server_args=server_args or {})
 
-        # Remote call with resilience guards
-        server_url = self._find_server_url(client=client)
-        if server_url is None:
-            server_url = "<unknown>"
+        # Get server URL for circuit breaker tracking
+        # Accept ClientSession or any object with call_tool method (for testing)
+        if isinstance(target, ClientSession) or hasattr(target, "call_tool"):
+            server_url = self._session_to_url.get(target, "<unknown>")
+            session = target
+        else:
+            raise ValueError(f"Invalid target type for tool '{name}': {type(target)}")
 
+        # Circuit breaker check
         now = time.monotonic()
-        # Circuit breaker gate ----------------------------------------------
         if self._breaker_until.get(server_url, 0) > now:
             raise CircuitOpenError(f"Circuit open for server {server_url} - retry later.")
 
-        # Retry policy -----------------------------------------------------
+        # Retry policy
         max_attempts = int(self._retry_policy.get("max_attempts", 1))
         backoff_base = float(self._retry_policy.get("backoff_base", 0.5))
 
         attempt = 0
+        last_error: Optional[Exception] = None
+
         while attempt < max_attempts:
             attempt += 1
             try:
-                result = await client.call_tool(name=name,
-                                                arguments=arguments,
-                                                server_args=server_args or {})
-                # Success – reset failure counter
+                # Call tool via MCP protocol
+                result = await session.call_tool(name, arguments)
+
+                # Success - reset failure counter
                 self._fail_log.pop(server_url, None)
                 self._breaker_until.pop(server_url, None)
-                return result
+
+                # Convert MCP result to our format
+                return self._convert_tool_result(result)
+
             except Exception as exc:
+                last_error = exc
                 self._fail_log[server_url] = self._fail_log.get(server_url, 0) + 1
 
                 if attempt >= max_attempts:
                     # Trip breaker if threshold met
                     if self._fail_log[server_url] >= self._breaker_threshold:
                         self._breaker_until[server_url] = now + self._breaker_reset_after
-                    # Surface original exception so callers/tests can assert properly
+                        self._logger.warning("Circuit breaker tripped for %s", server_url)
                     raise exc
 
-                # Exponential back-off before next attempt
-                await asyncio.sleep(delay=backoff_base * (2 ** (attempt - 1)))
+                # Exponential backoff before retry
+                delay = backoff_base * (2 ** (attempt - 1))
+                self._logger.debug("Tool call failed, retrying in %.2fs: %s", delay, exc)
+                await asyncio.sleep(delay)
 
-        # Fallback – should never hit
-        raise ToolRemoteError("Tool call failed after retries (unexpected fall-through).")
+        # Should never reach here
+        raise ToolRemoteError(f"Tool call failed after {max_attempts} attempts: {last_error}")
 
-    # --------------------------------------------------------------
-    # Internal helpers
-    # --------------------------------------------------------------
+    def _convert_tool_result(self, result: Any) -> List[Any]:
+        """Convert MCP CallToolResult to our internal format."""
+        contents: List[Any] = []
 
-    async def _connect(self, url: str) -> Optional[_Connection]:
-        """Try to open an HTTP connection; return ``None`` on failure."""
-        client = self._transport_cls(url=url, **self._client_kwargs)
+        if hasattr(result, "content"):
+            for item in result.content:
+                if isinstance(item, TextContent):
+                    contents.append(_TextItem(text=item.text))
+                elif hasattr(item, "text"):
+                    contents.append(_TextItem(text=item.text))
+                else:
+                    contents.append(_TextItem(text=str(item)))
+
+        if not contents:
+            contents.append(_TextItem(text="Tool executed successfully."))
+
+        return contents
+
+    async def _connect(self, config: MCPServerConfig) -> _ActiveConnection:
+        """Create a single MCP connection."""
         try:
-            await client.__aenter__()
-            self._logger.info(msg="Connected to MCP server", 
-                              url=url)
-            return _Connection(client=client, url=url)
-        except Exception as exc:
-            self._logger.warning("Failed to connect to MCP server %s: %s", url, exc)
-            await client.close()
-            return None
+            # Create transport context manager with shared HTTP pool
+            cm = MCPTransportFactory.connect(config, client_pool=self._http_client_pool)
+            conn = await cm.__aenter__()
 
-    def _find_server_url(self, client: SimpleHTTPTransport) -> Optional[str]:
-        return self._client_to_url.get(client)
+            # Store context manager to keep connection alive
+            self._context_managers.append(cm)
+
+            self._logger.info("Connected to MCP server: %s", config.url)
+
+            return _ActiveConnection(
+                session=conn.session,
+                url=config.url,
+                transport_type=conn.transport_type,
+                _context_manager=cm,
+            )
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to connect to MCP server %s: %s", config.url, exc
+            )
+            raise
+
+    def get_session_for_url(self, url: str) -> Optional[ClientSession]:
+        """Get the ClientSession for a specific server URL."""
+        for conn in self._connections:
+            if conn.url == url:
+                return conn.session
+        return None
+
+
+# Backwards compatibility alias
+ConnectionPool = MCPConnectionPool

@@ -31,7 +31,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     structlog = None
 
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
 from seqoria_agent.providers.errors import LLMError
 from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
 from seqoria_agent.models.chunk import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, ToolCallRequestList, LLMUsage
@@ -43,12 +43,12 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
     # LOC gate: keep implementation short (< 250 lines)
 
     def __init__(self, 
-                 providers: List[BaseProvider], 
+                 providers: List[AsyncBaseProvider], 
                  *, 
                  logger: Optional[logging.Logger] = None) -> None:
         if not providers:
-            raise ValueError("'providers' must contain at least one BaseProvider instance.")
-        self._providers: List[BaseProvider] = providers
+            raise ValueError("'providers' must contain at least one AsyncBaseProvider instance.")
+        self._providers: List[AsyncBaseProvider] = providers
         # Cache index of provider that succeeded last time – optimistic fast-path
         self._primary_provider_idx: int = 0
         if logger is not None:

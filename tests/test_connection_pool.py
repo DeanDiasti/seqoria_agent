@@ -1,47 +1,46 @@
+"""Tests for the MCP Connection Pool.
+
+These tests verify the resilience features (circuit breaker, retry)
+work correctly with the new MCP-based connection pool.
+"""
+
 import types
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from seqoria_agent.client.ai_client.connection_pool import ConnectionPool, _Connection
+from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool, _ActiveConnection
+from seqoria_agent.models.errors import CircuitOpenError
+
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Mock helpers
 # ---------------------------------------------------------------------------
 
-class DummyTransport:
-    """A minimal stand-in for SimpleHTTPTransport used in test-scenarios."""
+class MockCallToolResult:
+    """Mock result from session.call_tool()."""
+    def __init__(self, text: str = "ok"):
+        self.content = [MagicMock(text=text)]
 
-    def __init__(self, url: str, responses=None, exc: Exception | None = None):
-        self.url = url
+
+class MockSession:
+    """A minimal mock for MCP ClientSession."""
+
+    def __init__(self, responses=None, exc: Exception | None = None):
         self._responses = list(responses or [])
         self._exc = exc
-        self.closed = False
-        # Stats
         self.call_count = 0
 
-    # Async context-manager interface ----------------------------------
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        await self.close()
-
-    async def close(self):
-        self.closed = True
-
-    # Minimal MCP subset -----------------------------------------------
-    async def call_tool(self, *, name: str, arguments: dict, server_args: dict | None = None):
+    async def call_tool(self, name: str, arguments: dict):
         self.call_count += 1
         if self._exc is not None:
             raise self._exc
         if self._responses:
             return self._responses.pop(0)
-        # Fallback generic response
-        return [types.SimpleNamespace(text="ok")]
+        return MockCallToolResult()
 
-    # list_tools is used by ToolRegistry in later phases – implement stub
     async def list_tools(self):
-        return []
+        return MagicMock(tools=[])
 
 
 # ---------------------------------------------------------------------------
@@ -50,62 +49,68 @@ class DummyTransport:
 
 @pytest.mark.asyncio
 async def test_call_tool_success():
-    """Pool forwards calls to transport and returns the result as-is."""
-    trans = DummyTransport(url="mem://success", responses=[[types.SimpleNamespace(text="yay")]])
-    pool = ConnectionPool(urls=[], transport_cls=lambda url, **kw: trans, tool_map={"echo": trans})
-
-    # No need to connect because we inject mapping directly
-    pool._connections = [_Connection(client=trans, url="mem://success")]  # type: ignore[arg-type]
+    """Pool forwards calls to session and returns the result."""
+    session = MockSession(responses=[MockCallToolResult(text="yay")])
+    
+    pool = MCPConnectionPool(servers=[])
+    pool._tool_map = {"echo": session}
+    pool._session_to_url = {session: "mem://success"}
+    pool._connections = [
+        _ActiveConnection(session=session, url="mem://success", transport_type="http")
+    ]
 
     result = await pool.call_tool("echo", {"msg": "hi"})
     assert result[0].text == "yay"
-    assert trans.call_count == 1
+    assert session.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_retry_then_success():
     """First attempt fails, second succeeds respecting retry_policy."""
-    class FlakyTransport(DummyTransport):
-        async def call_tool(self, *, name: str, arguments: dict, server_args: dict | None = None):
+    class FlakySession(MockSession):
+        async def call_tool(self, name: str, arguments: dict):
             self.call_count += 1
-            # Fail first call
             if self.call_count == 1:
                 raise RuntimeError("boom")
-            return [types.SimpleNamespace(text="ok")]
+            return MockCallToolResult()
 
-    trans = FlakyTransport(url="mem://flaky")
-    pool = ConnectionPool(
-        urls=[],
-        transport_cls=lambda url, **kw: trans,
-        tool_map={"echo": trans},
+    session = FlakySession()
+    pool = MCPConnectionPool(
+        servers=[],
         retry_policy={"max_attempts": 2, "backoff_base": 0},
     )
-    pool._connections = [_Connection(client=trans, url="mem://flaky")]  # type: ignore[arg-type]
+    pool._tool_map = {"echo": session}
+    pool._session_to_url = {session: "mem://flaky"}
+    pool._connections = [
+        _ActiveConnection(session=session, url="mem://flaky", transport_type="http")
+    ]
 
     result = await pool.call_tool("echo", {})
     assert result[0].text == "ok"
-    assert trans.call_count == 2  # one failure + one success
+    assert session.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_circuit_breaker_trips():
     """Breaker opens after threshold consecutive failures and blocks further calls."""
-    class DeadTransport(DummyTransport):
-        async def call_tool(self, *, name: str, arguments: dict, server_args: dict | None = None):
+    class DeadSession(MockSession):
+        async def call_tool(self, name: str, arguments: dict):
             self.call_count += 1
             raise RuntimeError("always broken")
 
-    trans = DeadTransport(url="mem://dead")
+    session = DeadSession()
     threshold = 2
-    pool = ConnectionPool(
-        urls=[],
-        transport_cls=lambda url, **kw: trans,
-        tool_map={"echo": trans},
+    pool = MCPConnectionPool(
+        servers=[],
         retry_policy={"max_attempts": 1, "backoff_base": 0},
         breaker_threshold=threshold,
         breaker_reset_after=60,
     )
-    pool._connections = [_Connection(client=trans, url="mem://dead")]  # type: ignore[arg-type]
+    pool._tool_map = {"echo": session}
+    pool._session_to_url = {session: "mem://dead"}
+    pool._connections = [
+        _ActiveConnection(session=session, url="mem://dead", transport_type="http")
+    ]
 
     # Exceed failure threshold
     for _ in range(threshold):
@@ -113,7 +118,14 @@ async def test_circuit_breaker_trips():
             await pool.call_tool("echo", {})
 
     # Next call should raise CircuitOpenError immediately
-    from seqoria_agent.models.errors import CircuitOpenError
-
     with pytest.raises(CircuitOpenError):
-        await pool.call_tool("echo", {}) 
+        await pool.call_tool("echo", {})
+
+
+@pytest.mark.asyncio
+async def test_tool_not_found():
+    """Raises ValueError when tool is not in tool_map."""
+    pool = MCPConnectionPool(servers=[])
+    
+    with pytest.raises(ValueError, match="not found"):
+        await pool.call_tool("nonexistent", {})

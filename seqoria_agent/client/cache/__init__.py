@@ -11,7 +11,12 @@ import asyncio
 import json
 import time
 from typing import Any, Dict, Protocol
-from redis import asyncio as redis_asyncio
+
+# Optional dependency: redis
+try:  # pragma: no cover – import guarded for optional install
+    from redis import asyncio as redis_asyncio  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    redis_asyncio = None
 
 __all__: list[str] = [
     "CacheProtocol",
@@ -120,6 +125,9 @@ class RedisCache:  # pragma: no cover – optional path
         ImportError
             If the `redis` package is not installed.
         """
+
+        if redis_asyncio is None:
+            raise ImportError(self._redis_missing_msg)
 
         self._redis = redis_asyncio.from_url(url, encoding="utf-8", decode_responses=False)
         self._default_ttl = ttl

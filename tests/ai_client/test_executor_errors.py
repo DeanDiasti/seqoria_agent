@@ -2,12 +2,12 @@ import asyncio
 import pytest
 
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.client import AIClient
+from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.models.chunk import ToolCallRequest, ToolCallError, ToolCallResult
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
 
 
-class DummyProvider(BaseProvider):
+class DummyProvider(AsyncBaseProvider):
     async def async_generate(self, *, chat_history, **kwargs):  # noqa: ANN001
         # Provider is irrelevant for tool execution tests
         raise RuntimeError("LLM call should not be hit in executor tests")
@@ -28,7 +28,7 @@ async def test_executor_returns_tool_error_on_exception():
     def failing_tool():  # noqa: D401, ANN001 – intentional failure
         raise ValueError("boom")
 
-    async with AIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         tc = ToolCallRequest(id="fail1", name="failing_tool", arguments={})
 
         # Blocking helper ----------------------------------------------
@@ -60,7 +60,7 @@ async def test_executor_stream_mixed_success_and_failure():
     def bad_tool():  # noqa: D401, ANN001
         raise RuntimeError("nope")
 
-    async with AIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="ok_tool", arguments={}),
             ToolCallRequest(id="2", name="bad_tool", arguments={}),

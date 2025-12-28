@@ -29,10 +29,10 @@ import os
 import random
 from typing import List
 
-from seqoria_agent.client import AIClient
-from seqoria_agent import OpenAIProvider
+from seqoria_agent.client import AsyncAIClient
+from seqoria_agent import AsyncOpenAIProvider
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.models.chunk import ToolCallRequest, AssistantMessage, ToolCallRequestList
+from seqoria_agent.models.chunk import AssistantMessage, ToolCallRequestList
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
@@ -69,9 +69,9 @@ async def main() -> None:  # noqa: D401
         print("ERROR: OPENAI_API_KEY environment variable is missing.")
         return
 
-    providers = [OpenAIProvider(model_id="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))]
+    providers = [AsyncOpenAIProvider(model_id="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))]
 
-    async with AIClient(urls=[], providers=providers, local_toolbox=box) as ai:
+    async with AsyncAIClient(urls=[], providers=providers, local_toolbox=box) as ai:
         history: List[dict] = []
 
         MAX_ROUNDS = 5

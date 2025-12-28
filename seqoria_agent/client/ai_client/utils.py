@@ -1,22 +1,130 @@
 from __future__ import annotations
 
-import json
-import xml.etree.ElementTree as ET
-from contextlib import asynccontextmanager
-from typing import Any, Optional, Dict, Any
 import hashlib
-import xxhash
+from contextlib import asynccontextmanager
+from typing import Any, Optional, Dict
 
 # Phase 9 constant extraction
 from seqoria_agent.client.ai_client.consts_runtime import XML_ERROR_TAG  # noqa: F401
 
-# Phase-2 optimisation: use orjson for faster canonical dumps when available
-try:
-    import orjson as _json_fast  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover – optional dependency
-    _json_fast = None
+# ---------------------------------------------------------------------------
+# High-performance JSON utilities with fallback
+# ---------------------------------------------------------------------------
+# Priority: orjson (fastest) -> ujson (fast) -> json (stdlib)
 
-__all__: list[str] = ["null_async_cm", "extract_error_from_xml", "build_cache_key"]
+_json_impl: str = "json"  # Track which implementation is active
+
+try:
+    import orjson as _orjson  # type: ignore
+    _json_impl = "orjson"
+except ModuleNotFoundError:
+    _orjson = None
+
+try:
+    import ujson as _ujson  # type: ignore
+    if _orjson is None:
+        _json_impl = "ujson"
+except ModuleNotFoundError:
+    _ujson = None
+
+# Always import stdlib json as fallback
+import json as _json_stdlib
+
+# Try to import xxhash for fast hashing
+try:
+    import xxhash as _xxhash
+except ModuleNotFoundError:
+    _xxhash = None
+
+
+def json_dumps(obj: Any, *, sort_keys: bool = False, indent: int | None = None) -> str:
+    """Serialize object to JSON string using fastest available library.
+    
+    Parameters
+    ----------
+    obj : Any
+        Object to serialize.
+    sort_keys : bool
+        Whether to sort dictionary keys (for deterministic output).
+    indent : int | None
+        Indentation level for pretty printing. None for compact output.
+        
+    Returns
+    -------
+    str
+        JSON string representation.
+    """
+    if _orjson is not None:
+        opts = _orjson.OPT_SORT_KEYS if sort_keys else 0
+        if indent:
+            opts |= _orjson.OPT_INDENT_2
+        return _orjson.dumps(obj, option=opts).decode("utf-8")
+    elif _ujson is not None:
+        return _ujson.dumps(obj, sort_keys=sort_keys, indent=indent)
+    else:
+        separators = (",", ":") if indent is None else None
+        return _json_stdlib.dumps(obj, sort_keys=sort_keys, indent=indent, separators=separators)
+
+
+def json_loads(s: str | bytes) -> Any:
+    """Deserialize JSON string using fastest available library.
+    
+    Parameters
+    ----------
+    s : str | bytes
+        JSON string or bytes to deserialize.
+        
+    Returns
+    -------
+    Any
+        Deserialized Python object.
+    """
+    if _orjson is not None:
+        return _orjson.loads(s)
+    elif _ujson is not None:
+        return _ujson.loads(s)
+    else:
+        return _json_stdlib.loads(s)
+
+
+def json_impl_name() -> str:
+    """Return the name of the active JSON implementation."""
+    return _json_impl
+
+
+def fast_hash(data: str | bytes) -> str:
+    """Compute fast non-cryptographic hash of data.
+    
+    Uses xxhash if available, falls back to SHA-1 truncated.
+    
+    Parameters
+    ----------
+    data : str | bytes
+        Data to hash.
+        
+    Returns
+    -------
+    str
+        Hexadecimal hash string (16 chars for xxhash, 8 for SHA-1).
+    """
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    
+    if _xxhash is not None:
+        return _xxhash.xxh3_64_hexdigest(data)
+    else:
+        return hashlib.sha1(data).hexdigest()[:16]
+
+
+__all__: list[str] = [
+    "null_async_cm",
+    "extract_error_from_xml",
+    "build_cache_key",
+    "json_dumps",
+    "json_loads",
+    "json_impl_name",
+    "fast_hash",
+]
 
 
 @asynccontextmanager
@@ -37,6 +145,8 @@ def extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D
         return None
 
     try:
+        # Lazy import: XML parsing is relatively rare compared to JSON handling.
+        import xml.etree.ElementTree as ET
         root = ET.fromstring(text=xml_str.strip())
         error_el = root.find(path=XML_ERROR_TAG)
         if error_el is None:
@@ -50,7 +160,7 @@ def extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D
         meta: Any | None = None
         if meta_node is not None and meta_node.text:
             try:
-                meta = json.loads(s=meta_node.text)
+                meta = json_loads(meta_node.text)
             except Exception:
                 meta = meta_node.text.strip()
 
@@ -75,18 +185,8 @@ def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str
         Optional namespace prefix for multi-tenant deployments. When given, the
         resulting key is ``tenant:{tenant_id}:tool:{tool_name}:{hash}``.
     """
-    if _json_fast is not None:
-        # OPT_SORT_KEYS yields deterministic ordering equivalent to sort_keys=True
-        canonical_json = _json_fast.dumps(arguments, option=_json_fast.OPT_SORT_KEYS).decode()
-    else:
-        canonical_json = json.dumps(obj=arguments, sort_keys=True, separators=(",", ":"))
-
-    # Try faster non-cryptographic hash when available ----------------------
-    try:
-        args_hash = xxhash.xxh3_64_hexdigest(canonical_json)
-    except Exception:
-        # Fallback to built-in SHA-256 to avoid hard dependency
-        args_hash = hashlib.sha256(string=canonical_json.encode()).hexdigest()
+    canonical_json = json_dumps(arguments, sort_keys=True)
+    args_hash = fast_hash(canonical_json)
 
     prefix = f"tenant:{tenant_id}:" if tenant_id else ""
     return f"{prefix}tool:{tool_name}:{args_hash}" 

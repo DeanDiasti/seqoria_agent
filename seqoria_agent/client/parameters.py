@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Mapping, Optional, Union, Type
 import inspect
-import asyncio
 import logging
 from pydantic import BaseModel
 
@@ -47,6 +46,11 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
         """
 
         self._mapping: dict[str, ParameterSource] = {}
+        # Precomputed callable parameter filters for fast resolution.
+        # - None: callable accepts **kwargs → pass full context
+        # - set(): callable takes no kwargs (or signature unknown) → call without kwargs
+        # - set({...}): pass only these keys (intersection with context)
+        self._kw_params: dict[str, set[str] | None] = {}
 
         for key, src in mapping.items():
             if isinstance(key, str):
@@ -60,14 +64,22 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
             if param_name in self._mapping:
                 raise ValueError(f"Duplicate parameter name '{param_name}' in registry mapping")
 
-            # ------------------------------------------------------------------
-            # Accept non-callable constants by wrapping them in a zero-arg
-            # lambda so the rest of the resolution logic can treat *every*
-            # value uniformly as a callable.
-            # ------------------------------------------------------------------
-            if not callable(src):
-                const_val = src  # capture by default arg so it doesn't change
-                src = lambda **_: const_val  # type: ignore[assignment]
+            # Precompute signature-derived kw filtering once (avoid per-call inspect.signature).
+            if callable(src):
+                try:
+                    sig = inspect.signature(obj=src)  # type: ignore[arg-type]
+                    params = sig.parameters.values()
+                    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params):
+                        self._kw_params[param_name] = None
+                    else:
+                        self._kw_params[param_name] = {
+                            p.name
+                            for p in params
+                            if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+                        }
+                except Exception:
+                    # If we can't introspect the callable, fall back to calling it without kwargs.
+                    self._kw_params[param_name] = set()
 
             self._mapping[param_name] = src
 
@@ -98,15 +110,24 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
         if source is None:
             return None
 
-        if not callable(source):
-            return source
-
         try:
-            sig = inspect.signature(obj=source)  # type: ignore[arg-type]
-            kwargs = {k: v for k, v in context.items() if k in sig.parameters}
-            result = source(**kwargs)  # type: ignore[arg-type]
+            if not callable(source):
+                return source
+
+            kw_params = self._kw_params.get(name, set())
+            if kw_params is None:
+                # Callable accepts **kwargs: pass full context mapping.
+                result = source(**context)  # type: ignore[arg-type]
+            elif not kw_params:
+                # No kwargs expected (or signature unknown): call without kwargs.
+                result = source()  # type: ignore[misc]
+            else:
+                # Pass only the subset of context keys the callable declares.
+                kwargs = {k: context[k] for k in kw_params if k in context}
+                result = source(**kwargs)  # type: ignore[arg-type]
+
             if inspect.isawaitable(object=result):  # covers coroutine & awaitable objects
-                result = await asyncio.ensure_future(coro_or_future=result)  # type: ignore[assignment]
+                return await result  # type: ignore[misc]
             return result
         except Exception as exc:  # noqa: BLE001 – user code must not crash core
             self._log.warning("Parameter '%s' failed to resolve: %s", name, exc)

@@ -1,72 +1,125 @@
+"""Tests for server-populated parameters with SeqoriaMCP and LocalToolbox."""
 
 import pytest
-from fastapi import Request
-from fastapi.testclient import TestClient
 
-from seqoria_agent.server.fastxmcp import FastXMCP
+from seqoria_agent.server import SeqoriaMCP
+from seqoria_agent.toolbox import LocalToolbox
 
 
 @pytest.fixture()
-def app():
-    app = FastXMCP(title="SPP Test Server")
+def mcp_server():
+    """Create SeqoriaMCP with server-populated params."""
+    mcp = SeqoriaMCP("SPPTest")
 
-    # Provider that injects user_id from header
-    @app.register_param_provider  # type: ignore[arg-type]
-    async def _hdr(req: Request, tool_name: str, param_name: str):  # noqa: ANN401
+    # Register param provider
+    @mcp.register_param_provider
+    def provide_params(ctx, tool_name: str, param_name: str):
         if param_name == "user_id":
-            return req.headers.get("X-User-Id", "injected")
+            return "injected_user_123"
         return None
 
-    # Tool requiring server-populated param
-    @app.tool(server_populated=["user_id"])
-    def greet(user_id: str, name: str) -> str:  # noqa: D401
-        return f"hi {name} (uid={user_id})"
+    # Tool with server-populated param
+    @mcp.tool(server_populated=["user_id"])
+    def greet(name: str, user_id: str) -> str:
+        return f"Hi {name} (uid={user_id})"
 
-    return app
-
-
-def _rpc_msg(method: str, params: dict | None = None, _id: int = 1):
-    return {
-        "jsonrpc": "2.0",
-        "id": _id,
-        "method": method,
-        "params": params or {},
-    }
+    return mcp
 
 
-def test_injection_success(app):
-    client = TestClient(app)
+def test_metadata_tracks_server_params(mcp_server):
+    """Verify server_populated is tracked in metadata."""
+    meta = mcp_server.tool_metadata["greet"]
+    assert "user_id" in meta.server_populated
 
-    # Call tool without user_id argument – provider should inject
-    payload = _rpc_msg(
-        "tools/call",
-        {
-            "name": "greet",
-            "arguments": {"name": "Dean"},
-            "serverArgs": {"user_id": "injected"},
-        },
+
+def test_annotations_expose_server_params(mcp_server):
+    """Verify annotations expose server_populated."""
+    ann = mcp_server.get_tool_annotations("greet")
+    assert "user_id" in ann["server_populated"]
+
+
+@pytest.fixture()
+def local_toolbox():
+    """Create LocalToolbox with server-populated params."""
+    tb = LocalToolbox()
+
+    # Register param provider
+    @tb.register_param_provider
+    def provide_params(request, tool_name: str, param_name: str):
+        if param_name == "user_id":
+            return "local_user_456"
+        if param_name == "tenant_id":
+            return "tenant_abc"
+        return None
+
+    # Tool with single server-populated param
+    @tb.tool(server_populated=["user_id"])
+    def greet(name: str, user_id: str) -> str:
+        return f"Hi {name} (uid={user_id})"
+
+    # Tool with multiple server-populated params
+    @tb.tool(server_populated=["user_id", "tenant_id"])
+    def info(user_id: str, tenant_id: str) -> str:
+        return f"user={user_id}, tenant={tenant_id}"
+
+    return tb
+
+
+@pytest.mark.asyncio
+async def test_local_toolbox_injection(local_toolbox):
+    """Verify LocalToolbox injects server-populated params."""
+    result = await local_toolbox.call_tool("greet", {"name": "Alice"})
+    text = result[0].text
+    assert "Hi Alice" in text
+    assert "local_user_456" in text
+
+
+@pytest.mark.asyncio
+async def test_local_toolbox_multiple_params(local_toolbox):
+    """Verify multiple server-populated params are injected."""
+    result = await local_toolbox.call_tool("info", {})
+    text = result[0].text
+    assert "local_user_456" in text
+    assert "tenant_abc" in text
+
+
+@pytest.mark.asyncio
+async def test_local_toolbox_server_args(local_toolbox):
+    """Verify server_args can override param providers."""
+    result = await local_toolbox.call_tool(
+        "greet",
+        {"name": "Bob"},
+        server_args={"user_id": "explicit_user"},
     )
-    r = client.post("/mcp/", json=payload)
-    assert r.status_code == 200
-    data = r.json()
-    assert "result" in data and data["error"] is None
-    xml = data["result"]["contents"][0]["text"]
-    assert "uid=injected" in xml
+    text = result[0].text
+    assert "explicit_user" in text
 
 
-def test_override_forbidden(app):
-    client = TestClient(app)
+@pytest.mark.asyncio
+async def test_local_toolbox_forbid_override():
+    """Verify strict mode prevents LLM from overriding server params."""
+    tb = LocalToolbox(strict_server_params=True)
 
-    # Supply forbidden param – should raise structured error
-    payload = _rpc_msg(
-        "tools/call",
-        {
-            "name": "greet",
-            "arguments": {"name": "Dean", "user_id": "hacker"},
-            "serverArgs": {"user_id": "hacker"},
-        },
-    )
-    r = client.post("/mcp/", json=payload)
-    assert r.status_code == 200
-    body = r.json()
-    assert body["error"]["code"] == "FORBIDDEN_PARAM_OVERRIDE" 
+    @tb.tool(server_populated=["secret"])
+    def reveal(secret: str) -> str:
+        return f"secret={secret}"
+
+    # Attempting to pass server-populated param from "LLM side" should fail
+    with pytest.raises(ValueError, match="Cannot override server-populated"):
+        await tb.call_tool("reveal", {"secret": "hacked"})
+
+
+@pytest.mark.asyncio
+async def test_local_toolbox_list_shows_annotations():
+    """Verify list_tools exposes annotations for server-populated params."""
+    tb = LocalToolbox()
+
+    @tb.tool(server_populated=["user_id"], depends_on=["auth"])
+    def protected(data: str, user_id: str) -> str:
+        return data
+
+    tools = tb.list_tools()
+    tool = next(t for t in tools if t.name == "protected")
+
+    assert "user_id" in tool.annotations.get("server_populated", [])
+    assert "auth" in tool.annotations.get("depends_on", [])

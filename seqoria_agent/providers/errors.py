@@ -1,4 +1,20 @@
 # core/llm/errors.py
+"""LLM Provider Error Hierarchy and Unified Error Mapping.
+
+This module defines the exception hierarchy for LLM provider errors
+and provides utilities for mapping provider-specific exceptions to
+our standardized error types.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from typing import Callable, Dict, Tuple, Type, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
 
 class LLMError(Exception):
     """Base class for all LLM-related errors."""
@@ -41,7 +57,7 @@ class ConnectionError(LLMError):
 class ModelNotFoundError(LLMError):
     """Raised when the requested model doesn't exist or isn't accessible."""
     
-    def __init__(self, model_id, provider, fallback_model=None) -> None:
+    def __init__(self, model_id, provider, fallback_model=None, available_models=None) -> None:
         """
         Initialize the error with model information.
         
@@ -49,14 +65,18 @@ class ModelNotFoundError(LLMError):
             model_id: ID of the requested model that wasn't found
             provider: Name of the provider
             fallback_model: Model ID being used as fallback, if any
+            available_models: List of available model IDs from the provider
         """
         self.model_id = model_id
-        self.provider = provider
         self.fallback_model = fallback_model
+        self.available_models = available_models or []
+        
         message = f"Model '{model_id}' not found or not accessible on {provider}"
         if fallback_model:
             message += f". Using fallback model '{fallback_model}'"
-        super().__init__(message)
+        if available_models:
+            message += f". Available models: {', '.join(available_models)}"
+        super().__init__(message, provider=provider)
 
 
 class ContextLengthExceededError(LLMError):
@@ -174,3 +194,214 @@ class ServerError(LLMError):
         if status_code:
             message += f" (status code: {status_code})"
         super().__init__(message)
+
+
+# ---------------------------------------------------------------------------
+# Unified Error Mapper
+# ---------------------------------------------------------------------------
+
+class ErrorMapper:
+    """Unified error mapper for converting provider-specific exceptions.
+    
+    This class provides a declarative way to map provider exceptions to
+    our standardized error hierarchy, reducing boilerplate in providers.
+    
+    Example
+    -------
+    >>> from openai import AuthenticationError, RateLimitError
+    >>> mapper = ErrorMapper("OpenAI")
+    >>> mapper.register(AuthenticationError, 
+    ...     lambda e, m: EnvironmentError(f"Auth failed: {e}", missing_vars=["OPENAI_API_KEY"]))
+    >>> mapper.register(RateLimitError, 
+    ...     lambda e, m: QuotaExceededError(provider="OpenAI", limit_type="rate"))
+    >>> 
+    >>> # In provider code:
+    >>> try:
+    ...     result = await client.chat.create(...)
+    >>> except Exception as e:
+    ...     raise mapper.map(e, model_id="gpt-4o")
+    """
+    
+    def __init__(self, provider_name: str) -> None:
+        """Initialize the error mapper.
+        
+        Parameters
+        ----------
+        provider_name : str
+            Name of the provider (for error messages).
+        """
+        self.provider_name = provider_name
+        self._mappings: list[Tuple[Type[Exception], Callable[[Exception, str | None], LLMError]]] = []
+        self._status_code_handlers: Dict[int, Callable[[Exception, str | None], LLMError]] = {}
+        self._pattern_handlers: list[Tuple[re.Pattern, Callable[[Exception, str | None, re.Match], LLMError]]] = []
+    
+    def register(
+        self,
+        exc_type: Type[Exception],
+        handler: Callable[[Exception, str | None], LLMError],
+    ) -> "ErrorMapper":
+        """Register a handler for a specific exception type.
+        
+        Parameters
+        ----------
+        exc_type : Type[Exception]
+            The exception type to handle.
+        handler : Callable
+            Function that takes (exception, model_id) and returns an LLMError.
+            
+        Returns
+        -------
+        ErrorMapper
+            Self for chaining.
+        """
+        self._mappings.append((exc_type, handler))
+        return self
+    
+    def register_status_code(
+        self,
+        status_code: int,
+        handler: Callable[[Exception, str | None], LLMError],
+    ) -> "ErrorMapper":
+        """Register a handler for a specific HTTP status code.
+        
+        Parameters
+        ----------
+        status_code : int
+            The HTTP status code to handle.
+        handler : Callable
+            Function that takes (exception, model_id) and returns an LLMError.
+            
+        Returns
+        -------
+        ErrorMapper
+            Self for chaining.
+        """
+        self._status_code_handlers[status_code] = handler
+        return self
+    
+    def register_pattern(
+        self,
+        pattern: str,
+        handler: Callable[[Exception, str | None, re.Match], LLMError],
+    ) -> "ErrorMapper":
+        """Register a handler for exceptions matching a regex pattern.
+        
+        Parameters
+        ----------
+        pattern : str
+            Regex pattern to match against exception message.
+        handler : Callable
+            Function that takes (exception, model_id, match) and returns an LLMError.
+            
+        Returns
+        -------
+        ErrorMapper
+            Self for chaining.
+        """
+        self._pattern_handlers.append((re.compile(pattern, re.IGNORECASE), handler))
+        return self
+    
+    def map(self, error: Exception, model_id: str | None = None) -> LLMError:
+        """Map an exception to our error hierarchy.
+        
+        Parameters
+        ----------
+        error : Exception
+            The exception to map.
+        model_id : str | None
+            The model ID for context (used in some error messages).
+            
+        Returns
+        -------
+        LLMError
+            The mapped error.
+        """
+        # Check for timeout first (common across all providers)
+        if isinstance(error, asyncio.TimeoutError) or "timed out" in str(error).lower():
+            return ConnectionError(provider=self.provider_name, message="Request timed out")
+        
+        # Check registered exception types
+        for exc_type, handler in self._mappings:
+            if isinstance(error, exc_type):
+                return handler(error, model_id)
+        
+        # Check status code handlers (for API errors)
+        status_code = getattr(error, "status_code", None)
+        if status_code is not None and status_code in self._status_code_handlers:
+            return self._status_code_handlers[status_code](error, model_id)
+        
+        # Check pattern handlers
+        error_message = str(error)
+        for pattern, handler in self._pattern_handlers:
+            match = pattern.search(error_message)
+            if match:
+                return handler(error, model_id, match)
+        
+        # Handle generic status codes
+        if status_code is not None:
+            if 500 <= status_code < 600:
+                return ServerError(provider=self.provider_name, status_code=status_code)
+            elif status_code == 429:
+                return QuotaExceededError(provider=self.provider_name, limit_type="rate")
+            elif status_code == 400:
+                return InvalidRequestError(message=f"API Error {status_code}: {error}")
+        
+        # Fallback to generic error
+        return LLMError(message=f"An unexpected {self.provider_name} error occurred: {error}")
+    
+    def __call__(self, error: Exception, model_id: str | None = None) -> LLMError:
+        """Callable shorthand for map()."""
+        return self.map(error, model_id)
+
+
+def create_openai_error_mapper() -> ErrorMapper:
+    """Create an error mapper pre-configured for OpenAI.
+    
+    Returns
+    -------
+    ErrorMapper
+        Configured mapper for OpenAI exceptions.
+    """
+    mapper = ErrorMapper("OpenAI")
+    
+    # We can't import OpenAI exceptions here (circular/optional dep)
+    # Instead, providers should call this and add their mappings
+    
+    # Register common patterns
+    mapper.register_pattern(
+        r"context_length_exceeded",
+        lambda e, m, _: ContextLengthExceededError(model_id=m or "unknown"),
+    )
+    mapper.register_pattern(
+        r"content_policy_violation",
+        lambda e, m, _: ContentFilterError(provider="OpenAI", filter_reason=str(e)),
+    )
+    
+    return mapper
+
+
+def create_anthropic_error_mapper() -> ErrorMapper:
+    """Create an error mapper pre-configured for Anthropic.
+    
+    Returns
+    -------
+    ErrorMapper
+        Configured mapper for Anthropic exceptions.
+    """
+    mapper = ErrorMapper("Anthropic")
+    
+    # Register common patterns
+    mapper.register_pattern(
+        r"context_length_exceeded|maximum context length",
+        lambda e, m, _: ContextLengthExceededError(model_id=m or "unknown"),
+    )
+    mapper.register_pattern(
+        r"content_policy_violation|safety",
+        lambda e, m, _: ContentFilterError(provider="Anthropic", filter_reason=str(e)),
+    )
+    mapper.register_pattern(
+        r"tool.*(?:invalid|missing)",
+        lambda e, m, _: InvalidRequestError(message=f"Tool validation error: {e}"),
+    )
+    
+    return mapper

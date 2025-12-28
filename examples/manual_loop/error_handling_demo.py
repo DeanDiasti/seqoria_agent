@@ -15,10 +15,10 @@ from typing import List
 
 from dotenv import load_dotenv
 
-from seqoria_agent.client import AIClient
+from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.chunk import ToolCallRequest, ToolCallError, ToolCallResult
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.providers import AsyncOpenAIProvider
 
 # ---------------------------------------------------------------------------
 # Inline tools – one succeeds, one fails
@@ -39,8 +39,8 @@ async def hello(name: str = "world") -> str:
 
 async def main() -> None:  # noqa: D401 – simple demo
     load_dotenv()
-    async with AIClient(urls=[],
-                        providers=[OpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))],
+    async with AsyncAIClient(urls=[],
+                        providers=[AsyncOpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))],
                         local_toolbox=tb) as ai:
 
         tool_calls: List[ToolCallRequest] = [

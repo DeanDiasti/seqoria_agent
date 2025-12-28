@@ -1,23 +1,25 @@
 from __future__ import annotations
 
-"""Centralised settings object for *AIClient*.
+"""Centralised settings object for *AIClient* / *AsyncAIClient*.
 
 The :class:`ClientSettings` dataclass groups the most commonly adjusted runtime
-configuration values for :class:`seqoria_agent.client.AIClient`.  Supplying a
-pre-constructed settings object keeps application code tidy when many knobs
-need tweaking while **not** breaking the existing constructor signature.
+configuration values for :class:`seqoria_agent.client.AIClient` and
+:class:`seqoria_agent.client.AsyncAIClient`.  Supplying a pre-constructed
+settings object keeps application code tidy when many knobs need tweaking
+while **not** breaking the existing constructor signature.
 
-Explicit keyword arguments passed to :class:`AIClient` continue to take
-precedence over the values held in a :class:`ClientSettings` instance.
+Explicit keyword arguments passed to :class:`AIClient` or :class:`AsyncAIClient`
+continue to take precedence over the values held in a :class:`ClientSettings`
+instance.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable, List, Mapping
+from typing import Any, Iterable, List, Mapping, Union
 import logging
 
 from seqoria_agent.client.cache import CacheProtocol  # noqa: F401
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
 from seqoria_agent.client.parameters import ParameterSource, ParameterRegistry
 
 __all__: list[str] = ["ClientSettings"]
@@ -26,7 +28,7 @@ __all__: list[str] = ["ClientSettings"]
 @dataclass(slots=True)
 class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
     # Core ------------------------------------------------------------------
-    providers: List[BaseProvider] = field(default_factory=list)
+    providers: List[Union[AsyncBaseProvider, BaseProvider]] = field(default_factory=list)
     urls: Iterable[str] | None = None
     local_toolbox: LocalToolbox | list[LocalToolbox] | None = None
     logger: logging.Logger | None = None
@@ -49,7 +51,7 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
     # ----------------------------------------------------------------------
     # Convenience helpers
     # ----------------------------------------------------------------------
-    def with_provider(self, provider: BaseProvider) -> "ClientSettings":
+    def with_provider(self, provider: Union[AsyncBaseProvider, BaseProvider]) -> "ClientSettings":
         """Return a *copy* with *provider* appended to :attr:`providers`."""
         new = self.copy()
         new.providers.append(provider)
@@ -67,4 +69,4 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
         return (
             f"{cls}(urls={self.urls}, providers={len(self.providers)} providers,"  # avoid verbose repr
             f" cache={self.cache or 'NullCache'}, refresh_interval={self.refresh_interval})"
-        ) 
+        )
