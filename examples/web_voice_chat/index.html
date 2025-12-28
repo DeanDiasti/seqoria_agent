@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Seqoria Voice Chat Demo</title>
+  <style>
+    body { font: 16px/1.4 sans-serif; max-width: 640px; margin: 2rem auto; }
+    button { padding: .6rem 1.4rem; font-size: 1rem; }
+    #transcript { margin-top: 1rem; font-style: italic; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>Seqoria Voice Chat</h1>
+
+  <button id="recordBtn">🎙️ Hold to Talk</button>
+  <p id="transcript"></p>
+  <audio id="replyAudio" controls style="width:100%; margin-top:1rem;"></audio>
+
+  <script>
+  const recordBtn   = document.getElementById("recordBtn");
+  const transcriptP = document.getElementById("transcript");
+  const replyAudio  = document.getElementById("replyAudio");
+
+  let mediaRecorder, chunks = [];
+
+  async function initRecorder() {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    mediaRecorder = new MediaRecorder(stream,{mimeType:'audio/webm'});
+    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+    mediaRecorder.onstop = processRecording;
+  }
+
+  async function processRecording() {
+    const blob = new Blob(chunks,{type:'audio/webm'});
+    chunks = [];
+    transcriptP.textContent = '⏳ Transcribing…';
+
+    // Work out websocket URL ------------------------------------------------
+    let wsUrl;
+    if(location.protocol === 'file:') {
+      wsUrl = 'ws://127.0.0.1:8000/ws/speech';
+    } else {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      wsUrl = `${proto}://${location.host}/ws/speech`;
+    }
+
+    try {
+      const ws = new WebSocket(wsUrl);
+
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = async () => {
+        // Send the whole recording as one binary frame.
+        const buf = await blob.arrayBuffer();
+        ws.send(buf);
+        // Signal end of utterance with empty frame
+        ws.send(new ArrayBuffer(0));
+      };
+
+      ws.onmessage = (evt) => {
+        const data = JSON.parse(evt.data);
+        transcriptP.textContent = '🗣️ You: ' + (data.transcript || '[no speech detected]');
+
+        const audioBlob = b64ToBlob(data.tts_audio_b64,'audio/wav');
+        replyAudio.src = URL.createObjectURL(audioBlob);
+        replyAudio.play();
+      };
+
+      ws.onerror = (err) => {
+        transcriptP.textContent = '❌ WS error';
+        console.error(err);
+      };
+    } catch(err){
+      transcriptP.textContent = '❌ Error: ' + err;
+    }
+  }
+
+  function b64ToBlob(b64, type){
+    const binary = atob(b64);
+    const bytes  = new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes],{type});
+  }
+
+  // ----------------------------- UI events ------------------------------
+  recordBtn.addEventListener('mousedown', async ()=>{
+    if(!mediaRecorder) await initRecorder();
+    mediaRecorder.start();
+    recordBtn.textContent = '◼️ Release to stop';
+  });
+
+  const stopRecording = () => {
+    if(mediaRecorder && mediaRecorder.state==='recording') mediaRecorder.stop();
+    recordBtn.textContent = '🎙️ Hold to Talk';
+  };
+
+  recordBtn.addEventListener('mouseup', stopRecording);
+  recordBtn.addEventListener('mouseleave', stopRecording);
+  recordBtn.addEventListener('touchstart', e=>{e.preventDefault(); recordBtn.dispatchEvent(new Event('mousedown'));});
+  recordBtn.addEventListener('touchend',   e=>{e.preventDefault(); stopRecording();});
+  </script>
+</body>
+</html> 

@@ -1,6 +1,6 @@
 """Unit tests for low-level value objects in *xmcp.models*."""
 
-from seqoria_agent.models.chunk import ChatChunk
+from seqoria_agent.models.llm_models import ChatChunk
 
 
 def test_chat_chunk_dataclass():

@@ -11,7 +11,7 @@ LLM step and print the result.
 import asyncio
 
 from seqoria_agent.client import AIClient  # type: ignore
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.llm_providers import OpenAIProvider
 
 from dotenv import load_dotenv
 import os

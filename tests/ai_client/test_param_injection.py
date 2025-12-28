@@ -5,7 +5,7 @@ import pytest
 
 from seqoria_agent.client.ai_client.executor import Executor
 from seqoria_agent.client.parameters import ParamContext, ParameterSource
-from seqoria_agent.models.chunk import ToolCallRequest
+from seqoria_agent.models.llm_models import ToolCallRequest
 
 
 class _DummyPool:  # minimal stub for ConnectionPool

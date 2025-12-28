@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from seqoria_agent.client.ai_client.executor import Executor
 from seqoria_agent.client.parameters import ParamContext, ParameterRegistry
-from seqoria_agent.models.chunk import ToolCallRequest
+from seqoria_agent.models.llm_models import ToolCallRequest
 
 
 class _DummyPool:  # minimal stub for ConnectionPool

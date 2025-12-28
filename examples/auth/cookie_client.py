@@ -2,7 +2,7 @@
 import asyncio, jwt
 from seqoria_agent.client import AIClient
 from seqoria_agent.auth.providers import StaticCookieProvider
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.llm_providers import OpenAIProvider
 
 SECRET = "change-me"
 ALGO = "HS256"

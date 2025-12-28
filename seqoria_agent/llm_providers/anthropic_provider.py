@@ -27,7 +27,7 @@ from .errors import (ConnectionError,
                      QuotaExceededError,
                      ServerError)
 
-from seqoria_agent.models.chunk import (AssistantMessage,
+from seqoria_agent.models.llm_models import (AssistantMessage,
                                         SystemMessage,
                                         UserMessage,
                                         ToolCallRequest,
@@ -109,7 +109,7 @@ class AnthropicProvider(BaseProvider):
                                "top_p": 1.0}
         
         # Update default_params with any valid query kwargs provided in __init__
-        valid_query_keys = self.default_params.keys() | {"top_k", "stop_sequences", "metadata", "tools", "tool_choice"} # Add other valid keys
+        valid_query_keys = {"max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "metadata", "tools", "tool_choice"} # Add other valid keys
         for key, value in kwargs.items():
             if key in valid_query_keys:
                 self.default_params[key] = value
@@ -202,23 +202,21 @@ class AnthropicProvider(BaseProvider):
     async def _execute_with_retry(self, operation: callable) -> Any:  # type: ignore[override]
         return await super()._execute_with_retry(operation=operation)
     
-    async def _parse_tool_call(self, tool_call: List[Dict[str, Any]]) -> List[ToolCall]:  # noqa: D401
-        """Convert *tool_call* dictionaries into :class:`ToolCall` objects.
-
-        Ensures the *arguments* field is a mapping (JSON-decoded if it was
-        received as a JSON string) so it satisfies the schema.
-        """
-
+    async def _parse_tool_call(self, 
+                               tool_call: List[Union[Dict[str, Any], ToolCall]]) -> List[ToolCall]:
         processed_tool_calls: List[ToolCall] = []
 
         for tc in tool_call:
-            # Decode argument payload if it is a JSON string
-            if isinstance(tc.arguments, str):
-                try:
-                    tc.arguments = json.loads(s=tc.arguments)
-                except Exception:  # noqa: BLE001 – fall back to empty mapping
-                    tc.arguments = {}
+            if isinstance(tc, ToolCall):
+                processed_tool_calls.append(tc)        # already correct type
+                continue
 
+            # tc is a dict → normal handling
+            if isinstance(tc.get("arguments"), str):
+                try:
+                    tc["arguments"] = json.loads(tc["arguments"])
+                except Exception:
+                    tc["arguments"] = {}
             processed_tool_calls.append(ToolCall(**tc))
 
         return processed_tool_calls
@@ -489,16 +487,18 @@ class AnthropicProvider(BaseProvider):
                 if chunk.type == "message_start":
                     # Extract usage from message start event
                     if hasattr(chunk, 'message') and hasattr(chunk.message, 'usage'):
-                        final_usage_data["prompt_tokens"] = chunk.message.usage.input_tokens or 0
+                        final_usage_data.prompt_tokens = chunk.message.usage.input_tokens or 0
                 elif chunk.type == "content_block_start":
                     # Handle start of content blocks (text or tool_use)
                     if hasattr(chunk, 'content_block'):
                         if chunk.content_block.type == 'tool_use':
                             # Start of a tool use block
-                            current_tool_call = ToolCall(id=chunk.content_block.id,
-                                                         type="tool_use",
-                                                         function_name=chunk.content_block.name,
-                                                         arguments=chunk.content_block.input or {})  # May be empty initially
+                            current_tool_call = {
+                                "id": chunk.content_block.id,
+                                "type": "tool_use",
+                                "function_name": chunk.content_block.name,
+                                "arguments": chunk.content_block.input or {},
+                            }
                             current_tool_input_json = ""  # Reset for accumulating JSON
                 elif chunk.type == "content_block_delta":
                     # Extract text delta from content block delta

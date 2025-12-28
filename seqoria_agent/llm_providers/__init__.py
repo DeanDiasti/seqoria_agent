@@ -8,8 +8,8 @@ these providers and handles common tasks like authentication,
 error handling, and response formatting.
 """
 
-from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.errors import (ConnectionError,
+from seqoria_agent.llm_providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.errors import (ConnectionError,
                                             ContentFilterError,
                                             ContextLengthExceededError,
                                             EnvironmentError,
@@ -20,8 +20,9 @@ from seqoria_agent.providers.errors import (ConnectionError,
                                             QuotaExceededError,
                                             ServerError)
 
-from seqoria_agent.providers.openai_provider import OpenAIProvider
-from seqoria_agent.providers.anthropic_provider import AnthropicProvider
+from seqoria_agent.llm_providers.openai_provider import OpenAIProvider
+from seqoria_agent.llm_providers.anthropic_provider import AnthropicProvider
+from seqoria_agent.llm_providers.cerebras_provider import CerebrasProvider
 
 
 __all__ = ["BaseProvider",
@@ -36,4 +37,5 @@ __all__ = ["BaseProvider",
            "QuotaExceededError",
            "ServerError",
            "OpenAIProvider",
-           "AnthropicProvider"]
+           "AnthropicProvider",
+           "CerebrasProvider"]

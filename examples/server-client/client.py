@@ -30,8 +30,8 @@ from dotenv import load_dotenv
 from seqoria_agent import AIClient
 from seqoria_agent.client.cache import DictCache
 from seqoria_agent.client.parameters import ParameterRegistry
-from seqoria_agent.providers import OpenAIProvider
-from seqoria_agent.models.chunk import ChatChunk, ToolMessages
+from seqoria_agent.llm_providers import OpenAIProvider
+from seqoria_agent.models.llm_models import ChatChunk, ToolMessages
 
 load_dotenv()
 

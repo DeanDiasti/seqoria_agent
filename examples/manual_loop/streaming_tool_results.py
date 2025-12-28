@@ -18,7 +18,7 @@ from typing import List
 
 from seqoria_agent.client import AIClient
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.models.chunk import ToolCallRequest
+from seqoria_agent.models.llm_models import ToolCallRequest
 from seqoria_agent import OpenAIProvider
 from dotenv import load_dotenv
 

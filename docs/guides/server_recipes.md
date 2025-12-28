@@ -19,21 +19,7 @@ def add(a: int, b: int) -> int:
 uvicorn my_server:mcp --port 3333
 ```
 
-## 2. Display Tool
-
-```python
-from xmcp import XMCP, DisplayEnvelope
-mcp = XMCP()
-
-@mcp.display_tool
-def sales_summary(region: str, show_user: bool = False):
-    data = {"region": region, "sales": 42}
-    if show_user:
-        return DisplayEnvelope(type="table", payload=[data], title=f"Sales {region}")
-    return data
-```
-
-## 3. Custom XML Formatter
+## 2. Custom XML Formatter
 
 ```python
 from xmcp.server.formatters import DeclarativeXMLFormatter

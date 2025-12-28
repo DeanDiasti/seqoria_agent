@@ -51,9 +51,7 @@ history = []
 async for chunk in ai.stream_chat("Give me a sales summary for EMEA.", history=history):
     if chunk.type == "llm_delta":
         print(chunk.text, end="", flush=True)
-    elif chunk.type == "tool_display":
-        print("\n--- UI Component Received ---")
-        render(chunk.envelope) # Your display logic
+    # handle other chunk types here as needed
 ```
 
 ## Special Features
@@ -84,7 +82,6 @@ await ai.refresh_tools()
 
 `AIClient` surfaces several synchronous hooks so your application can react instantly:
 
-* **`on_display`** – fires when a `DisplayEnvelope` arrives (UI rendering).
 * **`on_error`** – fires on structured `<error>` payloads (alerting / retry).
 * **`on_metadata`** – *new in v0.3* – fires when a tool response is wrapped in the JSON envelope.  All keys from `metadata` are passed unchanged so you can log execution time, tool name, etc.
 * **`cache`** – any object implementing `get/set` avoids redundant tool calls.
@@ -93,13 +90,10 @@ await ai.refresh_tools()
 ```python
 from seqoria_agent.client.cache import RedisCache
 
-def my_display_handler(envelope, history):
-    print("Rendering UI for:", envelope['title'])
 
 ai = AIClient(
     urls=[...],
     providers=[...],
-    on_display=my_display_handler,
     cache=RedisCache(url="redis://localhost:6379"),
     on_metadata=lambda meta, _hist: print("[debug] metadata", meta),
 )
@@ -113,7 +107,6 @@ executed locally:
 
 ```python
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.models.envelope import DisplayEnvelope
 
 toolbox = LocalToolbox()
 
@@ -121,10 +114,8 @@ toolbox = LocalToolbox()
 def add(a: int, b: int) -> int:
     return a + b
 
-@toolbox.display_tool()
-def shout(msg: str, show_user: bool = False):
-    if show_user:
-        return DisplayEnvelope(type="markdown", payload=f"## {msg.upper()} 🔊")
+@toolbox.tool()
+def shout(msg: str):
     return msg.upper()
 
 async with AIClient(urls=[], providers=[OpenAIProvider(model_id="gpt-4o")],
@@ -147,7 +138,7 @@ async with AIClient(urls=[], providers=[OpenAIProvider(model_id="gpt-4o")]) as a
 ## What's new in v0.2+
 
 * **Dependency-graph execution** – automatic parallel layers respecting `depends_on`.
-* **Structured error & display callbacks** – `on_error`, `on_display`.
+* **Structured error callbacks** – `on_error`.
 * **Meta-tools** – `__think__`, `__summarize__`, `__clarify__`.
 * **Retry / circuit-breaker** & **adaptive concurrency** (`max_concurrency`, `tool_timeout`).
 * **Pluggable cache backend** – `DictCache`, `RedisCache`.
@@ -162,7 +153,7 @@ history = []
 async with AIClient(urls=["http://localhost:3333"],
                     providers=[OpenAIProvider(model_id="gpt-4o")]) as ai:
     res = await ai.chat("Current time + divide 10 by 2", history)
-    print(res["answer"], "display?", bool(res["display"]))
+    print(res["answer"])
 ```
 
 ## Authentication

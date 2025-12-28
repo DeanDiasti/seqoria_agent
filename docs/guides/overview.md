@@ -11,7 +11,7 @@ flowchart TD
     B -->|tool call| C[XMCP Server]
     C -->|XML envelope| B
   end
-  B -->|answer & DisplayEnvelope| A
+  B -->|answer| A
 ```
 
 *Why XML?*  Wrapping the tool response in `<tool_response>` gives deterministic boundaries for the prompt while keeping the wire format 100 % plain text.
@@ -31,23 +31,21 @@ flowchart TD
 
 ```python
 from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent import AIClient, DisplayEnvelope
+from seqoria_agent import AIClient
 from seqoria_agent.providers import OpenAIProvider
 import asyncio
 
 mcp = FastXMCP()
 
-@mcp.display_tool
-def greet(name: str, show_user: bool = False):
-    if show_user:
-        return DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
+@mcp.tool()
+def greet(name: str):
     return {"greeting": f"Hello {name}!"}
 
 async def main():
     async with AIClient(["http://localhost:3333"], [OpenAIProvider(model_id="gpt-4o")]) as ai:
         history: list[dict] = []
-        res = await ai.chat("Say hi to Dean with a card", history)
-        print(res["display"] or res["answer"])
+        res = await ai.chat("Say hi to Dean", history)
+        print(res["answer"])
 
 if __name__ == "__main__":
     from threading import Thread

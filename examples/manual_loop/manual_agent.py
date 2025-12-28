@@ -29,10 +29,11 @@ import os
 import random
 from typing import List
 
-from seqoria_agent.client import AIClient
-from seqoria_agent import OpenAIProvider
+from seqoria_agent import AIClient
+from seqoria_agent.llm_providers import OpenAIProvider
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.models.chunk import ToolCallRequest, AssistantMessage, ToolCallRequestList
+from seqoria_agent.models.llm_models import AssistantMessage, ToolCallRequestList
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
@@ -40,6 +41,15 @@ from dotenv import load_dotenv
 # ---------------------------------------------------------------------------
 
 box = LocalToolbox()
+
+class location(BaseModel):
+    city: str
+    state: str
+    country: str
+
+@box.tool(description="Return the current weather for a given location")
+def get_weather(location: location) -> str:  # noqa: D401 – simple helper
+    return f"The weather in {location.city}, {location.country} is sunny."
 
 
 @box.tool(description="Return the current timestamp (ISO-8601 string)")
@@ -50,6 +60,8 @@ def get_time() -> str:  # noqa: D401 – simple helper
 @box.tool(description="Return a random integer between 0 and 100 (inclusive)")
 def random_number() -> int:  # noqa: D401 – simple helper
     return random.randint(0, 100)
+
+
 
 
 # ---------------------------------------------------------------------------

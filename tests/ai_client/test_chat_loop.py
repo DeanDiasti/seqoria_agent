@@ -2,9 +2,9 @@ import pytest
 
 from seqoria_agent.client import AIClient
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.schemas import ToolCall, ToolCallList, LLMResponse, LLMUsage
-from seqoria_agent.models.chunk import AssistantMessage, ToolCallRequest, ToolCallResult
+from seqoria_agent.llm_providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.schemas import ToolCall, ToolCallList, LLMResponse, LLMUsage
+from seqoria_agent.models.llm_models import AssistantMessage, ToolCallRequest, ToolCallResult
 
 
 class _LLMOnlyStub(BaseProvider):

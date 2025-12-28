@@ -17,8 +17,8 @@ from openai import (AsyncOpenAI,
                     UnprocessableEntityError)
 from openai.types.chat import ChatCompletionChunk
 
-from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.errors import (ConnectionError,
+from seqoria_agent.llm_providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.errors import (ConnectionError,
                                             ContentFilterError,
                                             ContextLengthExceededError,
                                             EnvironmentError,
@@ -28,8 +28,8 @@ from seqoria_agent.providers.errors import (ConnectionError,
                                             QuotaExceededError,
                                             ServerError)
 
-from seqoria_agent.providers.schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
-from seqoria_agent.models.chunk import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult
+from seqoria_agent.llm_providers.schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
+from seqoria_agent.models.llm_models import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult
 
 _EMPTY_JSON: str = "{}"
 
@@ -113,15 +113,15 @@ class OpenAIProvider(BaseProvider):
         self.model_id = model_id if model_id else self.DEFAULT_MODEL
 
         # Set default parameters using OpenAI's parameter names
-        self.default_params = {"max_tokens": 1024,
-                               "temperature": 0.7,
-                               "top_p": 1.0,
-                               "frequency_penalty": 0.0,
-                               "presence_penalty": 0.0}
+        self.default_params = {}
         
         # Update default_params with any valid query kwargs provided in __init__
-        valid_query_keys = self.default_params.keys() | {"stop", "seed", "response_format", "user", 
-                                                         "logit_bias", "logprobs", "top_logprobs"} # Add other valid keys
+        valid_query_keys = {"max_completion_tokens", "temperature", "top_p", "frequency_penalty", 
+                            "presence_penalty", "stop", "seed", "response_format", "user", "logit_bias", 
+                            "logprobs", "top_logprobs", "audio", "function_call", "functions", "metadata", 
+                            "modalities", "n", "parallel_tool_calls", "prediction", "reasoning_effort", 
+                            "service_tier", "store", "stream_options", "tool_choice", "tools", 
+                            "web_search_options"} # Add other valid keys
         for key, value in kwargs.items():
             if key in valid_query_keys:
                 self.default_params[key] = value

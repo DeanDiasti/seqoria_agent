@@ -29,16 +29,12 @@ def build_system_prompt(extra_instructions: str | None = None) -> str:  # noqa: 
     appended *verbatim* as an additional paragraph separated by a newline.
     """
 
-    base_prompt = (
-        "You are a helpful and intelligent assistant. You have access to a set of tools "
-        "to answer user questions. When you receive a user's query, you must decide whether "
-        "to call a tool or to respond directly. If you call a tool, you will receive the result "
-        "and must then formulate a final, user-facing response based on that result. "
-        "Always provide the final answer in a clear and friendly manner."
-        "\nIf you need to reason through intermediate steps before the next tool, call the `__think__` tool with your thought."
-        "\nIf the conversation has grown long, you may call the `__summarize__` tool to compress the history before continuing."
-        "\nIf you need additional information from the user, call the `__clarify__` tool with a concise question."
-    )
+    base_prompt = ("You are a helpful and intelligent assistant. You have access to a set of tools "
+                   "to answer user questions. When you receive a user's query, you must decide whether "
+                   "to call a tool or to respond directly. If you call a tool, you will receive the result "
+                   "and must then formulate a final, user-facing response based on that result. "
+                   "Always provide the final answer in a clear and friendly manner."
+                   "\nIf you need to reason through intermediate steps before the next tool, call the `__think__` tool with your thought.")
 
     if extra_instructions:
         base_prompt = f"{base_prompt}\n{extra_instructions.strip()}"

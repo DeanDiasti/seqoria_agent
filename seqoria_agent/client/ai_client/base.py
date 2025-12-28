@@ -18,10 +18,10 @@ from seqoria_agent.client.ai_client.llm_interface import LLMInterface
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
 from seqoria_agent.client.cache import CacheProtocol, NullCache  # noqa: F401
 from seqoria_agent.client.parameters import ParameterSource, ParamContext, ParameterRegistry
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.base_provider import BaseProvider
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.settings import ClientSettings  # noqa: F401
-from seqoria_agent.models.chunk import AssistantMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, UserMessage, ToolCallRequestList, LLMUsage, ToolMessages
+from seqoria_agent.models.llm_models import AssistantMessage, ToolCallRequest, ToolCallResult, ChatChunk, UserMessage, ToolCallRequestList, LLMUsage, ToolMessages
 
 __all__ = ["AIClient"]
 
@@ -151,9 +151,12 @@ class AIClient:  # noqa: D101 – tiny glue layer
                                              context=context or {})
     
     def run_call_stream(self, 
-                        tool_calls: List[ToolCallRequest], 
+                        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList], 
                         *, 
                         context: "ParamContext | None" = None) -> AsyncGenerator[Tuple[ToolCallRequest, ToolCallResult], None]:
+        if isinstance(tool_calls, ToolCallRequestList):
+            tool_calls = tool_calls.tool_calls
+
         return self.executor.run_call_stream(tool_calls=tool_calls, 
                                              context=context or {})
 

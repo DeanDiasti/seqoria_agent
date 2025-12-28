@@ -153,3 +153,31 @@ This project is licensed under the MIT License.
 
 > **Tip**  Need full control?  The new *Manual Loop* helpers let you drive each
 > LLM turn step-by-step – see the [guide](docs/guides/ai_client.md#manual-loop). 
+
+## Real-time Speech Quick-Start
+
+Run an interactive mic demo (requires extras):
+
+```bash
+pip install 'seqoria_agent[speech,whisper,elevenlabs]'
+python examples/voice_chat/mic_loop.py \
+    --vad-timeout-ms 600 \
+    --stt-quiet-ms 800
+```
+
+Flags explained:
+* `--vad-timeout-ms`  – trailing audio silence that closes a user turn (default 600 ms)
+* `--stt-quiet-ms`    – STT inactivity window before forcing turn close (default 800 ms)
+
+Adjust them to balance latency vs. false positives; see `docs/guides/speech_client.md` for tuning advice. 
+
+### Examples
+
+👉 **Try the new SpeechClient**
+
+```bash
+pip install "seqoria-agent[speech]"
+python examples/voice_chat/manual_speech_agent.py  # mic mode
+```
+
+See the full guide at [`docs/guides/speech_client.md`](docs/guides/speech_client.md). 

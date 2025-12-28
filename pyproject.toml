@@ -1,6 +1,6 @@
 [project]
 name = "seqoria-agent"
-version = "0.4.1"
+version = "0.4.2"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,15 +14,15 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "anthropic>=0.57.1",
     "fastapi>=0.115.14",
     "httpx>=0.28.1",
-    "openai>=1.93.0",
     "pydantic>=2.11.7",
     "redis>=6.2.0",
     "structlog>=25.4.0",
     "PyJWT>=2.8.0",
     "xxhash>=3.5.0",
+    "aiortc>=1.13.0",
+    "websockets>=15.0.1",
 ]
 
 [project.urls]
@@ -42,6 +42,25 @@ docs = [
     "mkdocs-material>=9.5.18",
     "mkdocstrings[python]>=0.25.1",
     "pymdown-extensions>=10.8",
+]
+speech = [
+    "elevenlabs>=2.7.1",
+    "sounddevice>=0.5.2",
+    "soundfile>=0.13.1",
+    "ffmpeg-python>=0.2.0",
+]
+elevenlabs = [
+    "elevenlabs>=2.7.1",
+    "websockets>=15.0.1",
+]
+cerebras =[
+    "cerebras-cloud-sdk>=1.35.0"
+]
+anthropic = [
+    "anthropic>=0.57.1"
+]
+openai =[
+    "openai>=1.93.0"
 ]
 
 [build-system]

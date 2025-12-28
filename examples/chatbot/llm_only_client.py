@@ -1,7 +1,7 @@
 import asyncio
 from seqoria_agent import AIClient
-from seqoria_agent.providers.openai_provider import OpenAIProvider
-from seqoria_agent.models.chunk import AssistantMessage, ToolMessages
+from seqoria_agent.llm_providers.openai_provider import OpenAIProvider
+from seqoria_agent.models.llm_models import AssistantMessage, ToolMessages
 
 async def main() -> None:
     provider = OpenAIProvider(model_id="gpt-4o")

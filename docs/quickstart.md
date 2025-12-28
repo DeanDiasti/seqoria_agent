@@ -20,44 +20,22 @@ pip install -e '.[dev,docs]'
 
 ## 1. Create a FastXMCP Server
 
-An `XMCP` server exposes your Python functions as tools that an AI can call. The key is the `@mcp.display_tool` decorator, which can return either data for the LLM or a rich `DisplayEnvelope` for the user.
+An `XMCP` server exposes your Python functions as tools that an AI can call. Decorate plain Python callables with `@mcp.tool` and return JSON-serialisable data.
 
-Here's a simple server, which you can find in `examples/servers/server1.py`:
+Here's a simple server, which you can find in `examples/server-client/server1.py`:
 
 ```python
 from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent.models.envelope import DisplayEnvelope
 
 app = FastXMCP(title="Demo Server")
 
-@app.display_tool
-def greet(name: str) -> DisplayEnvelope:
-    """A simple tool that greets the user."""
-    return DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
-
-@app.display_tool
-def sales_summary(region: str, show_user: bool = False):
-    """
-    A tool that returns a sales summary. If show_user is True, it
-    returns a DisplayEnvelope for rendering a table. Otherwise, it
-    returns raw data for the LLM.
-    """
-    # In a real app, you would fetch this from a database.
-    summary = {"region": region, "sales": 42, "prospects": 120}
-    
-    if show_user:
-        # Construct a fancy table for the user
-        return DisplayEnvelope(
-            type="table",
-            payload=[summary],
-            title=f"Sales Summary: {region}"
-        )
-    
-    # Return a simpler dictionary for the LLM to process
-    return {"region": region, "sales": summary["sales"]}
+@app.tool()
+def greet(name: str):
+    """Return a greeting."""
+    return {"greeting": f"Hello {name}!"}
 
 # To run this server, save the code and run:
-# uvicorn examples.servers.server1:app --port 3333
+# uvicorn my_server:app --port 3333
 ```
 
 To run this server, execute the following command from your terminal:
@@ -77,12 +55,6 @@ import asyncio
 from seqoria_agent import AIClient
 from seqoria_agent.providers import OpenAIProvider  # Or AnthropicProvider, etc.
 
-# A dummy renderer for demonstration purposes
-def render(display_data: dict):
-    print("--- DISPLAY ---")
-    print(display_data)
-    print("-----------------")
-
 async def main():
     # Make sure you have OPENAI_API_KEY set in your environment
     providers = [OpenAIProvider(model_id="gpt-4o")]
@@ -93,12 +65,8 @@ async def main():
         # The client needs a mutable history list to manage conversation state
         history = []
         
-        result = await ai.chat("Show me sales for EMEA using a chart", history=history)
-        
-        if result.get("display"):
-            render(result["display"])
-        else:
-            print(f"Assistant: {result['answer']}")
+        result = await ai.chat("Say hello", history=history)
+        print(f"Assistant: {result['answer']}")
 
 if __name__ == "__main__":
     asyncio.run(main())

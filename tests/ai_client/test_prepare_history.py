@@ -2,7 +2,7 @@ import pytest
 
 from seqoria_agent.client import AIClient  # type: ignore
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.base_provider import BaseProvider
 
 class StubProvider(BaseProvider):
     """Provider that does nothing but satisfy the interface for tests."""

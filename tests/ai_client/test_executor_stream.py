@@ -4,9 +4,9 @@ import pytest
 
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client import AIClient
-from seqoria_agent.models.chunk import ToolCallRequest
-from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.schemas import LLMResponse
+from seqoria_agent.models.llm_models import ToolCallRequest
+from seqoria_agent.llm_providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.schemas import LLMResponse
 
 
 class DummyProvider(BaseProvider):

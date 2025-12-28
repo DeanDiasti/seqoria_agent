@@ -10,7 +10,7 @@ import asyncio
 import os
 from seqoria_agent import AIClient
 from seqoria_agent.client.parameters import ParameterRegistry
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.llm_providers import OpenAIProvider
 from dotenv import load_dotenv
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.ai_client.base import ToolCallRequest

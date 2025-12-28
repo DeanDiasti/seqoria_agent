@@ -19,7 +19,7 @@ sequenceDiagram
   Tools-->>AIClient: XML envelopes
   AIClient->>LLM: tool results
   LLM-->>AIClient: final answer
-  AIClient-->>User: answer / DisplayEnvelope
+  AIClient-->>User: answer
 ```
 
 ---
@@ -40,8 +40,7 @@ async with AIClient(urls=["http://localhost:3333"], providers=providers) as ai:
 async for chunk in ai.stream_chat("Show sales as a chart", history):
     if chunk.type == "llm_delta":
         ui.append_text(chunk.text)
-    elif chunk.type == "tool_display":
-        ui.render(chunk.envelope)
+    # handle other chunk types here
 ```
 
 ### Hot-Reload
@@ -97,11 +96,6 @@ def on_error(err, hist):
     log.error("tool failed", err)
 
 aiclient = AIClient(urls=[...], providers=[...], on_error=on_error)
-```
-
-```python
-def on_display(env, hist):
-    ui.render(env)
 ```
 
 ---
@@ -182,7 +176,7 @@ async for chunk in ai.llm_stream_once(history):
 
 * Enable **verbose logging** via `LOGLEVEL=DEBUG` to see tool graphs and cache
   hits.
-* Register `on_display`, `on_error`, or `on_metadata` callbacks when
+* Register `on_error` or `on_metadata` callbacks when
   constructing the client to intercept structured events.
 * Call `await ai.refresh_tools()` to hot-reload the tool catalogue without
   recreating the client object.

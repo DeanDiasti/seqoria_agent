@@ -20,7 +20,7 @@ class ToolCall(BaseModel):
     """
 
     id: str = Field(default=..., description="The ID of the tool call.")
-    type: Literal["tool_use", "function_call"] = Field(default="function_call", description="The type of the tool call.")
+    type: Literal["tool_use", "function", "function_call"] = Field(default="function", description="The type of the tool call.")
     function_name: str = Field(default=..., description="The name of the function to call.")
     arguments: Dict[str, Any] = Field(default=..., description="The arguments to pass to the function.")
 

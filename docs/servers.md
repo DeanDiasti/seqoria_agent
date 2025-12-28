@@ -2,7 +2,6 @@
 
 `XMCP` is a thin wrapper around FastAPI + Model Context Protocol (MCP) that adds:
 
-* `@display_tool` decorator for rich UI payloads
 * Automatic **XML envelopes** (optionally wrapped in JSON) for deterministic prompt parsing
 * Declarative **XML formatting** with automatic schema derivation
 * **Structured error channel** via `<error>` tags
@@ -12,38 +11,24 @@
 
 ---
 
-## 1. Regular vs Display Tools
+## 1. Regular Tools
 
 ```python
 from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent.models.envelope import DisplayEnvelope
 mcp = FastXMCP()
 
 @mcp.tool
 def add(a: int, b: int) -> int:
     return a + b
 
-@mcp.display_tool
-def greet(name: str, show_user: bool = False):
-    if show_user:
-        return DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
-    return {"greeting": f"Hello {name}!"}
-
 ### JSON Wrapper & Declarative Formatter (v0.3+)
 
 Enable the JSON envelope and influence the **inner** XML tags with a declarative formatter:
 
 ```python
-from seqoria_agent.server.formatters import make_formatter
+
 
 app = FastXMCP(json_wrapper=True)  # ← responses are now {"ai_message": xml, "metadata": {...}}
-
-# Build a tiny formatter inline – emits <product> inside <tool_response>
-product_fmt = make_formatter(top_level_fields=["product"])
-
-@app.tool(response_format=product_fmt)
-def multiply(a: int, b: int):
-    return {"product": int(a) * int(b)}
 
 # No formatter supplied?  FastXMCP derives one automatically from the *first* result
 @app.tool()
@@ -74,7 +59,7 @@ Enable at app level to validate every payload.
 app = FastXMCP(strict_mode=True)
 ```
 
-Invalid XML or non-DisplayEnvelope returns turn into a structured error with `code="INVALID_PAYLOAD"`.
+Invalid XML returns turn into a structured error with `code="INVALID_PAYLOAD"`.
 
 ## 4. Server-Populated Parameters (SPP)
 

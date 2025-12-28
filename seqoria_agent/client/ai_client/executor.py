@@ -38,7 +38,7 @@ from seqoria_agent.client.cache import CacheProtocol, NullCache
 from seqoria_agent.client.parameters import ParameterRegistry, ParameterSource, ParamContext
 from seqoria_agent.models.errors import CircuitOpenError, DependencyError, ToolRemoteError
 from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY 
-from seqoria_agent.models.chunk import ToolCallResult, ToolCallError, ToolCallRequest, ToolCallRequestList
+from seqoria_agent.models.llm_models import ToolCallResult, ToolCallError, ToolCallRequest, ToolCallRequestList
 
 __all__: list[str] = ["Executor"]
 

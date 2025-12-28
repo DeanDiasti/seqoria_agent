@@ -2,8 +2,8 @@ import asyncio
 
 from seqoria_agent import AIClient
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.models.chunk import AssistantMessage, ToolMessages
-from seqoria_agent.providers.openai_provider import OpenAIProvider
+from seqoria_agent.models.llm_models import AssistantMessage, ToolMessages
+from seqoria_agent.llm_providers.openai_provider import OpenAIProvider
 
 
 toolbox = LocalToolbox()

@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 
 from seqoria_agent.client import AIClient
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.models.chunk import ToolCallRequest, ToolCallError, ToolCallResult
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.models.llm_models import ToolCallRequest, ToolCallError, ToolCallResult
+from seqoria_agent.llm_providers import OpenAIProvider
 
 # ---------------------------------------------------------------------------
 # Inline tools – one succeeds, one fails

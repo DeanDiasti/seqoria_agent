@@ -157,12 +157,22 @@ class ToolCore:
 
                 # pick a formatter class if explicitly passed
                 fmt_cls = response_format if response_format is not None else xml_formatter
-                wrapped = self._wrap_tool_with_error_handling(f, name, fmt_cls)
+                # moved earlier
 
                 # generate simple parameter JSON-schema
                 sig = inspect.signature(f)
+
+                try:
+                    from typing import get_type_hints
+                    _resolved_hints = get_type_hints(f, globalns=f.__globals__, localns=None)
+                except Exception:  # pragma: no cover – best-effort fallback
+                    _resolved_hints = {}
+
                 props: dict[str, Any] = {}
                 required: list[str] = []
+                _basemodel_params: dict[str, Any] = {}
+                _field_defaults_reg: dict[str, Any] = {}
+
                 for p_name, param in sig.parameters.items():
                     # ------------------------------------------------------------------
                     # Skip server-populated parameters – they are hidden from the LLM
@@ -170,41 +180,78 @@ class ToolCore:
                     if p_name in (server_populated or []):
                         continue
 
-                    ann = param.annotation if param.annotation is not inspect._empty else str
+                    ann = _resolved_hints.get(p_name, param.annotation if param.annotation is not inspect._empty else str)
 
                     # ------------------------------------------------------------------
-                    # Pydantic Field – leverage its rich JSON-schema generation
+                    # Pydantic FieldInfo enrichment (description, constraints, …)
                     # ------------------------------------------------------------------
+
                     if (
-                        _PydanticFieldInfo is not None and  # pydantic import succeeded
+                        _PydanticFieldInfo is not None and
                         _pyd_create_model is not None and
                         param.default is not inspect._empty and
                         isinstance(param.default, _PydanticFieldInfo)
                     ):
-                        # Build a tiny throw-away model so pydantic can derive the
-                        # correct JSON Schema for us (including constraints & docs).
-                        TmpModel = _pyd_create_model(  # type: ignore
-                            "_Tmp", **{p_name: (ann, param.default)}
-                        )
+                        TmpModel = _pyd_create_model("_Tmp", **{p_name: (ann, param.default)})  # type: ignore
 
-                        if hasattr(TmpModel, "model_json_schema"):
-                            # Pydantic ≥2
+                        try:
                             fld_schema = TmpModel.model_json_schema()["properties"][p_name]  # type: ignore[index]
-                        else:
-                            # Pydantic v1 – .schema()
+                        except AttributeError:
                             fld_schema = TmpModel.schema()["properties"][p_name]  # type: ignore[attr-defined]
 
                         props[p_name] = fld_schema
 
-                        # FieldInfo helper – works across Pydantic versions.
+                        # Required flag via FieldInfo helper
                         try:
                             if param.default.is_required():  # type: ignore[attr-defined]
                                 required.append(p_name)
                         except Exception:
-                            # Fallback check based on sentinel values
                             if getattr(param.default, "default", Ellipsis) is Ellipsis:
                                 required.append(p_name)
 
+                        # Store default for runtime & continue – FieldInfo takes precedence over BaseModel/primitive handling
+                        try:
+                            if not param.default.is_required():  # type: ignore[attr-defined]
+                                default_val = getattr(param.default, "default", None)
+                                if str(object=default_val) == "PydanticUndefined":
+                                    default_val = None
+                                _field_defaults_reg[p_name] = default_val
+                        except Exception:
+                            pass
+
+                        # Continue – FieldInfo handled
+                        continue
+
+                    # ------------------------------------------------------------------
+                    # Pydantic BaseModel – expose full schema as nested object
+                    # ------------------------------------------------------------------
+                    try:
+                        from pydantic import BaseModel as _PydBaseModel  # local import
+                        _is_basemodel = isinstance(ann, type) and issubclass(ann, _PydBaseModel)
+                    except Exception:
+                        _is_basemodel = False
+
+                    if _is_basemodel:
+                        # Use pydantic's JSON-schema generator – supports v1 & v2.
+                        try:
+                            if hasattr(ann, "model_json_schema"):
+                                fld_schema = ann.model_json_schema()
+                            else:  # v1
+                                fld_schema = ann.schema()  # type: ignore[attr-defined]
+                        except Exception:
+                            # Fallback – generic object schema
+                            fld_schema = {"type": "object"}
+
+                        # Ensure object type so OpenAI correctly interprets nested fields
+                        fld_schema.setdefault("type", "object")
+
+                        props[p_name] = fld_schema
+
+                        # Mark parameter required when no default provided
+                        if param.default is inspect._empty:
+                            required.append(p_name)
+                        # Track BaseModel parameters for runtime coercion later
+                        _basemodel_params[p_name] = ann  # type: ignore[index]
                         continue  # handled – next parameter
 
                     # ------------------------------------------------------------------
@@ -217,14 +264,20 @@ class ToolCore:
                 if required:
                     input_schema["required"] = required
 
+                wrapper = self._wrap_tool_with_error_handling(func=f,
+                                                              tool_name=name,
+                                                              formatter_cls=fmt_cls,
+                                                              basemodel_coercers=_basemodel_params,
+                                                              field_defaults=_field_defaults_reg)
+
                 self._tools[name] = ToolInfo(
-                    func=wrapped,
+                    func=wrapper,
                     description=description,
                     server_params=list(server_populated or []),
                     depends_on=list(depends_on or []),
                     input_schema=input_schema,
                 )
-                return wrapped
+                return wrapper
 
             # support both @tool and @tool(...)
             if func is not None and callable(func):
@@ -237,7 +290,7 @@ class ToolCore:
     # Runtime helpers
     # ------------------------------------------------------------------
 
-    def _wrap_tool_with_error_handling(self, func: Callable, tool_name: str, formatter_cls: Any | None):
+    def _wrap_tool_with_error_handling(self, func: Callable, tool_name: str, formatter_cls: Any | None, *, basemodel_coercers: dict[str, Any] | None = None, field_defaults: dict[str, Any] | None = None):
         formatter_instance = None
         if formatter_cls is not None:
             formatter_instance = formatter_cls() if isinstance(formatter_cls, type) else formatter_cls
@@ -248,29 +301,61 @@ class ToolCore:
         # original default is a Pydantic FieldInfo. This avoids leaking the
         # FieldInfo object to the actual tool implementation.
         # ------------------------------------------------------------------
-        _field_defaults: dict[str, Any] = {}
+        _field_defaults: dict[str, Any] = dict(field_defaults or {})
         sig = inspect.signature(func)
-        if _PydanticFieldInfo is not None:
+
+        # Resolve forward refs once for runtime coercion
+        try:
+            from typing import get_type_hints
+            _runtime_hints = get_type_hints(func, globalns=func.__globals__, localns=None)
+        except Exception:
+            _runtime_hints = {}
+
+        # Use provided coercers when available (compute once in registration)
+        _basemodel_params_runtime: dict[str, Any] = dict(basemodel_coercers or {})
+
+        if not _basemodel_params_runtime or not _field_defaults:
             for p_name, p in sig.parameters.items():
+                # Detect BaseModel parameters only for those not already supplied
+                if p_name not in _basemodel_params_runtime:
+                    try:
+                        from pydantic import BaseModel as _PydBM
+                        _ann_rt = _runtime_hints.get(p_name, p.annotation)
+                        if isinstance(_ann_rt, type) and issubclass(_ann_rt, _PydBM):
+                            _basemodel_params_runtime[p_name] = _ann_rt
+                    except Exception:
+                        pass
+
                 if (
+                    _PydanticFieldInfo is not None and
                     p.default is not inspect._empty and
                     isinstance(p.default, _PydanticFieldInfo) and
                     not p.default.is_required()  # type: ignore[attr-defined]
-                ):
-                    # Use the underlying default even when it is None so we
-                    # never leak a FieldInfo instance.
+                ) and p_name not in _field_defaults:
                     default_val = getattr(p.default, "default", None)
-                    # Replace PydanticUndefined sentinel with None
                     if str(object=default_val) == "PydanticUndefined":
                         default_val = None
                     _field_defaults[p_name] = default_val
-
         async def _async(*args: Any, **kwargs: Any) -> str:  # noqa: ANN401
             try:
                 # Apply default substitutions
                 if _field_defaults and kwargs is not None:
                     for k, v in _field_defaults.items():
                         kwargs.setdefault(k, v)
+
+                # Coerce dict payloads into BaseModel instances when needed
+                if _basemodel_params_runtime and kwargs is not None:
+                    for _pn, _cls in _basemodel_params_runtime.items():
+                        if _pn in kwargs and not isinstance(kwargs[_pn], _cls):
+                            _raw_val = kwargs[_pn]
+                            if isinstance(_raw_val, dict):
+                                try:
+                                    if hasattr(_cls, "model_validate"):
+                                        kwargs[_pn] = _cls.model_validate(_raw_val)
+                                    else:
+                                        kwargs[_pn] = _cls(**_raw_val)
+                                except Exception:  # pragma: no cover – leave as-is on failure
+                                    pass
                 result = await func(*args, **kwargs)  # type: ignore[arg-type]
                 if self._strict_mode:
                     self._validate_payload(result)
@@ -283,6 +368,19 @@ class ToolCore:
                 if _field_defaults and kwargs is not None:
                     for k, v in _field_defaults.items():
                         kwargs.setdefault(k, v)
+
+                if _basemodel_params_runtime and kwargs is not None:
+                    for _pn, _cls in _basemodel_params_runtime.items():
+                        if _pn in kwargs and not isinstance(kwargs[_pn], _cls):
+                            _raw_val = kwargs[_pn]
+                            if isinstance(_raw_val, dict):
+                                try:
+                                    if hasattr(_cls, "model_validate"):
+                                        kwargs[_pn] = _cls.model_validate(_raw_val)
+                                    else:
+                                        kwargs[_pn] = _cls(**_raw_val)
+                                except Exception:
+                                    pass
                 result = func(*args, **kwargs)
                 if self._strict_mode:
                     self._validate_payload(result)

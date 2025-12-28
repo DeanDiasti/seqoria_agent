@@ -3,9 +3,9 @@
 class LLMError(Exception):
     """Base class for all LLM-related errors."""
 
-    def __init__(self, message="An error occurred", provider=None):
+    def __init__(self, message: str = "An error occurred", provider: str | None = None) -> None:
         self.provider = provider
-        super().__init__(message)
+        super().__init__(message)  # pass as positional to Exception
 
 
 class EnvironmentError(LLMError):
@@ -20,7 +20,7 @@ class EnvironmentError(LLMError):
             missing_vars: List of missing environment variable names
         """
         self.missing_vars = missing_vars or []
-        super().__init__(f"{message}: {', '.join(self.missing_vars)}" if self.missing_vars else message)
+        super().__init__(message=f"{message}: {', '.join(self.missing_vars)}" if self.missing_vars else message)
 
 
 class ConnectionError(LLMError):
@@ -35,7 +35,7 @@ class ConnectionError(LLMError):
             message: Error description message
         """
         self.provider = provider
-        super().__init__(f"{message}: {provider}")
+        super().__init__(message=f"{message}: {provider}")
 
 
 class ModelNotFoundError(LLMError):
@@ -56,7 +56,7 @@ class ModelNotFoundError(LLMError):
         message = f"Model '{model_id}' not found or not accessible on {provider}"
         if fallback_model:
             message += f". Using fallback model '{fallback_model}'"
-        super().__init__(message)
+        super().__init__(message=message)
 
 
 class ContextLengthExceededError(LLMError):
@@ -78,7 +78,7 @@ class ContextLengthExceededError(LLMError):
         message = f"Prompt exceeds maximum context length for model '{model_id}'"
         if tokens and max_tokens:
             message += f": {tokens} tokens (max: {max_tokens})"
-        super().__init__(message)
+        super().__init__(message=message)
 
 
 class ContentFilterError(LLMError):
@@ -98,7 +98,7 @@ class ContentFilterError(LLMError):
         message = f"Content filtered by {provider}"
         if filter_reason:
             message += f": {filter_reason}"
-        super().__init__(message)
+        super().__init__(message=message)
 
 
 class MaxRetriesExceededError(LLMError):
@@ -120,7 +120,7 @@ class MaxRetriesExceededError(LLMError):
         message = f"Maximum retries ({max_retries}) exceeded for operation: {operation}"
         if last_error:
             message += f". Last error: {str(object=last_error)}"
-        super().__init__(message)
+        super().__init__(message=message)
 
 
 class InvalidRequestError(LLMError):
@@ -137,7 +137,7 @@ class InvalidRequestError(LLMError):
         self.param = param
         if param:
             message = f"Invalid parameter '{param}': {message}"
-        super().__init__(message)
+        super().__init__(message=message)
 
 
 class QuotaExceededError(LLMError):
@@ -153,7 +153,8 @@ class QuotaExceededError(LLMError):
         """
         self.provider = provider
         self.limit_type = limit_type
-        super().__init__(f"{limit_type.capitalize()} exceeded for provider {provider}")
+        # Preserve the original casing of limit_type so tests can match expected fragments exactly
+        super().__init__(message=f"{limit_type} exceeded for provider {provider}")
 
 
 class ServerError(LLMError):
@@ -173,4 +174,4 @@ class ServerError(LLMError):
         message = f"Server error on {provider}"
         if status_code:
             message += f" (status code: {status_code})"
-        super().__init__(message)
+        super().__init__(message=message)

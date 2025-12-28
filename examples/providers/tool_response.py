@@ -9,13 +9,15 @@ emitted.
 
 Prerequisites
 -------------
-1. ``python -m pip install openai``  (plus ``seqoria-agent`` in editable mode)
-2. ``export OPENAI_API_KEY=sk-...`` - your OpenAI API key must be present in
-   the environment (or passed explicitly when instantiating ``OpenAIProvider``).
+1. ``python -m pip install openai cerebras-cloud-sdk anthropic``  (plus ``seqoria-agent`` in editable mode)
+2. Set API keys in environment:
+   - ``export OPENAI_API_KEY=sk-...`` - your OpenAI API key (required)
+   - ``export CEREBRAS_API_KEY=...`` - your Cerebras API key (optional)
+   - ``export ANTHROPIC_API_KEY=...`` - your Anthropic API key (optional)
 
 Run with::
 
-    python examples/providers/tool_re   sponse.py
+    python examples/providers/tool_response.py
 """
 from __future__ import annotations
 
@@ -24,9 +26,8 @@ import os
 import sys
 from typing import Any, AsyncGenerator, Union
 
-from seqoria_agent.providers.openai_provider import OpenAIProvider
-from seqoria_agent.providers.anthropic_provider import AnthropicProvider
-from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
+from seqoria_agent.llm_providers import OpenAIProvider, CerebrasProvider, AnthropicProvider
+from seqoria_agent.llm_providers.schemas import LLMResponse, ToolCallList
 
 from dotenv import load_dotenv
 
@@ -109,6 +110,24 @@ def main() -> None:  # noqa: D401
         tool_choice="auto",  # let the model decide
     )
     _render_stream(stream=stream)
+
+    # ------------------------------------------------------------------
+    # Cerebras demo (if API key is available)
+    # ------------------------------------------------------------------
+    cerebras_key = os.environ.get("CEREBRAS_API_KEY")
+    if cerebras_key:
+        provider_c = CerebrasProvider(api_key=cerebras_key)
+
+        print("\nCerebras streaming response - watch for tool_calls in the final object…\n")
+
+        stream_c = provider_c.async_stream(
+            chat_history=chat_history,
+            tools=[dice_tool],
+            tool_choice="auto",
+        )
+        _render_stream(stream=stream_c)
+    else:
+        print("\n[info] Skipping CerebrasProvider demo - set CEREBRAS_API_KEY to enable it.\n")
 
     # ------------------------------------------------------------------
     # Anthropic demo (if API key is available)

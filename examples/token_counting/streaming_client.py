@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 import random
 
 from seqoria_agent.client.ai_client.base import AIClient
-from seqoria_agent.providers import OpenAIProvider
+from seqoria_agent.llm_providers import OpenAIProvider
 from seqoria_agent import LocalToolbox
-from seqoria_agent.models.chunk import ChatChunk, AssistantMessage, ToolMessages
+from seqoria_agent.models.llm_models import ChatChunk, AssistantMessage, ToolMessages
 
 load_dotenv()
 

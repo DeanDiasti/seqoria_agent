@@ -17,7 +17,7 @@ import logging
 
 from seqoria_agent.client.cache import CacheProtocol  # noqa: F401
 from seqoria_agent.toolbox import LocalToolbox
-from seqoria_agent.providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.base_provider import BaseProvider
 from seqoria_agent.client.parameters import ParameterSource, ParameterRegistry
 
 __all__: list[str] = ["ClientSettings"]

@@ -110,7 +110,6 @@ Repeat 2️⃣ until the model either returns a direct answer *or* a tool produc
 
 * Decorate Python callables with `@box.tool`.
 * Optional keywords:
-  * `display=True` – mark as **display tool** (will trigger `on_display`).
   * `server_params=["tenant_id"]` – server-populated arguments.
   * `depends_on=["other_tool"]` – declare explicit dependencies.
 
@@ -142,12 +141,8 @@ You don't need extra code – they behave like regular tools.
 Pass callables to `AIClient`:
 
 ```python
-aasync def on_display(env, hist):
-    render_ui(env)
-
 ai = AIClient(
-    ..., on_display=on_display,
-               on_error=my_error_hook,
+    ..., on_error=my_error_hook,
                on_metadata=my_meta_hook)
 ```
 
@@ -179,14 +174,12 @@ For progressive rendering:
 async for chunk in ai.stream_chat("plot me a graph of …", history=[]):
     if chunk.type == "llm_delta":
         print(chunk.text, end="", flush=True)
-    elif chunk.type == "tool_display":
-        show_plot(chunk.envelope)
+    # handle other chunk types here
 ```
 
 `ChatChunk` types:
 
 * `llm_delta` – incremental text.
-* `tool_display` – a validated `DisplayEnvelope` from a display tool.
 
 The streaming helper automatically handles meta-tools and tool execution in the
 background.

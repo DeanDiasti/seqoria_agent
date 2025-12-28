@@ -31,10 +31,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     structlog = None
 
-from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.errors import LLMError
-from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
-from seqoria_agent.models.chunk import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, ToolCallRequestList, LLMUsage
+from seqoria_agent.llm_providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.errors import LLMError
+from seqoria_agent.llm_providers.schemas import LLMResponse, ToolCallList
+from seqoria_agent.models.llm_models import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, ToolCallRequestList, LLMUsage
 
 __all__: list[str] = ["LLMInterface"]
 

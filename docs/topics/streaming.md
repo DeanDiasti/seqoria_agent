@@ -1,6 +1,6 @@
 # Streaming Responses
 
-`AIClient.stream_chat()` gives you token-by-token output **and** forward DisplayEnvelope payloads as soon as they arrive.
+`AIClient.stream_chat()` yields token-by-token output so you can render assistant responses progressively.
 
 ```python
 import asyncio
@@ -13,8 +13,7 @@ async def main():
         async for chunk in ai.stream_chat("Render sales as a chart", history):
             if chunk.type == "llm_delta":
                 print(chunk.text, end="", flush=True)
-            elif chunk.type == "tool_display":
-                ui.render(chunk.envelope)
+            # handle other chunk types here
         print()  # newline after streaming
 
 asyncio.run(main())
@@ -25,7 +24,7 @@ Under the hood:
 1. The first LLM provider that successfully starts streaming is chosen.
 2. Text deltas (`str`) are yielded immediately.
 3. When the provider closes the stream, `AIClient` checks for tool calls and may perform additional loops.
-4. If a **display tool** returns an envelope, the generator yields `ChatChunk(type="tool_display", …)` and terminates early.
+4. After tool execution completes, the generator yields the final `LLMResponse` object.
 
 ---
 
@@ -33,10 +32,10 @@ Under the hood:
 
 ```python
 ChatChunk(
-    type="llm_delta" | "tool_display",
+    type="llm_delta",
     text: str | None,
     envelope: dict | None,
 )
 ```
 
-Only one of `text` or `envelope` is populated per chunk. 
+Only the `text` field is populated for `llm_delta` chunks. 

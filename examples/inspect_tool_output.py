@@ -3,8 +3,8 @@ import json
 import uuid
 
 from seqoria_agent import AIClient
-from seqoria_agent.providers.base_provider import BaseProvider
-from seqoria_agent.providers.schemas import LLMResponse, ToolCall
+from seqoria_agent.llm_providers.base_provider import BaseProvider
+from seqoria_agent.llm_providers.schemas import LLMResponse, ToolCall
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.server.formatters import make_formatter
 
