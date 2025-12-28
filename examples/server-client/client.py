@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from seqoria_agent import AsyncAIClient
 from seqoria_agent.client.cache import DictCache
 from seqoria_agent.client.parameters import ParameterRegistry
-from seqoria_agent.providers import AsyncOpenAIProvider
+from seqoria_agent.providers import AsyncOllamaProvider
 from seqoria_agent.models.chunk import ChatChunk, ToolMessages
 
 load_dotenv()
@@ -56,9 +56,9 @@ async def main() -> None:
     client = AsyncAIClient(
         mcp_servers=servers,
         providers=[
-            AsyncOpenAIProvider(
-                model_id="gpt-4o",
-                api_key=os.getenv("OPENAI_API_KEY"),
+            AsyncOllamaProvider(
+                model_id="gpt-oss:20b",
+                keep_alive="5m",
             ),
         ],
         # Caching
@@ -101,6 +101,9 @@ async def main() -> None:
 
                     print("\nAssistant: ", end="", flush=True)
 
+                    thinking_open = False
+                    thinking_closed = False
+
                     # Stream the response
                     async for chunk in client.stream_chat(
                         user_query=user_input,
@@ -108,10 +111,24 @@ async def main() -> None:
                         max_turns=5,
                     ):
                         if isinstance(chunk, ChatChunk):
-                            print(chunk.content, end="", flush=True)
+                            if chunk.thinking:
+                                if not thinking_open:
+                                    print("\n<thinking>\n", end="", flush=True)
+                                    thinking_open = True
+                                if not thinking_closed:
+                                    print(chunk.thinking, end="", flush=True)
+                            if chunk.content:
+                                if thinking_open and not thinking_closed:
+                                    print("\n</thinking>\n\nassistant: ", end="", flush=True)
+                                    thinking_closed = True
+                                print(chunk.content, end="", flush=True)
                         elif isinstance(chunk, ToolMessages):
                             tool_count = len(chunk) // 2
                             print(f"\n[Executing {tool_count} tool(s)...]", end="")
+
+                    # Close thinking block if the model produced only thinking (no visible content)
+                    if thinking_open and not thinking_closed:
+                        print("\n</thinking>\n\nassistant:\n", end="", flush=True)
 
                     print()  # Newline after streaming
 
