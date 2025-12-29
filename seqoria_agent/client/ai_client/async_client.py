@@ -20,7 +20,6 @@ import asyncio
 import logging
 from typing import Any, AsyncGenerator, Iterable, List, Mapping, Self, Tuple, Union
 
-from seqoria_agent.auth.providers import BaseAuthProvider, NoAuthProvider
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.ai_client.executor import Executor
 from seqoria_agent.client.ai_client.history import build_system_prompt
@@ -84,8 +83,6 @@ class AsyncAIClient:
         Allow LLM to override server-populated params.
     settings : ClientSettings | None
         Default settings (overridden by explicit args).
-    auth_provider : BaseAuthProvider | None
-        Authentication provider for MCP requests.
     system_prompt : str | None
         System prompt (None = default, "" = disabled).
 
@@ -128,8 +125,6 @@ class AsyncAIClient:
         # Meta-tools
         # Settings
         settings: ClientSettings | None = None,
-        # Auth
-        auth_provider: BaseAuthProvider | None = None,
         # System prompt
         system_prompt: str | None = None,
         **client_kwargs: Any,
@@ -198,7 +193,6 @@ class AsyncAIClient:
             )
         )
         self._logger = logger or logging.getLogger(name="seqoria_agent")
-        self._auth_provider: BaseAuthProvider = auth_provider or NoAuthProvider()
         self._tool_map: dict[str, Any] = {}
 
         # Build MCP server configs
@@ -545,10 +539,6 @@ class AsyncAIClient:
             model=None,
             usage=total_usage,
         )
-
-    def add_auth_provider(self, provider: BaseAuthProvider) -> None:
-        """Replace the authentication provider for MCP requests."""
-        self._auth_provider = provider
 
     def _ensure_system_prompt(self, history: List[dict]) -> None:
         """Insert system prompt at start of history if not present."""

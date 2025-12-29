@@ -5,7 +5,6 @@ that adds Seqoria-specific features:
 
 - Server-populated parameters (hidden from LLM, injected at runtime)
 - Tool dependency annotations (depends_on)
-- Authentication backend integration
 - Response formatting (XML envelope format)
 
 Example
@@ -28,8 +27,6 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 from mcp.server.fastmcp import Context, FastMCP
-
-from seqoria_agent.auth.backends import BaseAuthBackend, NoAuthBackend
 
 __all__ = [
     "SeqoriaMCP",
@@ -77,8 +74,6 @@ class SeqoriaMCP(FastMCP):
     ----------
     name : str
         Server name for MCP identification.
-    auth_backend : BaseAuthBackend | None
-        Authentication backend for validating requests.
     strict_server_params : bool
         If True, raise error when LLM tries to provide server-populated params.
     json_response : bool
@@ -99,15 +94,11 @@ class SeqoriaMCP(FastMCP):
         self,
         name: str = "SeqoriaMCP",
         *,
-        auth_backend: BaseAuthBackend | None = None,
         strict_server_params: bool = True,
         json_response: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(name, json_response=json_response, **kwargs)
-
-        # Authentication
-        self._auth_backend: BaseAuthBackend = auth_backend or NoAuthBackend()
 
         # Configuration
         self._strict_server_params = strict_server_params

@@ -1,6 +1,6 @@
 [project]
 name = "seqoria-agent"
-version = "0.5.0"
+version = "0.5.1"
 description = "Seqoria Agentic Assistant Framework - MCP-native tool orchestration for AI applications"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -64,6 +64,7 @@ all = [
 
 # Development dependencies
 dev = [
+    "build>=1.3.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",

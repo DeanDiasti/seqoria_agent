@@ -27,8 +27,6 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
-from seqoria_agent.auth.backends import BaseAuthBackend, NoAuthBackend
-
 __all__ = ["LocalToolbox", "ToolInfo"]
 
 
@@ -68,8 +66,6 @@ class LocalToolbox:
     ----------
     strict_server_params : bool
         If True, raise error when caller provides server-populated params.
-    auth_backend : BaseAuthBackend | None
-        Authentication backend for request validation.
 
     Example
     -------
@@ -86,14 +82,7 @@ class LocalToolbox:
         self,
         *,
         strict_server_params: bool = True,
-        auth_backend: BaseAuthBackend | None = None,
     ) -> None:
-        if auth_backend is None:
-            auth_backend = NoAuthBackend()
-        if not isinstance(auth_backend, BaseAuthBackend):
-            raise TypeError("auth_backend must derive from BaseAuthBackend")
-
-        self._auth_backend = auth_backend
         self._strict_server_params = strict_server_params
 
         # Tool registry

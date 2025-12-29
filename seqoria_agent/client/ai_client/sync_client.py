@@ -18,7 +18,6 @@ import asyncio
 import logging
 from typing import Any, Generator, Iterable, List, Mapping, Self, Tuple, Union
 
-from seqoria_agent.auth.providers import BaseAuthProvider
 from seqoria_agent.client.ai_client.async_client import AsyncAIClient
 from seqoria_agent.client.cache import CacheProtocol
 from seqoria_agent.client.mcp_transport import MCPServerConfig
@@ -106,8 +105,6 @@ class AIClient:
         Allow LLM to override server-populated params.
     settings : ClientSettings | None
         Default settings (overridden by explicit args).
-    auth_provider : BaseAuthProvider | None
-        Authentication provider for MCP requests.
     system_prompt : str | None
         System prompt (None = default, "" = disabled).
 
@@ -153,8 +150,6 @@ class AIClient:
         allow_override: bool = False,
         # Settings
         settings: ClientSettings | None = None,
-        # Auth
-        auth_provider: BaseAuthProvider | None = None,
         # System prompt
         system_prompt: str | None = None,
         **client_kwargs: Any,
@@ -191,7 +186,6 @@ class AIClient:
             param_registry=param_registry,
             allow_override=allow_override,
             settings=settings,
-            auth_provider=auth_provider,
             system_prompt=system_prompt,
             **client_kwargs,
         )
@@ -462,8 +456,4 @@ class AIClient:
                     break
         finally:
             loop.run_until_complete(async_gen.aclose())
-
-    def add_auth_provider(self, provider: BaseAuthProvider) -> None:
-        """Replace the authentication provider for MCP requests."""
-        self._async_client.add_auth_provider(provider)
 
