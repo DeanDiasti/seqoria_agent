@@ -6,12 +6,16 @@ This module exports:
 - MCPTransportFactory: Factory for MCP transport connections
 - MCPServerConfig: Configuration for MCP servers
 - MCPConnectionPool: Connection pool with resilience features
+- OAuthConfig: Configuration for OAuth 2.1 authentication
+- InMemoryTokenStorage: In-memory OAuth token storage
 """
 
 from seqoria_agent.client.ai_client import AIClient, AsyncAIClient
 from seqoria_agent.client.mcp_transport import (
     MCPServerConfig,
     MCPTransportFactory,
+    OAuthConfig,
+    InMemoryTokenStorage,
 )
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 
@@ -21,4 +25,6 @@ __all__ = [
     "MCPServerConfig",
     "MCPTransportFactory",
     "MCPConnectionPool",
+    "OAuthConfig",
+    "InMemoryTokenStorage",
 ]

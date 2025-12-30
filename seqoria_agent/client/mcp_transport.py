@@ -11,6 +11,11 @@ Performance Features:
 - Shared httpx.AsyncClient pool for HTTP connection reuse
 - Automatic keep-alive management
 - Configurable connection limits
+
+OAuth 2.1 Support:
+- Automatic OAuth flow for protected MCP servers
+- Browser-based authorization with PKCE
+- Token storage and refresh handling
 """
 
 from __future__ import annotations
@@ -18,10 +23,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import shlex
-from contextlib import asynccontextmanager
+import webbrowser
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, ClassVar, Dict, Literal, Optional
-from urllib.parse import urlparse
+from typing import Any, AsyncIterator, Awaitable, Callable, ClassVar, Dict, Literal, Optional
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from mcp import ClientSession
@@ -29,15 +35,219 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+# OAuth support from MCP SDK
+from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from pydantic import AnyUrl
+
 __all__ = [
     "MCPTransportFactory",
     "MCPServerConfig",
     "MCPConnection",
     "TransportType",
     "HTTPClientPool",
+    "InMemoryTokenStorage",
+    "OAuthConfig",
 ]
 
 TransportType = Literal["http", "sse", "stdio", "auto"]
+
+
+# ---------------------------------------------------------------------------
+# OAuth Token Storage
+# ---------------------------------------------------------------------------
+
+
+class InMemoryTokenStorage(TokenStorage):
+    """In-memory token storage implementation for OAuth.
+
+    Stores OAuth tokens and client registration info in memory.
+    Tokens are lost when the process exits.
+
+    For persistent storage, subclass TokenStorage and implement
+    file-based or database-backed storage.
+    """
+
+    def __init__(self) -> None:
+        self.tokens: OAuthToken | None = None
+        self.client_info: OAuthClientInformationFull | None = None
+
+    async def get_tokens(self) -> OAuthToken | None:
+        """Get stored tokens."""
+        return self.tokens
+
+    async def set_tokens(self, tokens: OAuthToken) -> None:
+        """Store tokens."""
+        self.tokens = tokens
+
+    async def get_client_info(self) -> OAuthClientInformationFull | None:
+        """Get stored client information."""
+        return self.client_info
+
+    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
+        """Store client information."""
+        self.client_info = client_info
+
+
+# ---------------------------------------------------------------------------
+# OAuth Configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class OAuthConfig:
+    """Configuration for OAuth 2.1 authentication.
+
+    Attributes
+    ----------
+    client_name : str
+        Human-readable name for the OAuth client (shown during consent).
+    redirect_uri : str
+        URI where the authorization server redirects after consent.
+        Default is localhost for CLI/desktop apps.
+    scopes : list[str] | None
+        OAuth scopes to request. If None, uses server defaults.
+    storage : TokenStorage | None
+        Token storage implementation. Defaults to InMemoryTokenStorage.
+    redirect_handler : callable | None
+        Custom handler for opening the auth URL. Defaults to webbrowser.open.
+    callback_handler : callable | None
+        Custom handler for receiving the callback. Defaults to CLI prompt.
+    """
+
+    client_name: str = "Seqoria Agent"
+    # When set to "auto" (default), seqoria-agent starts a local loopback HTTP server
+    # on 127.0.0.1 with a random free port and automatically captures the OAuth
+    # callback without requiring you to run a separate webserver.
+    #
+    # This avoids browser errors like ERR_CONNECTION_REFUSED that happen when the
+    # redirect URI points at localhost but nothing is listening.
+    redirect_uri: str = "auto"
+    scopes: list[str] | None = None
+    storage: TokenStorage | None = None
+    redirect_handler: Callable[[str], Awaitable[None]] | None = None
+    callback_handler: Callable[[], Awaitable[tuple[str, str | None]]] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Default OAuth Handlers
+# ---------------------------------------------------------------------------
+
+
+async def _default_redirect_handler(auth_url: str) -> None:
+    """Default handler: open auth URL in browser and print instructions."""
+    print()
+    print("=" * 60)
+    print("OAuth Authorization Required")
+    print("=" * 60)
+    print()
+    print("Opening browser for authentication...")
+    print()
+    print("If the browser doesn't open, visit this URL:")
+    print(f"  {auth_url}")
+    print()
+
+    # Try to open browser
+    try:
+        webbrowser.open(auth_url)
+    except Exception:
+        print("(Could not open browser automatically)")
+
+
+async def _default_callback_handler() -> tuple[str, str | None]:
+    """Default handler: prompt user to paste the callback URL."""
+    print("After authorizing, you'll be redirected to a localhost URL.")
+    print("Copy the FULL URL from your browser's address bar and paste it below.")
+    print()
+
+    callback_url = input("Paste callback URL: ").strip()
+
+    # Parse the callback URL to extract code and state
+    parsed = urlparse(callback_url)
+    params = parse_qs(parsed.query)
+
+    code = params.get("code", [None])[0]
+    state = params.get("state", [None])[0]
+
+    if not code:
+        raise ValueError("No authorization code found in callback URL")
+
+    print()
+    print("Authorization successful!")
+    print("=" * 60)
+    print()
+
+    return code, state
+
+
+async def _start_loopback_callback_server(
+    *,
+    path: str = "/callback",
+    host: str = "127.0.0.1",
+    timeout_s: float = 300.0,
+) -> tuple[str, Callable[[], Awaitable[tuple[str, str | None]]]]:
+    """Start a tiny loopback HTTP server to capture OAuth callback parameters.
+
+    Returns (redirect_uri, callback_handler).
+    """
+    loop = asyncio.get_running_loop()
+    result_fut: asyncio.Future[tuple[str, str | None]] = loop.create_future()
+
+    async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            data = await reader.read(8192)
+            # Parse request line: GET /callback?code=...&state=... HTTP/1.1
+            line = data.split(b"\r\n", 1)[0].decode("utf-8", errors="ignore")
+            parts = line.split()
+            req_target = parts[1] if len(parts) >= 2 else "/"
+
+            parsed = urlparse(req_target)
+            qs = parse_qs(parsed.query)
+            code = qs.get("code", [None])[0]
+            state = qs.get("state", [None])[0]
+
+            if code and not result_fut.done():
+                result_fut.set_result((code, state))
+
+            body = (
+                "<html><body>"
+                "<h2>Authorization complete</h2>"
+                "<p>You can close this tab and return to the terminal.</p>"
+                "</body></html>"
+            ).encode("utf-8")
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/html; charset=utf-8\r\n"
+                + f"Content-Length: {len(body)}\r\n".encode("utf-8")
+                + b"Connection: close\r\n"
+                b"\r\n"
+                + body
+            )
+            await writer.drain()
+        except Exception:
+            # Best-effort: do not crash the auth flow on callback handling issues.
+            pass
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    server = await asyncio.start_server(_handle, host=host, port=0)
+    sock = server.sockets[0] if server.sockets else None
+    port = sock.getsockname()[1] if sock is not None else 0
+    redirect_uri = f"http://{host}:{port}{path}"
+
+    async def _callback_handler() -> tuple[str, str | None]:
+        try:
+            return await asyncio.wait_for(result_fut, timeout=timeout_s)
+        finally:
+            server.close()
+            with suppress(Exception):
+                await server.wait_closed()
+
+    return redirect_uri, _callback_handler
 
 
 class HTTPClientPool:
@@ -205,6 +415,11 @@ class MCPServerConfig:
         Connection timeout in seconds (default: 30.0).
     env : dict[str, str] | None
         Environment variables for stdio subprocess.
+    oauth : OAuthConfig | bool | None
+        OAuth configuration for protected servers.
+        - None or False: No OAuth (use headers for auth if needed)
+        - True: Enable OAuth with default settings
+        - OAuthConfig: Enable OAuth with custom settings
     """
 
     url: str
@@ -212,6 +427,7 @@ class MCPServerConfig:
     headers: dict[str, str] | None = None
     timeout: float = 30.0
     env: dict[str, str] | None = None
+    oauth: OAuthConfig | bool | None = None
 
 
 @dataclass
@@ -346,7 +562,13 @@ class MCPTransportFactory:
         if not url.endswith("/mcp") and not url.endswith("/mcp/"):
             url = url.rstrip("/") + "/mcp"
 
-        # Use shared client pool for connection reuse
+        # Check if OAuth is enabled
+        if config.oauth:
+            async with MCPTransportFactory._connect_http_oauth(config, url) as conn:
+                yield conn
+            return
+
+        # Non-OAuth path: use shared client pool for connection reuse
         if client_pool is None:
             client_pool = await HTTPClientPool.get_shared()
         
@@ -364,6 +586,94 @@ class MCPTransportFactory:
                     url=config.url,
                     transport_type="http",
                 )
+
+    @staticmethod
+    @asynccontextmanager
+    async def _connect_http_oauth(
+        config: MCPServerConfig,
+        url: str,
+    ) -> AsyncIterator[MCPConnection]:
+        """Connect via Streamable HTTP transport with OAuth 2.1 authentication.
+
+        This implements the full MCP OAuth flow:
+        1. Protected Resource Metadata discovery
+        2. Authorization Server discovery
+        3. Dynamic Client Registration (or use existing)
+        4. Browser-based authorization with PKCE
+        5. Token exchange and storage
+
+        Parameters
+        ----------
+        config : MCPServerConfig
+            Server configuration with OAuth enabled.
+        url : str
+            Normalized MCP endpoint URL.
+        """
+        # Resolve OAuth config
+        if config.oauth is True:
+            oauth_cfg = OAuthConfig()
+        elif isinstance(config.oauth, OAuthConfig):
+            oauth_cfg = config.oauth
+        else:
+            raise ValueError("OAuth config must be True or OAuthConfig instance")
+
+        # Get server base URL (without /mcp path)
+        parsed = urlparse(url)
+        server_url = f"{parsed.scheme}://{parsed.netloc}"
+
+        # Set up token storage
+        storage = oauth_cfg.storage or InMemoryTokenStorage()
+
+        # Set up handlers
+        redirect_handler = oauth_cfg.redirect_handler or _default_redirect_handler
+
+        # If redirect_uri is "auto", start a loopback server that captures the callback.
+        # This avoids requiring a user-operated copy/paste and prevents browser
+        # connection-refused errors on localhost.
+        callback_handler = oauth_cfg.callback_handler
+        redirect_uri = oauth_cfg.redirect_uri
+        if redirect_uri in ("auto", "", None):
+            redirect_uri, callback_handler = await _start_loopback_callback_server()
+        if callback_handler is None:
+            callback_handler = _default_callback_handler
+
+        # Build redirect URIs list
+        redirect_uris = [AnyUrl(redirect_uri)]
+
+        # Build client metadata
+        client_metadata = OAuthClientMetadata(
+            client_name=oauth_cfg.client_name,
+            redirect_uris=redirect_uris,
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=" ".join(oauth_cfg.scopes) if oauth_cfg.scopes else None,
+        )
+
+        # Create OAuth provider
+        oauth_auth = OAuthClientProvider(
+            server_url=server_url,
+            client_metadata=client_metadata,
+            storage=storage,
+            redirect_handler=redirect_handler,
+            callback_handler=callback_handler,
+        )
+
+        # Create HTTP client with OAuth auth
+        timeout = httpx.Timeout(config.timeout, read=300.0)
+        async with httpx.AsyncClient(
+            auth=oauth_auth,
+            follow_redirects=True,
+            timeout=timeout,
+            http2=True,
+        ) as http_client:
+            async with streamable_http_client(url, http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield MCPConnection(
+                        session=session,
+                        url=config.url,
+                        transport_type="http",
+                    )
 
     @staticmethod
     @asynccontextmanager
