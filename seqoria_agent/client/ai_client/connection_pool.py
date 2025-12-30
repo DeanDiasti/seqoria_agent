@@ -97,6 +97,7 @@ class MCPConnectionPool:
 
         # Connection state
         self._lock: asyncio.Lock = asyncio.Lock()
+        self._started: bool = False
         self._connections: List[_ActiveConnection] = []
         self._context_managers: List[Any] = []  # Keep context managers alive
 
@@ -128,6 +129,15 @@ class MCPConnectionPool:
         return list(self._connections)
 
     @property
+    def server_configs(self) -> List[MCPServerConfig]:
+        """Return a copy of configured server configs (read-only)."""
+        return list(self._server_configs)
+
+    def list_server_urls(self) -> List[str]:
+        """Return configured server URLs (read-only)."""
+        return [cfg.url for cfg in self._server_configs]
+
+    @property
     def has_servers(self) -> bool:
         """Check whether any remote server connection is alive."""
         return bool(self._connections)
@@ -135,14 +145,20 @@ class MCPConnectionPool:
     async def start(self) -> None:
         """Establish connections to all configured servers (idempotent)."""
         async with self._lock:
-            if self._connections:
-                return
+            # Mark pool as started even if there are no servers yet. This allows
+            # dynamic addition of servers after initialization.
+            self._started = True
 
             # Initialize shared HTTP client pool if not provided
             if self._http_client_pool is None:
                 self._http_client_pool = await HTTPClientPool.get_shared()
 
-            connect_tasks = [self._connect(config) for config in self._server_configs]
+            connected_urls = {c.url for c in self._connections}
+            missing = [cfg for cfg in self._server_configs if cfg.url not in connected_urls]
+            if not missing:
+                return
+
+            connect_tasks = [self._connect(config) for config in missing]
             results = await asyncio.gather(*connect_tasks, return_exceptions=True)
 
             for result in results:
@@ -154,6 +170,103 @@ class MCPConnectionPool:
 
             if not self._connections and self._server_configs:
                 self._logger.warning("MCPConnectionPool initialized without any reachable servers")
+
+    async def add_servers(
+        self,
+        servers: Iterable[str | MCPServerConfig],
+        *,
+        connect: bool = True,
+    ) -> int:
+        """Add server configs to the pool and optionally connect immediately.
+
+        Returns the number of *new* server configs added (deduped by URL).
+        """
+        new_configs: list[MCPServerConfig] = []
+        for s in servers:
+            cfg = MCPServerConfig(url=s) if isinstance(s, str) else s
+            new_configs.append(cfg)
+
+        async with self._lock:
+            existing_urls = {cfg.url for cfg in self._server_configs}
+            to_add = [cfg for cfg in new_configs if cfg.url not in existing_urls]
+            if not to_add:
+                return 0
+            self._server_configs.extend(to_add)
+
+        # If pool has been started and caller asked to connect, connect the new ones now.
+        if connect and self._started:
+            await self.start()
+
+        return len(to_add)
+
+    async def add_server(self, server: str | MCPServerConfig, *, connect: bool = True) -> int:
+        """Convenience wrapper for adding a single server. Returns 1 if added, else 0."""
+        return await self.add_servers([server], connect=connect)
+
+    def _prune_tool_map_for_session(self, session: Any) -> None:
+        """Remove tool_map entries that route to the given session."""
+        to_delete = [name for name, target in self._tool_map.items() if target is session]
+        for name in to_delete:
+            self._tool_map.pop(name, None)
+
+    async def remove_servers(
+        self,
+        servers: Iterable[str | MCPServerConfig],
+        *,
+        disconnect: bool = True,
+    ) -> int:
+        """Remove server configs from the pool and optionally disconnect.
+
+        Returns the number of server configs removed (deduped by URL).
+        """
+        urls: list[str] = []
+        for s in servers:
+            urls.append(s if isinstance(s, str) else s.url)
+
+        url_set = {str(u) for u in urls if u}
+        if not url_set:
+            return 0
+
+        async with self._lock:
+            # 1) Remove server configs
+            before = len(self._server_configs)
+            self._server_configs = [cfg for cfg in self._server_configs if cfg.url not in url_set]
+            removed = before - len(self._server_configs)
+
+            # 2) Optionally disconnect active connections
+            if disconnect and self._connections:
+                remaining: list[_ActiveConnection] = []
+                for conn in self._connections:
+                    if conn.url not in url_set:
+                        remaining.append(conn)
+                        continue
+
+                    cm = getattr(conn, "_context_manager", None)
+                    if cm is not None:
+                        try:
+                            await cm.__aexit__(None, None, None)
+                        except Exception:
+                            pass
+                        try:
+                            self._context_managers.remove(cm)
+                        except ValueError:
+                            pass
+
+                    self._session_to_url.pop(conn.session, None)
+                    self._prune_tool_map_for_session(conn.session)
+
+                self._connections = remaining
+
+            return removed
+
+    async def remove_server(
+        self,
+        server: str | MCPServerConfig,
+        *,
+        disconnect: bool = True,
+    ) -> int:
+        """Convenience wrapper for removing a single server. Returns 1 if removed, else 0."""
+        return await self.remove_servers([server], disconnect=disconnect)
 
     async def close(self) -> None:
         """Gracefully shut down all connections."""

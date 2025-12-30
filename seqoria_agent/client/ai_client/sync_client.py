@@ -210,6 +210,69 @@ class AIClient:
         _run_sync(self._async_client.close())
 
     # -------------------------------------------------------------------------
+    # Dynamic MCP server management (sync wrappers)
+    # -------------------------------------------------------------------------
+    def add_mcp_servers(
+        self,
+        servers: Iterable[str | MCPServerConfig],
+        *,
+        connect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Add MCP servers after initialization (blocking)."""
+        return _run_sync(
+            self._async_client.add_mcp_servers(
+                servers=servers, connect=connect, refresh_tools=refresh_tools
+            )
+        )
+
+    def add_mcp_server(
+        self,
+        server: str | MCPServerConfig,
+        *,
+        connect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Add a single MCP server after initialization (blocking)."""
+        return _run_sync(
+            self._async_client.add_mcp_server(
+                server=server, connect=connect, refresh_tools=refresh_tools
+            )
+        )
+
+    def list_mcp_servers(self) -> List[MCPServerConfig]:
+        """List configured MCP servers (read-only copy)."""
+        return self._async_client.list_mcp_servers()
+
+    def remove_mcp_servers(
+        self,
+        servers: Iterable[str | MCPServerConfig],
+        *,
+        disconnect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Remove MCP servers after initialization (blocking)."""
+        return _run_sync(
+            self._async_client.remove_mcp_servers(
+                servers=servers, disconnect=disconnect, refresh_tools=refresh_tools
+            )
+        )
+
+    def remove_mcp_server(
+        self,
+        server: str | MCPServerConfig,
+        *,
+        disconnect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Remove a single MCP server after initialization (blocking)."""
+        return _run_sync(
+            self._async_client.remove_mcp_server(
+                server=server, disconnect=disconnect, refresh_tools=refresh_tools
+            )
+        )
+
+    # -------------------------------------------------------------------------
     # Expose underlying async client for advanced usage
     # -------------------------------------------------------------------------
     @property

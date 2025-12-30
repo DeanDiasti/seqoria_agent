@@ -188,7 +188,7 @@ class AsyncAIClient:
 
         # Store configuration
         self._providers = providers
-        self._servers = _servers
+        self._servers = list(_servers)
         self._boxes = (
             []
             if local_toolbox is None
@@ -279,6 +279,84 @@ class AsyncAIClient:
         await self.pool.close()
         await self.registry.close()
         self._tool_map.clear()
+
+    # ---------------------------------------------------------------------
+    # Dynamic MCP server management
+    # ---------------------------------------------------------------------
+    async def add_mcp_servers(
+        self,
+        servers: Iterable[str | MCPServerConfig],
+        *,
+        connect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Add MCP servers after initialization.
+
+        - If `connect=True` and the client is already started (inside `async with`),
+          this will connect immediately.
+        - If `refresh_tools=True`, the ToolRegistry is refreshed so newly available
+          tools become visible via `list_tools()` and to the LLM.
+
+        Returns the number of *new* server configs added (deduped by URL).
+        """
+        # Keep a record of the user's servers list (best-effort, for introspection).
+        for s in servers:
+            self._servers.append(s)
+
+        added = await self.pool.add_servers(servers, connect=connect)
+        if refresh_tools and added:
+            await self.registry.refresh()
+        return added
+
+    async def add_mcp_server(
+        self,
+        server: str | MCPServerConfig,
+        *,
+        connect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Convenience wrapper for adding a single MCP server."""
+        return await self.add_mcp_servers([server], connect=connect, refresh_tools=refresh_tools)
+
+    def list_mcp_servers(self) -> List[MCPServerConfig]:
+        """List configured MCP servers (read-only copy)."""
+        return self.pool.server_configs
+
+    async def remove_mcp_servers(
+        self,
+        servers: Iterable[str | MCPServerConfig],
+        *,
+        disconnect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Remove MCP servers after initialization.
+
+        - If `disconnect=True`, active connections are closed and routing entries
+          for their sessions are pruned.
+        - If `refresh_tools=True`, ToolRegistry is refreshed so removed tools stop
+          being exposed to the LLM and `list_tools()`.
+
+        Returns number of server configs removed (deduped by URL).
+        """
+        # Best-effort maintenance of the user-facing servers list
+        urls = {s if isinstance(s, str) else s.url for s in servers}
+        if urls:
+            self._servers = [s for s in self._servers if (s if isinstance(s, str) else s.url) not in urls]
+
+        removed = await self.pool.remove_servers(servers, disconnect=disconnect)
+        if refresh_tools and removed:
+            await self.registry.refresh()
+        return removed
+
+    async def remove_mcp_server(
+        self,
+        server: str | MCPServerConfig,
+        *,
+        disconnect: bool = True,
+        refresh_tools: bool = True,
+    ) -> int:
+        """Convenience wrapper for removing a single MCP server."""
+        return await self.remove_mcp_servers([server], disconnect=disconnect, refresh_tools=refresh_tools)
 
     # Tool execution methods
     async def call_mcp_tool(
