@@ -123,6 +123,7 @@ class AsyncAIClient:
         ] = None,
         allow_override: bool = False,
         # Meta-tools
+        blocked_tools: Iterable[str] | None = None,
         # Settings
         settings: ClientSettings | None = None,
         # System prompt
@@ -175,6 +176,11 @@ class AsyncAIClient:
             if param_registry is not None
             else getattr(settings, "param_registry", None)
         )
+        blocked_tools = (
+            blocked_tools
+            if blocked_tools is not None
+            else getattr(settings, "blocked_tools", ())
+        )
 
         # Validate
         if not providers:
@@ -212,6 +218,7 @@ class AsyncAIClient:
             pool=self.pool,
             local_toolboxes=self._boxes,
             tool_map=self._tool_map,
+            blocked_tools=blocked_tools,
             refresh_interval=refresh_interval,
             logger=self._logger,
         )
@@ -326,6 +333,27 @@ class AsyncAIClient:
           context (`async with client:`) or after calling `await client.refresh_tools()`.
         """
         return self.registry.llm_tools
+
+    # ---------------------------------------------------------------------
+    # Tool blocking / filtering
+    # ---------------------------------------------------------------------
+    async def set_blocked_tools(self, names: Iterable[str], *, refresh: bool = True) -> None:
+        """Replace the blocked-tool set and optionally refresh the registry."""
+        await self.registry.set_blocked_tools(names)
+        if refresh:
+            await self.registry.refresh()
+
+    async def block_tools(self, names: Iterable[str], *, refresh: bool = True) -> None:
+        """Add tool names to the blocklist and optionally refresh the registry."""
+        await self.registry.block_tools(names)
+        if refresh:
+            await self.registry.refresh()
+
+    async def unblock_tools(self, names: Iterable[str], *, refresh: bool = True) -> None:
+        """Remove tool names from the blocklist and optionally refresh the registry."""
+        await self.registry.unblock_tools(names)
+        if refresh:
+            await self.registry.refresh()
 
     # LLM interaction methods
     async def llm_generate_once(

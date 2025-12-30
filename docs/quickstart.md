@@ -135,7 +135,5 @@ result = await ai.chat(
 > * **LLM-only mode** ‑ skip the tool loop when no tools are available.
 > * **Manual Loop helpers** ‑ drive each LLM step yourself ([guide](guides/ai_client.md#manual-loop)).
 
-> **Need authentication?**  Pair your server with an *AuthBackend* (e.g., `BearerCookieBackend` or
-> `HeaderApiKeyBackend`) and supply the matching *AuthProvider* (e.g., `StaticCookieProvider` or
-> `StaticApiKeyProvider`) when constructing `AIClient`.  See the
-> [Authentication guide](guides/authentication.md) for a full walkthrough. 
+> **Note** Authentication helpers were removed from this library; handle auth at your API gateway / reverse proxy
+> or in your own FastAPI middleware.

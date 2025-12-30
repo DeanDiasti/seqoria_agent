@@ -13,19 +13,19 @@ The core idea is to treat *tool calls, LLM reasoning, and UI display components*
 
 seqoria_agent is built on three pillars:
 
-1.  **`XMCP` Server**: A high-performance server powered by the *official* [MCP Python SDK](https://pypi.org/project/mcp/) (`mcp.server.fastmcp.FastMCP`). It exposes your Python functions as tools for an AI to use and adds critical features like structured error handling, custom output formatting, and a special decorator (`@display_tool`) for functions that generate UI components.
+1.  **`SeqoriaMCP` Server**: A high-performance server built on the *official* [MCP Python SDK](https://pypi.org/project/mcp/) (`mcp.server.fastmcp.FastMCP`). It exposes your Python functions as tools for an AI to use and adds critical features like server-populated parameters, tool dependencies, and structured error handling.
 
-2.  **`AIClient`**: An intelligent, asynchronous client that acts as the brain of your application. It connects to one or more `XMCP` servers, manages the conversation state, invokes an LLM to decide on the next action, and executes the chosen tools—in parallel where possible. It's stateless, scalable, and packed with production-ready features like caching, retries, and streaming.
+2.  **`AIClient`**: An intelligent, asynchronous client that acts as the brain of your application. It connects to one or more MCP servers, manages the conversation state, invokes an LLM to decide on the next action, and executes the chosen tools—in parallel where possible. It's stateless, scalable, and packed with production-ready features like caching, retries, and streaming.
 
-3.  **`DisplayEnvelope`**: A simple, frontend-agnostic JSON contract for sending rich UI components directly to the end-user. Instead of having an LLM describe a table or a chart in markdown, a tool can return a `DisplayEnvelope` containing the structured data, which your client application can then render as a native UI element.
+3.  **`LocalToolbox`**: Run tools directly in-process without an HTTP server. Perfect for simple scripts, testing, or when you want to combine local and remote tools in the same client.
 
 ## Key Features
 
 -   **Unified Protocol**: A single, consistent architecture for LLM reasoning, tool execution, and rich UI generation.
--   **Pluggable LLM Providers**: Swap between LLM backends (e.g., OpenAI, Anthropic) without changing your application logic.
+-   **Pluggable LLM Providers**: Swap between LLM backends (OpenAI, Anthropic, Ollama) without changing your application logic.
 -   **Parallel Tool Execution**: The `AIClient` automatically runs independent tool calls concurrently to minimize latency.
--   **Response Streaming**: Stream LLM responses token-by-token and render UI components instantly as they arrive for a snappy user experience.
--   **Rich, Structured UI**: Go beyond markdown with `DisplayEnvelope` for rendering interactive charts, tables, images, and more.
+-   **Response Streaming**: Stream LLM responses token-by-token for a snappy user experience.
+-   **Server-Populated Parameters**: Hide sensitive parameters (user IDs, tenant IDs) from the LLM and inject them at runtime.
 -   **Production-Ready**: Built-in support for caching, automatic retries with exponential backoff, circuit breakers, and structured logging.
 -   **Effortless Tool Definition**: Expose your existing Python functions as tools with simple decorators.
 
@@ -33,16 +33,20 @@ seqoria_agent is built on three pillars:
 
 ## Installation
 
-> **Prerequisite**   `seqoria_agent` depends on the official **MCP SDK** *and* (for JWT-based auth) the optional **PyJWT** package.  When you install `seqoria_agent[dev]` the correct `PyJWT` version is pulled in automatically.  If you rely on `BearerCookieBackend` make sure `pyjwt` is available.
-
 ```bash
 # Create & activate a virtual environment (optional, but recommended)
 
 # Install the core library (brings in MCP automatically)
-pip install seqoria_agent
+pip install seqoria-agent
+
+# Install with a specific LLM provider
+pip install 'seqoria-agent[openai]'      # OpenAI
+pip install 'seqoria-agent[anthropic]'   # Anthropic
+pip install 'seqoria-agent[ollama]'      # Ollama
+pip install 'seqoria-agent[providers]'   # All providers
 
 # Development & docs extras
-pip install 'seqoria_agent[dev,docs]'
+pip install 'seqoria-agent[dev,docs]'
 ```
 
 ---
@@ -53,41 +57,28 @@ Here's a 2-minute example of creating a simple tool server and a client to inter
 
 ### 1. Create a Server
 
-Save the following as `my_server.py`. It defines a simple tool that can return either data for the LLM or a `DisplayEnvelope` for a UI.
+Save the following as `my_server.py`. It defines a simple tool that the LLM can call.
 
 ```python
 # my_server.py
-from seqoria_agent.server.fastxmcp import FastXMCP as XMCP
+from seqoria_agent.server import SeqoriaMCP
 
-mcp = XMCP()
+mcp = SeqoriaMCP("MyServer")
 
-@mcp.display_tool
-def sales_summary(region: str, show_user: bool = False):
-    """
-    Returns a sales summary. If show_user is True, it returns a
-    DisplayEnvelope for rendering a table. Otherwise, it returns
-    raw data for the LLM.
-    """
+@mcp.tool()
+def sales_summary(region: str) -> dict:
+    """Returns a sales summary for the given region."""
     # In a real app, you would fetch this from a database
-    summary = {"region": region, "sales": 42000, "prospects": 120}
+    return {"region": region, "sales": 42000, "prospects": 120}
 
-    if show_user:
-        return DisplayEnvelope(
-            type="table",
-            payload=[summary],
-            title=f"Sales Summary: {region}"
-        )
-
-    # For the LLM, just return the core data
-    return {"region": region, "sales": summary["sales"]}
-
-# This allows running the server with `uvicorn my_server:mcp`
+if __name__ == "__main__":
+    mcp.run(port=8000)
 ```
 
 Now, run the server from your terminal:
 
 ```bash
-uvicorn my_server:mcp --port 8000
+python my_server.py
 ```
 
 ### 2. Create a Client
@@ -98,15 +89,8 @@ Save the following as `my_client.py`. This client will connect to your server an
 # my_client.py
 import asyncio
 import os
-from seqoria_agent import AIClient
+from seqoria_agent import AsyncAIClient
 from seqoria_agent.providers import OpenAIProvider
-
-# Dummy function to simulate rendering a UI component
-def render(display_data: dict):
-    print("\n--- Received UI Component---")
-    import json
-    print(json.dumps(display_data, indent=2))
-    print("---------------------------\n")
 
 async def main():
     # Requires OPENAI_API_KEY to be set in the environment
@@ -115,19 +99,18 @@ async def main():
         return
 
     providers = [OpenAIProvider(model_id="gpt-4o")]
-    history = [] # The client is stateless, so we manage history
+    history = []  # The client is stateless, so we manage history
 
-    async with AIClient(urls=["http://localhost:8000"], providers=providers) as ai:
-        # The LLM will see the `show_user` parameter and set it to True
-        result = await ai.chat(
-            "Show me the sales summary for EMEA as a table",
+    async with AsyncAIClient(
+        mcp_servers=["http://localhost:8000/mcp/"],
+        providers=providers
+    ) as ai:
+        async for chunk in ai.stream_chat(
+            "What are the sales numbers for EMEA?",
             history=history
-        )
-
-        if result.get("display"):
-            render(result["display"])
-        else:
-            print(f"Assistant: {result['answer']}")
+        ):
+            print(chunk, end="", flush=True)
+        print()
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -139,7 +122,46 @@ Make sure your `OPENAI_API_KEY` is set, then run the client:
 python my_client.py
 ```
 
-You will see the `render` function print the structured `DisplayEnvelope` that the tool returned.
+---
+
+## Using LocalToolbox (No Server Required)
+
+For simpler use cases, you can run tools directly in-process:
+
+```python
+import asyncio
+from seqoria_agent import AsyncAIClient, LocalToolbox
+from seqoria_agent.providers import OllamaProvider
+
+toolbox = LocalToolbox()
+
+@toolbox.tool()
+def add(a: int, b: int) -> int:
+    """Add two numbers together."""
+    return a + b
+
+@toolbox.tool()
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers together."""
+    return a * b
+
+async def main():
+    providers = [OllamaProvider(model_id="llama3.2")]
+    history = []
+
+    async with AsyncAIClient(
+        local_toolbox=toolbox,
+        providers=providers
+    ) as ai:
+        async for chunk in ai.stream_chat(
+            "What is 5 + 3, then multiply the result by 2?",
+            history=history
+        ):
+            print(chunk, end="", flush=True)
+        print()
+
+asyncio.run(main())
+```
 
 ---
 
@@ -152,4 +174,4 @@ Contributions, issues, and feature requests are welcome! Feel free to check the 
 This project is licensed under the MIT License.
 
 > **Tip**  Need full control?  The new *Manual Loop* helpers let you drive each
-> LLM turn step-by-step – see the [guide](docs/guides/ai_client.md#manual-loop). 
+> LLM turn step-by-step – see the [guide](docs/guides/ai_client.md#manual-loop).

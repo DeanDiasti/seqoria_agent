@@ -13,19 +13,57 @@ LLM Provider Support:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from seqoria_agent.client import AIClient, AsyncAIClient
 from seqoria_agent.server import SeqoriaMCP
 from seqoria_agent.toolbox import LocalToolbox
 
-# Provider imports for convenient access
-from seqoria_agent.providers import (
-    AsyncBaseProvider,
-    BaseProvider,
-    AsyncOpenAIProvider,
-    OpenAIProvider,
-    AsyncAnthropicProvider,
-    AnthropicProvider,
-)
+# Always-safe provider base classes (no optional deps)
+from seqoria_agent.providers import AsyncBaseProvider, BaseProvider
+
+# Type checking imports (no runtime import cost / no optional deps required)
+if TYPE_CHECKING:
+    from seqoria_agent.providers import (  # noqa: F401
+        AnthropicProvider,
+        AsyncAnthropicProvider,
+        AsyncOllamaProvider,
+        AsyncOpenAIProvider,
+        OllamaProvider,
+        OpenAIProvider,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lazy provider re-exports
+# ---------------------------------------------------------------------------
+
+_LAZY_EXPORTS: set[str] = {
+    # Providers (optional deps)
+    "AsyncOpenAIProvider",
+    "OpenAIProvider",
+    "AsyncAnthropicProvider",
+    "AnthropicProvider",
+    "AsyncOllamaProvider",
+    "OllamaProvider",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy re-export of optional provider classes.
+
+    This keeps `from seqoria_agent import AsyncAIClient` lightweight while still
+    supporting `from seqoria_agent import OpenAIProvider` when the extra is installed.
+    """
+    if name in _LAZY_EXPORTS:
+        from seqoria_agent import providers as _providers
+
+        return getattr(_providers, name)
+    raise AttributeError(f"module 'seqoria_agent' has no attribute '{name}'")
+
+
+def __dir__() -> list[str]:
+    return sorted(list(globals().keys()) + list(_LAZY_EXPORTS))
 
 
 __all__ = [
@@ -37,10 +75,11 @@ __all__ = [
     # Base providers
     "AsyncBaseProvider",
     "BaseProvider",
-    # OpenAI providers
+    # Optional providers (lazy)
     "AsyncOpenAIProvider",
     "OpenAIProvider",
-    # Anthropic providers
     "AsyncAnthropicProvider",
     "AnthropicProvider",
+    "AsyncOllamaProvider",
+    "OllamaProvider",
 ]

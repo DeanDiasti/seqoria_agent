@@ -305,6 +305,21 @@ class AIClient:
         return self._async_client.list_tools()
 
     # -------------------------------------------------------------------------
+    # Tool blocking / filtering (sync wrappers)
+    # -------------------------------------------------------------------------
+    def set_blocked_tools(self, names: Iterable[str], *, refresh: bool = True) -> None:
+        """Replace the blocked-tool set and optionally refresh the tool registry."""
+        _run_sync(self._async_client.set_blocked_tools(names, refresh=refresh))
+
+    def block_tools(self, names: Iterable[str], *, refresh: bool = True) -> None:
+        """Add tool names to the blocklist and optionally refresh the tool registry."""
+        _run_sync(self._async_client.block_tools(names, refresh=refresh))
+
+    def unblock_tools(self, names: Iterable[str], *, refresh: bool = True) -> None:
+        """Remove tool names from the blocklist and optionally refresh the tool registry."""
+        _run_sync(self._async_client.unblock_tools(names, refresh=refresh))
+
+    # -------------------------------------------------------------------------
     # LLM interaction methods (sync)
     # -------------------------------------------------------------------------
     def llm_generate_once(

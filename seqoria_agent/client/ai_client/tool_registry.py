@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, FrozenSet
 
 from mcp import ClientSession
 
@@ -48,11 +48,13 @@ class ToolRegistry:
                  pool: MCPConnectionPool,
                  local_toolboxes: Optional[List[LocalToolbox]] = None,
                  tool_map: Optional[Dict[str, Any]] = None,
+                 blocked_tools: Iterable[str] | None = None,
                  refresh_interval: float = 0.0,
                  logger: Optional[logging.Logger] = None) -> None:
         self._pool = pool
         self._local_boxes: List[LocalToolbox] = list(local_toolboxes or [])
         self._tool_map: Dict[str, Any] = tool_map if tool_map is not None else {}
+        self._blocked_tools: FrozenSet[str] = frozenset(str(n) for n in (blocked_tools or []))
 
         self._refresh_interval: float = float(refresh_interval)
         self._logger = logger or logging.getLogger(name="seqoria_agent.tool_registry")
@@ -81,6 +83,11 @@ class ToolRegistry:
         """Return OpenAI-compatible tool list for LLM interface."""
         return list(self._llm_tools)
 
+    @property
+    def blocked_tools(self) -> Set[str]:
+        """Return the currently blocked tool names (copy)."""
+        return set(self._blocked_tools)
+
     def _llm_tools_view(self) -> List[dict]:
         """Internal: return the underlying tool list without copying (read-only contract)."""
         return self._llm_tools
@@ -105,6 +112,39 @@ class ToolRegistry:
     def version(self) -> int:
         """Monotonically increasing version bumped on each refresh."""
         return self._version
+
+    async def set_blocked_tools(self, names: Iterable[str]) -> None:
+        """Replace the blocked-tool set.
+
+        Callers typically follow this with `await registry.refresh()` so the tool
+        catalogue reflects the new filter.
+        """
+        async with self._lock:
+            self._blocked_tools = frozenset(str(n) for n in names)
+
+    async def block_tools(self, names: Iterable[str]) -> None:
+        """Add tool names to the blocklist."""
+        async with self._lock:
+            self._blocked_tools = frozenset(set(self._blocked_tools).union({str(n) for n in names}))
+
+    async def unblock_tools(self, names: Iterable[str]) -> None:
+        """Remove tool names from the blocklist."""
+        to_remove = {str(n) for n in names}
+        async with self._lock:
+            self._blocked_tools = frozenset(n for n in self._blocked_tools if n not in to_remove)
+
+    def _is_blocked(self, *, base_name: str, public_name: str) -> bool:
+        """Return True if a tool should be excluded from the LLM tool context."""
+        blocked = self._blocked_tools
+        # - base name block should hide all schema aliases (`foo__abcd1234`)
+        # - public name block can hide a single schema variant
+        if not blocked:
+            return False
+        if base_name in blocked or public_name in blocked:
+            return True
+        if public_name.startswith(base_name + "__") and base_name in blocked:
+            return True
+        return False
 
     async def close(self) -> None:
         """Stop background refresh task."""
@@ -217,14 +257,21 @@ class ToolRegistry:
         primary_hash = self._seen_schema_hash.get(base_name)
         if primary_hash is None:
             public_name = base_name
-            self._seen_schema_hash[base_name] = schema_fingerprint
-            base_to_primary_alias[base_name] = public_name
         elif primary_hash == schema_fingerprint:
             # Same schema - skip duplicate
             return
         else:
             # Different schema - create alias
             public_name = f"{base_name}__{schema_fingerprint}"
+
+        # Apply blocklist before mutating registry state.
+        if self._is_blocked(base_name=base_name, public_name=public_name):
+            return
+
+        # Now commit primary mapping once we know the tool isn't blocked.
+        if primary_hash is None:
+            self._seen_schema_hash[base_name] = schema_fingerprint
+            base_to_primary_alias[base_name] = public_name
 
         # Register in tool map
         self._tool_map[public_name] = source
@@ -268,12 +315,19 @@ class ToolRegistry:
         primary_hash = self._seen_schema_hash.get(base_name)
         if primary_hash is None:
             public_name = base_name
-            self._seen_schema_hash[base_name] = schema_fingerprint
-            base_to_primary_alias[base_name] = public_name
         elif primary_hash == schema_fingerprint:
             return
         else:
             public_name = f"{base_name}__{schema_fingerprint}"
+
+        # Apply blocklist before mutating registry state.
+        if self._is_blocked(base_name=base_name, public_name=public_name):
+            return
+
+        # Commit primary mapping once we know the tool isn't blocked.
+        if primary_hash is None:
+            self._seen_schema_hash[base_name] = schema_fingerprint
+            base_to_primary_alias[base_name] = public_name
 
         # Register in tool map
         self._tool_map[public_name] = source

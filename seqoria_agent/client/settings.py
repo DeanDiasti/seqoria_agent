@@ -44,6 +44,13 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
     breaker_reset_after: int = 60
     param_registry: Mapping[str, ParameterSource] | ParameterRegistry | None = None
     allow_override: bool = False
+    # Tools ----------------------------------------------------------------
+    # Names of tools that must NOT be surfaced to the LLM (i.e., excluded from the
+    # "tools" payload sent to providers). This does not prevent direct execution
+    # via `call_mcp_tool()` if the caller passes the name explicitly.
+    #
+    # Stored as an immutable tuple to keep `ClientSettings.copy()` safe (shallow copy).
+    blocked_tools: tuple[str, ...] = ()
 
     # Transport customisation ----------------------------------------------
     client_kwargs: dict[str, Any] = field(default_factory=dict)

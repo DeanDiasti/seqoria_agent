@@ -91,38 +91,9 @@ def timestamped_divide(a: float, b: float) -> str: ...
 
 If both tools are requested in the same turn, `current_time` will run first.
 
-## 7. Securing Tools with AuthBackend
+## 7. Securing Tools
 
-```python
-from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent.auth.backends import HeaderApiKeyBackend
+Authentication helpers were removed from this library. Secure your MCP endpoint using your existing infrastructure:
 
-app = FastXMCP(
-    # Require callers to present the correct API-key header on *every* tool call.
-    auth_backend=HeaderApiKeyBackend(
-        key_header="X-API-Key",
-        validator="my-secret",
-    )
-)
-
-@app.tool()
-async def ping():
-    """A protected tool – returns *pong* when authenticated."""
-    return "pong"
-```
-
-On the client side:
-
-```python
-from seqoria_agent.client import AIClient
-from seqoria_agent.auth.providers import StaticApiKeyProvider
-
-async with AIClient(
-    providers=[...],
-    urls=["http://localhost:8000/mcp/"],
-    auth_provider=StaticApiKeyProvider("my-secret"),
-) as client:
-    print(await client.call_mcp_tool("ping", {}))
-```
-
-Read the dedicated [Authentication guide](authentication.md) for more details and additional backends. 
+- API gateway / reverse proxy (recommended).
+- FastAPI middleware in your own app (validate headers/cookies before requests reach MCP).

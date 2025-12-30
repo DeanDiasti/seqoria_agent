@@ -125,36 +125,9 @@ If two routers (or the parent app) attempt to register the **same tool name**
 `include_router()` raises `XMCPError(code="DUPLICATE_TOOL")` to prevent
 ambiguous calls. 
 
-## 7. Securing Tools with AuthBackend
+## 7. Securing Tools
 
-Add an **AuthBackend** to protect every tool call.
+Authentication helpers were removed from this library. Secure your MCP endpoint using your existing infrastructure:
 
-```python
-from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent.auth.backends import HeaderApiKeyBackend
-
-mcp = FastXMCP(
-    auth_backend=HeaderApiKeyBackend(validator="super-secret")
-)
-
-@mcp.tool(server_populated=["principal"])
-async def whoami(principal):
-    return principal.get("api_key")
-```
-
-Alternatively mount the backend as middleware so it also guards regular REST routes:
-
-```python
-app = FastAPI()
-app.add_middleware(HeaderApiKeyBackend, validator="super-secret")
-```
-
-For client-side credentials use the matching *AuthProvider*:
-
-```python
-provider = StaticApiKeyProvider(token="super-secret")
-async with AIClient(urls=["http://localhost:8000"], providers=[...], auth_provider=provider):
-    ...
-```
-
-See the dedicated [Authentication Guide](auth.md) for more details. 
+- Run behind a reverse proxy / API gateway (recommended).
+- Use FastAPI middleware in your own app to validate headers/cookies before requests reach the MCP server.
