@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Generator, Iterable, List, Mapping, Self, Tuple, Union
+from typing import TYPE_CHECKING, Any, Generator, Iterable, List, Mapping, Self, Tuple, Union
 
 from seqoria_agent.client.ai_client.async_client import AsyncAIClient
 from seqoria_agent.client.cache import CacheProtocol
@@ -35,6 +35,11 @@ from seqoria_agent.providers.base_provider import BaseProvider, AsyncBaseProvide
 from seqoria_agent.toolbox import LocalToolbox
 
 __all__ = ["AIClient"]
+
+if TYPE_CHECKING:
+    from seqoria_agent.memory.agentic_memory import AgenticMemory
+
+HistoryInput = Union[list[dict[str, Any]], "AgenticMemory"]
 
 
 def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
@@ -387,7 +392,7 @@ class AIClient:
     # -------------------------------------------------------------------------
     def llm_generate_once(
         self,
-        history: List[dict],
+        history: HistoryInput,
         *,
         use_tools: bool = True,
         tool_choice: str = "auto",
@@ -405,7 +410,7 @@ class AIClient:
 
     def llm_stream_once(
         self,
-        history: List[dict],
+        history: HistoryInput,
         *,
         use_tools: bool = True,
         tool_choice: str = "auto",
@@ -436,7 +441,7 @@ class AIClient:
     def chat(
         self,
         user_query: str,
-        history: List[dict],
+        history: HistoryInput,
         *,
         max_turns: int = 5,
         model: str | None = None,
@@ -472,7 +477,7 @@ class AIClient:
     def chat_sync(
         self,
         user_query: str,
-        history: List[dict],
+        history: HistoryInput,
         *,
         max_turns: int = 5,
         model: str | None = None,
@@ -503,7 +508,7 @@ class AIClient:
     def stream_chat(
         self,
         user_query: str,
-        history: List[dict],
+        history: HistoryInput,
         *,
         max_turns: int = 5,
         model: str | None = None,

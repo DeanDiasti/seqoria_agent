@@ -1,6 +1,6 @@
 [project]
 name = "seqoria-agent"
-version = "0.5.4"
+version = "0.6.0"
 description = "Seqoria Agentic Assistant Framework - MCP-native tool orchestration for AI applications"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -44,6 +44,21 @@ performance = [
 # FastAPI server support
 server = ["fastapi>=0.128.0"]
 
+# Memory store adapters (canonical + vector)
+memory-mongo = ["pymongo"]
+memory-postgres = ["psycopg[binary]"]
+memory-pgvector = [
+    "psycopg[binary]",
+    "pgvector",
+]
+memory-qdrant = ["qdrant-client"]
+memory = [
+    "pymongo",
+    "psycopg[binary]",
+    "pgvector",
+    "qdrant-client",
+]
+
 # All providers bundle
 providers = [
     "openai>=2.14.0",
@@ -60,6 +75,10 @@ all = [
     "orjson>=3.9.0",
     "xxhash>=3.6.0",
     "fastapi>=0.128.0",
+    "pymongo",
+    "psycopg[binary]",
+    "pgvector",
+    "qdrant-client",
 ]
 
 # Development dependencies

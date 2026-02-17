@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from seqoria_agent.client import AIClient, AsyncAIClient
+from seqoria_agent.memory import AgenticMemory, AgenticMemoryConfig
 from seqoria_agent.server import SeqoriaMCP
 from seqoria_agent.toolbox import LocalToolbox
 
@@ -70,6 +71,8 @@ __all__ = [
     # Core classes
     "AIClient",
     "AsyncAIClient",
+    "AgenticMemory",
+    "AgenticMemoryConfig",
     "SeqoriaMCP",
     "LocalToolbox",
     # Base providers

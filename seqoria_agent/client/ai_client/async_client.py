@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, AsyncGenerator, Iterable, List, Mapping, Self, Tuple, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, List, Mapping, Self, Tuple, Union
 
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.ai_client.executor import Executor
@@ -29,6 +29,7 @@ from seqoria_agent.client.cache import CacheProtocol, NullCache
 from seqoria_agent.client.mcp_transport import MCPServerConfig
 from seqoria_agent.client.parameters import ParamContext, ParameterRegistry, ParameterSource
 from seqoria_agent.client.settings import ClientSettings
+from seqoria_agent.memory.history_adapter import is_memory_aware_history
 from seqoria_agent.models.chunk import (
     AssistantMessage,
     ChatChunk,
@@ -43,6 +44,11 @@ from seqoria_agent.providers.base_provider import AsyncBaseProvider
 from seqoria_agent.toolbox import LocalToolbox
 
 __all__ = ["AsyncAIClient"]
+
+if TYPE_CHECKING:
+    from seqoria_agent.memory.agentic_memory import AgenticMemory
+
+HistoryInput = Union[list[dict[str, Any]], "AgenticMemory"]
 
 
 class AsyncAIClient:
@@ -436,7 +442,7 @@ class AsyncAIClient:
     # LLM interaction methods
     async def llm_generate_once(
         self,
-        history: List[dict],
+        history: HistoryInput,
         *,
         use_tools: bool = True,
         tool_choice: str = "auto",
@@ -445,22 +451,21 @@ class AsyncAIClient:
         """Single LLM generation step."""
         if history is None:
             raise ValueError("history required")
-
-        self._ensure_system_prompt(history=history)
+        llm_history = self._history_for_llm(history=history, ensure_system_prompt=True)
 
         if use_tools and self.tools_enabled():
             return await self.llm.generate(
-                history=history,
+                history=llm_history,
                 tools=self.registry._llm_tools_view(),
                 tool_choice=tool_choice,
                 model=model,
             )
         else:
-            return await self.llm.generate(history=history, model=model)
+            return await self.llm.generate(history=llm_history, model=model)
 
     async def llm_stream_once(
         self,
-        history: List[dict],
+        history: HistoryInput,
         *,
         use_tools: bool = True,
         tool_choice: str = "auto",
@@ -471,25 +476,24 @@ class AsyncAIClient:
         """Stream a single LLM generation step."""
         if history is None:
             raise ValueError("history required")
-
-        self._ensure_system_prompt(history=history)
+        llm_history = self._history_for_llm(history=history, ensure_system_prompt=True)
 
         if use_tools and self.tools_enabled():
             async for chunk in self.llm.stream(
-                history=history,
+                history=llm_history,
                 tools=self.registry._llm_tools_view(),
                 tool_choice=tool_choice,
                 model=model,
             ):
                 yield chunk
         else:
-            async for chunk in self.llm.stream(history=history, model=model):
+            async for chunk in self.llm.stream(history=llm_history, model=model):
                 yield chunk
 
     async def chat(
         self,
         user_query: str,
-        history: List[dict],
+        history: HistoryInput,
         *,
         max_turns: int = 5,
         model: str | None = None,
@@ -502,15 +506,30 @@ class AsyncAIClient:
             raise ValueError("history required")
 
         tool_ctx: ParamContext = context or {}
+        memory_aware = is_memory_aware_history(history)
 
-        self._ensure_system_prompt(history=history)
-        history.append(UserMessage(role="user", content=user_query))
+        if memory_aware:
+            history.begin_turn(user_query, retrieval_query=user_query)
+        else:
+            self._ensure_system_prompt(history=history)
+            history.append(UserMessage(role="user", content=user_query))
 
         # LLM-only fast path
         if not self.tools_enabled():
-            yield await self.llm_generate_once(
+            resp = await self.llm_generate_once(
                 history=history, use_tools=False, model=model
             )
+            if isinstance(resp, AssistantMessage):
+                if memory_aware:
+                    history.commit_assistant_response(
+                        content=resp.content,
+                        model=resp.model,
+                        usage=resp.usage,
+                    )
+                    history.end_turn()
+                else:
+                    history.append(resp)
+            yield resp
             return
 
         total_usage = LLMUsage(
@@ -535,7 +554,22 @@ class AsyncAIClient:
             _add_usage(resp.usage)
 
             if isinstance(resp, AssistantMessage):
-                yield resp
+                message = AssistantMessage(
+                    role="assistant",
+                    content=resp.content,
+                    model=resp.model,
+                    usage=total_usage,
+                )
+                if memory_aware:
+                    history.commit_assistant_response(
+                        content=message.content,
+                        model=message.model,
+                        usage=message.usage,
+                    )
+                    history.end_turn()
+                else:
+                    history.append(message)
+                yield message
                 return
 
             if isinstance(resp, ToolCallRequestList):
@@ -547,21 +581,34 @@ class AsyncAIClient:
                 for req, res in zip(resp.tool_calls, tool_results):
                     tool_messages.extend([req, res])
 
-                history.extend(tool_messages)
+                if memory_aware:
+                    history.record_tool_cycle(resp.tool_calls, tool_results)
+                else:
+                    history.extend(tool_messages)
                 yield tool_messages
 
         # Turn limit reached
-        yield AssistantMessage(
+        turn_limit_message = AssistantMessage(
             role="assistant",
             content="[Turn limit reached]",
             model=None,
             usage=total_usage,
         )
+        if memory_aware:
+            history.commit_assistant_response(
+                content=turn_limit_message.content,
+                model=turn_limit_message.model,
+                usage=turn_limit_message.usage,
+            )
+            history.end_turn()
+        else:
+            history.append(turn_limit_message)
+        yield turn_limit_message
 
     async def stream_chat(
         self,
         user_query: str,
-        history: List[dict],
+        history: HistoryInput,
         *,
         max_turns: int = 5,
         model: str | None = None,
@@ -576,17 +623,13 @@ class AsyncAIClient:
             raise ValueError("user_query required")
 
         tool_ctx: ParamContext = context or {}
+        memory_aware = is_memory_aware_history(history)
 
-        self._ensure_system_prompt(history=history)
-        history.append(UserMessage(role="user", content=user_query))
-
-        # LLM-only fast path
-        if not self.tools_enabled():
-            async for chunk in self.llm_stream_once(
-                history=history, use_tools=False, model=model
-            ):
-                yield chunk
-            return
+        if memory_aware:
+            history.begin_turn(user_query, retrieval_query=user_query)
+        else:
+            self._ensure_system_prompt(history=history)
+            history.append(UserMessage(role="user", content=user_query))
 
         total_usage = LLMUsage(
             prompt_tokens=0, completion_tokens=0, total_tokens=0
@@ -598,6 +641,36 @@ class AsyncAIClient:
             total_usage.prompt_tokens += u.prompt_tokens or 0
             total_usage.completion_tokens += u.completion_tokens or 0
             total_usage.total_tokens += u.total_tokens or 0
+
+        # LLM-only fast path
+        if not self.tools_enabled():
+            async for chunk in self.llm_stream_once(
+                history=history, use_tools=False, model=model
+            ):
+                if isinstance(chunk, ChatChunk):
+                    yield chunk
+                    continue
+                if isinstance(chunk, AssistantMessage):
+                    _add_usage(chunk.usage)
+                    message = AssistantMessage(
+                        role="assistant",
+                        content=chunk.content,
+                        model=chunk.model,
+                        usage=total_usage,
+                    )
+                    if memory_aware:
+                        history.commit_assistant_response(
+                            content=message.content,
+                            model=message.model,
+                            usage=message.usage,
+                        )
+                        history.end_turn()
+                    else:
+                        history.append(message)
+                    yield message
+                    return
+                yield chunk
+            return
 
         for _ in range(max_turns):
             async for c in self.llm_stream_once(
@@ -618,7 +691,15 @@ class AsyncAIClient:
                             model=c.model,
                             usage=total_usage,
                         )
-                        history.append(message)
+                        if memory_aware:
+                            history.commit_assistant_response(
+                                content=message.content,
+                                model=message.model,
+                                usage=message.usage,
+                            )
+                            history.end_turn()
+                        else:
+                            history.append(message)
                         yield message
                         return
 
@@ -631,7 +712,10 @@ class AsyncAIClient:
                         for req, res in zip(c.tool_calls, tool_results):
                             tool_messages.extend([req, res])
 
-                        history.extend(tool_messages)
+                        if memory_aware:
+                            history.record_tool_cycle(c.tool_calls, tool_results)
+                        else:
+                            history.extend(tool_messages)
                         yield tool_messages
                         break
 
@@ -639,14 +723,37 @@ class AsyncAIClient:
                         raise ValueError(f"Unknown chunk type: {type(c)}")
 
         # Turn limit reached
-        yield AssistantMessage(
+        turn_limit_message = AssistantMessage(
             role="assistant",
             content="[Turn limit reached]",
             model=None,
             usage=total_usage,
         )
+        if memory_aware:
+            history.commit_assistant_response(
+                content=turn_limit_message.content,
+                model=turn_limit_message.model,
+                usage=turn_limit_message.usage,
+            )
+            history.end_turn()
+        else:
+            history.append(turn_limit_message)
+        yield turn_limit_message
 
-    def _ensure_system_prompt(self, history: List[dict]) -> None:
+    def _history_for_llm(
+        self,
+        history: HistoryInput,
+        *,
+        ensure_system_prompt: bool,
+    ) -> list[Any]:
+        """Resolve provider-facing history while preserving backward compatibility."""
+        if is_memory_aware_history(history):
+            return history.messages_for_llm()
+        if ensure_system_prompt:
+            self._ensure_system_prompt(history=history)
+        return history
+
+    def _ensure_system_prompt(self, history: list[dict[str, Any]]) -> None:
         """Insert system prompt at start of history if not present."""
         if self._system_prompt is None:
             return

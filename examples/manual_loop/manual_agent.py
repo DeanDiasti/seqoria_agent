@@ -27,10 +27,10 @@ import asyncio
 import datetime as _dt
 import os
 import random
-from typing import List
 
 from seqoria_agent.client import AsyncAIClient
 from seqoria_agent import AsyncOpenAIProvider
+from seqoria_agent.memory import AgenticMemory, AgenticMemoryConfig
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.chunk import AssistantMessage, ToolCallRequestList
 from dotenv import load_dotenv
@@ -69,10 +69,16 @@ async def main() -> None:  # noqa: D401
         print("ERROR: OPENAI_API_KEY environment variable is missing.")
         return
 
-    providers = [AsyncOpenAIProvider(model_id="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))]
+    providers = [AsyncOpenAIProvider(model_id="gpt-5-mini-2025-08-07", api_key=os.getenv("OPENAI_API_KEY"))]
 
     async with AsyncAIClient(urls=[], providers=providers, local_toolbox=box) as ai:
-        history: List[dict] = []
+        memory = AgenticMemory(
+            config=AgenticMemoryConfig(
+                session_id="manual-agent-demo",
+                conversation_id="interactive-cli",
+                persist_memories=False,
+            )
+        )
 
         MAX_ROUNDS = 5
         for turn in range(1, MAX_ROUNDS + 1):
@@ -86,25 +92,25 @@ async def main() -> None:  # noqa: D401
                 print("Exiting - empty input detected.")
                 break
 
-            history.append({"role": "user", "content": user_query}) 
+            llm_history = memory.begin_turn(user_query, retrieval_query=user_query)
 
             # 1) Inner agentic loop – let the model think & use tools until ready
             for _ in range(5):  # hard-limit internal turns per user input
-                resp = await ai.llm_generate_once(history=history)
+                resp = await ai.llm_generate_once(history=llm_history)
 
                 if isinstance(resp, ToolCallRequestList):
                     tool_results = await ai.run_tool_calls(tool_calls=resp.tool_calls)
-
-                    # Interleave requests and corresponding results for OpenAI compliance
-                    tool_messages: list = []
-                    for req, res in zip(resp.tool_calls, tool_results):
-                        tool_messages.extend([req, res])
-
-                    history.extend(tool_messages)
+                    memory.record_tool_cycle(resp.tool_calls, tool_results)
+                    llm_history = memory.messages_for_llm(query=user_query)
                     continue
 
                 if isinstance(resp, AssistantMessage):
-                    history.append({"role": "assistant", "content": resp.content})
+                    memory.commit_assistant_response(
+                        content=resp.content,
+                        model=resp.model,
+                        usage=resp.usage,
+                    )
+                    memory.end_turn()
                     _print_assistant(text=resp.content)
                     break  # finished for this user turn 
 
