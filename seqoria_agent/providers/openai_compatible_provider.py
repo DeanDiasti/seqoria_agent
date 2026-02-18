@@ -464,20 +464,49 @@ class _OpenAICompatibleProviderMixin:
         self, error: httpx.HTTPStatusError
     ) -> tuple[int, str, Optional[str], Optional[str]]:
         """Extract status, message, code, and param from an HTTP status error."""
-        status_code = error.response.status_code
+        response = error.response
+        status_code = response.status_code
         message = str(error)
         code = None
         param = None
+
+        def _safe_response_text(max_chars: int = 1200) -> Optional[str]:
+            try:
+                text = response.text
+            except Exception:
+                try:
+                    response.read()
+                    text = response.text
+                except Exception:
+                    return None
+            cleaned = text.strip()
+            if not cleaned:
+                return None
+            if len(cleaned) > max_chars:
+                return f"{cleaned[:max_chars]}..."
+            return cleaned
+
         try:
-            payload = error.response.json()
+            payload = response.json()
             if isinstance(payload, dict):
                 err = payload.get("error", {})
                 if isinstance(err, dict):
                     message = err.get("message", message)
                     code = err.get("code")
                     param = err.get("param")
+                elif isinstance(err, str) and err.strip():
+                    message = err
         except Exception:
             pass
+
+        if message == str(error) or message.lower().startswith(("client error", "server error")):
+            raw_body = _safe_response_text()
+            if raw_body:
+                message = raw_body
+
+        request_id = response.headers.get("x-request-id") or response.headers.get("request-id")
+        if request_id and f"request_id={request_id}" not in message:
+            message = f"{message} (request_id={request_id})"
         return status_code, message, code, param
 
     def _handle_error(self, error: Exception) -> Exception:
@@ -709,6 +738,11 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
             stream_ctx = self.async_client.stream("POST", "/chat/completions", json=payload)
             response = await stream_ctx.__aenter__()
             try:
+                if response.status_code >= 400:
+                    try:
+                        await response.aread()
+                    except Exception:
+                        pass
                 response.raise_for_status()
             except Exception as e:
                 await stream_ctx.__aexit__(type(e), e, e.__traceback__)
@@ -967,6 +1001,11 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
             stream_ctx = self.client.stream("POST", "/chat/completions", json=payload)
             response = stream_ctx.__enter__()
             try:
+                if response.status_code >= 400:
+                    try:
+                        response.read()
+                    except Exception:
+                        pass
                 response.raise_for_status()
             except Exception as e:
                 stream_ctx.__exit__(type(e), e, e.__traceback__)

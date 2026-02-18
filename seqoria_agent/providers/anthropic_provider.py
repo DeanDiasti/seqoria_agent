@@ -100,17 +100,36 @@ class _AnthropicProviderMixin:
         params.update(kwargs)
         return {k: v for k, v in params.items() if v is not None}
 
+    def _safe_response_text(self, response: httpx.Response, *, max_chars: int = 1200) -> Optional[str]:
+        """Best-effort extraction of response body text for error transparency."""
+        try:
+            text = response.text
+        except Exception:
+            try:
+                response.read()
+                text = response.text
+            except Exception:
+                return None
+
+        cleaned = text.strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > max_chars:
+            return f"{cleaned[:max_chars]}..."
+        return cleaned
+
     def _extract_error_details(
         self, error: httpx.HTTPStatusError
     ) -> tuple[int, str, Optional[str], Optional[str]]:
         """Extract normalized status/message/type/param from Anthropic error payloads."""
-        status_code = error.response.status_code
+        response = error.response
+        status_code = response.status_code
         message = str(error)
         error_type: Optional[str] = None
         param: Optional[str] = None
 
         try:
-            payload = error.response.json()
+            payload = response.json()
             if isinstance(payload, dict):
                 err = payload.get("error")
                 if isinstance(err, dict):
@@ -118,10 +137,21 @@ class _AnthropicProviderMixin:
                     error_type = str(err.get("type", "")) or None
                     p = err.get("param")
                     param = str(p) if p is not None else None
+                elif isinstance(err, str) and err.strip():
+                    message = err
                 elif payload.get("message"):
                     message = str(payload["message"])
         except Exception:
             pass
+
+        if message == str(error) or message.lower().startswith(("client error", "server error")):
+            raw_body = self._safe_response_text(response)
+            if raw_body:
+                message = raw_body
+
+        request_id = response.headers.get("request-id") or response.headers.get("x-request-id")
+        if request_id and f"request_id={request_id}" not in message:
+            message = f"{message} (request_id={request_id})"
 
         return status_code, message, error_type, param
 
@@ -960,6 +990,11 @@ class AsyncAnthropicProvider(AsyncBaseProvider, _AnthropicProviderMixin):
             stream_ctx = self.async_client.stream("POST", "/v1/messages", json=payload)
             response = await stream_ctx.__aenter__()
             try:
+                if response.status_code >= 400:
+                    try:
+                        await response.aread()
+                    except Exception:
+                        pass
                 response.raise_for_status()
             except Exception as e:
                 await stream_ctx.__aexit__(type(e), e, e.__traceback__)
@@ -1263,6 +1298,11 @@ class AnthropicProvider(BaseProvider, _AnthropicProviderMixin):
             stream_ctx = self.client.stream("POST", "/v1/messages", json=payload)
             response = stream_ctx.__enter__()
             try:
+                if response.status_code >= 400:
+                    try:
+                        response.read()
+                    except Exception:
+                        pass
                 response.raise_for_status()
             except Exception as e:
                 stream_ctx.__exit__(type(e), e, e.__traceback__)
