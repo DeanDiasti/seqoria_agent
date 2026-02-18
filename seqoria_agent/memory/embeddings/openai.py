@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+import os
+
+import httpx
 
 from seqoria_agent.memory.embeddings.base import EmbedderProtocol
 
@@ -8,32 +10,43 @@ from seqoria_agent.memory.embeddings.base import EmbedderProtocol
 class OpenAIEmbedder(EmbedderProtocol):
     """OpenAI embedding adapter.
 
-    This class is optional and requires the `openai` package.
+    Uses direct HTTPX calls to OpenAI's `/v1/embeddings` endpoint.
     """
 
     def __init__(
         self,
         *,
-        model: str = "text-embedding-3-small",
+        model: str,
         api_key: str | None = None,
+        base_url: str = "https://api.openai.com/v1",
+        timeout: float = 30.0,
     ) -> None:
         self.model = model
         self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
 
     async def embed_text(self, text: str) -> list[float]:
         vectors = await self.embed_texts([text])
         return vectors[0]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        try:
-            from openai import AsyncOpenAI  # type: ignore
-        except Exception as exc:  # pragma: no cover - depends on optional extra
-            raise RuntimeError(
-                "OpenAIEmbedder requires optional dependency 'openai'. "
-                "Install with `pip install seqoria-agent[openai]`."
-            ) from exc
+        api_key = self.api_key or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OpenAIEmbedder requires OPENAI_API_KEY or an explicit api_key.")
 
-        client: Any = AsyncOpenAI(api_key=self.api_key)
-        response = await client.embeddings.create(model=self.model, input=texts)
-        return [item.embedding for item in response.data]
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {"model": self.model, "input": texts}
+
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers=headers,
+            timeout=self.timeout,
+            http2=True,
+        ) as client:
+            response = await client.post("/embeddings", json=payload)
+            response.raise_for_status()
+            data = response.json().get("data", [])
+
+        return [item.get("embedding", []) for item in data if isinstance(item, dict)]
 

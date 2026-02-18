@@ -75,6 +75,14 @@ class ContextManager:
     def base_system_prompt(self) -> str | None:
         return self._base_system_prompt
 
+    def set_base_system_prompt(self, content: str | None) -> None:
+        """Set or clear the base system prompt used for context assembly."""
+        if content is None:
+            self._base_system_prompt = None
+            return
+        normalized = content.strip()
+        self._base_system_prompt = normalized or None
+
     @property
     def total_tokens(self) -> int:
         return sum(estimate_tokens(str(message.get("content", ""))) for message in self.raw_messages)

@@ -37,9 +37,10 @@ class TestOpenAIProviderInit:
             from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
             
             mixin = _OpenAIProviderMixin()
-            _, _, _, default_params, _ = mixin._init_common(
+            init_result = mixin._init_common(
                 model_id="gpt-4o", api_key="test-key", base_url=None
             )
+            default_params = init_result[3]
             
             # Should be empty - no default values
             assert default_params == {}
@@ -50,7 +51,7 @@ class TestOpenAIProviderInit:
             from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
             
             mixin = _OpenAIProviderMixin()
-            _, _, _, default_params, _ = mixin._init_common(
+            init_result = mixin._init_common(
                 model_id="gpt-4o",
                 api_key="test-key",
                 base_url=None,
@@ -58,6 +59,7 @@ class TestOpenAIProviderInit:
                 max_output_tokens=2048,  # Responses API uses max_output_tokens
                 top_p=0.9
             )
+            default_params = init_result[3]
             
             assert default_params["temperature"] == 0.5
             assert default_params["max_output_tokens"] == 2048
@@ -69,7 +71,7 @@ class TestOpenAIProviderInit:
             from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
             
             mixin = _OpenAIProviderMixin()
-            _, _, _, default_params, _ = mixin._init_common(
+            init_result = mixin._init_common(
                 model_id="gpt-4o",
                 api_key="test-key",
                 base_url=None,
@@ -77,6 +79,7 @@ class TestOpenAIProviderInit:
                 invalid_param="should_be_ignored",
                 another_invalid=123
             )
+            default_params = init_result[3]
             
             assert "temperature" in default_params
             assert "invalid_param" not in default_params
@@ -88,7 +91,7 @@ class TestOpenAIProviderInit:
             from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
             
             mixin = _OpenAIProviderMixin()
-            _, _, _, default_params, _ = mixin._init_common(
+            init_result = mixin._init_common(
                 model_id="gpt-4o",
                 api_key="test-key",
                 base_url=None,
@@ -101,6 +104,7 @@ class TestOpenAIProviderInit:
                 store=True,
                 service_tier="default"
             )
+            default_params = init_result[3]
             
             assert default_params["max_output_tokens"] == 1024
             assert default_params["temperature"] == 0.7

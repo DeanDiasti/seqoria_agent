@@ -208,7 +208,8 @@ class ErrorMapper:
     
     Example
     -------
-    >>> from openai import AuthenticationError, RateLimitError
+    >>> class AuthenticationError(Exception): ...
+    >>> class RateLimitError(Exception): ...
     >>> mapper = ErrorMapper("OpenAI")
     >>> mapper.register(AuthenticationError, 
     ...     lambda e, m: EnvironmentError(f"Auth failed: {e}", missing_vars=["OPENAI_API_KEY"]))

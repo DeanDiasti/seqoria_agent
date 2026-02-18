@@ -1,205 +1,205 @@
+"""Anthropic provider implementation using HTTPX + Messages API."""
+
+from __future__ import annotations
+
 import asyncio
 import os
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union, Tuple
+import re
+from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Tuple, Union
 
-import anthropic
+import httpx
 
-# Import specific exceptions from the anthropic library for better error handling
-from anthropic import (APIConnectionError,
-                       APIStatusError,
-                       AuthenticationError,
-                       BadRequestError,
-                       InternalServerError,
-                       NotFoundError,
-                       PermissionDeniedError,
-                       RateLimitError)
-
-# Internal imports
-from .base_provider import AsyncBaseProvider, BaseProvider
-from .errors import (ConnectionError,
-                     ContentFilterError,
-                     ContextLengthExceededError,
-                     EnvironmentError,
-                     InvalidRequestError,
-                     LLMError,
-                     ModelNotFoundError,
-                     QuotaExceededError,
-                     ServerError)
-
-from seqoria_agent.models.chunk import (AssistantMessage,
-                                        SystemMessage,
-                                        UserMessage,
-                                        ToolCallRequest,
-                                        ToolCallResult)
-
-# Use a relative import since we're in the same directory
-from .schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
-
-# Use optimized JSON utilities
 from seqoria_agent.client.ai_client.utils import json_loads
+from seqoria_agent.models.chunk import (
+    AssistantMessage,
+    SystemMessage,
+    ToolCallRequest,
+    ToolCallResult,
+    UserMessage,
+)
+
+from .base_provider import AsyncBaseProvider, BaseProvider
+from .errors import (
+    ConnectionError,
+    ContentFilterError,
+    ContextLengthExceededError,
+    EnvironmentError,
+    InvalidRequestError,
+    LLMError,
+    ModelNotFoundError,
+    QuotaExceededError,
+    ServerError,
+)
+from .schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
 
 _EMPTY_JSON: str = "{}"
 
 
 class _AnthropicProviderMixin:
-    """
-    Shared functionality between sync and async Anthropic providers.
-    
-    This mixin contains common methods that don't depend on sync/async behavior.
-    """
-    
+    """Shared functionality between sync and async Anthropic providers."""
+
     def _init_common(self, model_id: str, api_key: Optional[str], **kwargs) -> tuple:
-        """
-        Common initialization logic shared between sync and async providers.
-        
-        Returns:
-            tuple: (api_key, client_kwargs, model_id, default_params, max_retries)
-        """
-        # Prefer the explicitly supplied API key, otherwise fall back to the environment
+        """Common initialization logic shared between sync and async providers."""
         if api_key is None:
             api_key = os.environ.get("ANTHROPIC_API_KEY")
 
         if not api_key:
             raise EnvironmentError(message="Anthropic API key not provided", missing_vars=["ANTHROPIC_API_KEY"])
-        
-        # Store max_retries for use in retry logic
-        max_retries = kwargs.get('max_retries', 3)
-        
-        # Client configuration
-        client_kwargs = {'timeout': kwargs.get('timeout', 30.0),
-                         'max_retries': 0}  # Disable automatic retries in the client; handled manually
-        
-        # model_id is required
+
         if not model_id:
             raise InvalidRequestError(message="model_id is required for Anthropic provider")
-        
-        effective_model_id = model_id
 
-        # Initialize empty default_params - no hardcoded defaults
-        default_params = {}
-        
-        # Define all valid parameter keys that can be passed to the Anthropic Messages API
-        # See: https://docs.anthropic.com/en/api/messages
-        valid_query_keys = {
-            # Generation parameters
-            "max_tokens", "temperature", "top_p", "top_k",
-            "stop_sequences",
-            # Extended thinking configuration
-            # Can be: {"type": "enabled", "budget_tokens": 1024} or {"type": "disabled"}
-            "thinking",
-            # Service tier: "auto" or "standard_only"
-            "service_tier",
-            # Metadata
-            "metadata",
+        max_retries = kwargs.get("max_retries", 3)
+        timeout = kwargs.get("timeout", 30.0)
+        base_url = (kwargs.get("base_url") or "https://api.anthropic.com").rstrip("/")
+        anthropic_version = kwargs.get("anthropic_version", "2023-06-01")
+        anthropic_beta = kwargs.get("anthropic_beta")
+
+        headers: Dict[str, str] = {
+            "x-api-key": api_key,
+            "anthropic-version": anthropic_version,
+            "Content-Type": "application/json",
         }
-        
-        # Only store user-provided kwargs that are valid
+        if anthropic_beta:
+            if isinstance(anthropic_beta, (list, tuple, set)):
+                headers["anthropic-beta"] = ",".join(str(v) for v in anthropic_beta if v is not None)
+            else:
+                headers["anthropic-beta"] = str(anthropic_beta)
+
+        client_kwargs = {
+            "base_url": base_url,
+            "headers": headers,
+            "timeout": timeout,
+            "http2": True,
+        }
+
+        # Valid Anthropic /v1/messages request params, excluding model/messages/system/stream.
+        valid_query_keys = {
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop_sequences",
+            "thinking",
+            "service_tier",
+            "metadata",
+            "inference_geo",
+            "output_config",
+        }
+
+        default_params: Dict[str, Any] = {}
         for key, value in kwargs.items():
             if key in valid_query_keys:
                 default_params[key] = value
-        
-        return api_key, client_kwargs, effective_model_id, default_params, max_retries
-            
-    def _prepare_params(self, **kwargs) -> Dict[str, Any]:
-        """
-        Prepare request parameters by merging defaults with overrides.
-        Removes parameters with None values.
 
-        Args:
-            **kwargs: Parameter overrides provided to generate/stream methods.
-            
-        Returns
-        -------
-            Dictionary of parameters ready for the Anthropic API request.
-        """
+        return api_key, client_kwargs, model_id, default_params, max_retries
+
+    def _prepare_params(self, **kwargs) -> Dict[str, Any]:
+        """Prepare request parameters by merging defaults with call overrides."""
         params = self.default_params.copy()
         params.update(kwargs)
-        
-        params = {k: v for k, v in params.items() if v is not None}
-        return params
+        return {k: v for k, v in params.items() if v is not None}
+
+    def _extract_error_details(
+        self, error: httpx.HTTPStatusError
+    ) -> tuple[int, str, Optional[str], Optional[str]]:
+        """Extract normalized status/message/type/param from Anthropic error payloads."""
+        status_code = error.response.status_code
+        message = str(error)
+        error_type: Optional[str] = None
+        param: Optional[str] = None
+
+        try:
+            payload = error.response.json()
+            if isinstance(payload, dict):
+                err = payload.get("error")
+                if isinstance(err, dict):
+                    message = str(err.get("message", message))
+                    error_type = str(err.get("type", "")) or None
+                    p = err.get("param")
+                    param = str(p) if p is not None else None
+                elif payload.get("message"):
+                    message = str(payload["message"])
+        except Exception:
+            pass
+
+        return status_code, message, error_type, param
 
     def _handle_error(self, error: Exception) -> Exception:
-        """
-        Map Anthropic errors to our standard error types using isinstance checks.
-        
-        Args:
-            error: Original error from Anthropic client.
-            
-        Returns
-        -------
-            Mapped error instance inheriting from LLMError.
-        """
-        # Check specific Anthropic error types first
-        if isinstance(error, AuthenticationError):
-            return EnvironmentError(message=f"Anthropic authentication failed: {error}", missing_vars=["ANTHROPIC_API_KEY"])
-        elif isinstance(error, RateLimitError):
-            return QuotaExceededError(provider="Anthropic", limit_type="rate")
-        elif isinstance(error, BadRequestError):
-            error_message = str(object=error)
-            if "context_length_exceeded" in error_message or "maximum context length" in error_message.lower():
-                 tokens = max_tokens = None 
-                 try:
-                    parts = error_message.split(sep=' ')
-                    for i, part in enumerate(iterable=parts):
-                        if part == 'tokens': 
-                            tokens = int(parts[i-1])
-                        if part == 'limit': 
-                            max_tokens = int(parts[i-1])
-                 except (ValueError, IndexError):
-                     pass
-                 return ContextLengthExceededError(model_id=self.model_id, tokens=tokens, max_tokens=max_tokens)
-            elif "content_policy_violation" in error_message or "safety" in error_message.lower():
-                 return ContentFilterError(provider="Anthropic", filter_reason=error_message)
-            elif "tool" in error_message.lower() and ("invalid" in error_message.lower() or "missing" in error_message.lower()):
-                 # Handle tool-related validation errors
-                 return InvalidRequestError(message=f"Tool validation error: {error}")
-            elif "tool_choice" in error_message.lower():
-                 # Handle tool_choice configuration errors
-                 return InvalidRequestError(message=f"Tool choice configuration error: {error}")
-            elif "input_schema" in error_message.lower():
-                 # Handle tool schema validation errors
-                 return InvalidRequestError(message=f"Tool schema validation error: {error}")
-            else:
-                 return InvalidRequestError(message=f"Invalid request to Anthropic: {error}")
-        elif isinstance(error, NotFoundError):
-             return ModelNotFoundError(model_id=self.model_id, provider="Anthropic")
-        elif isinstance(error, APIConnectionError):
-             return ConnectionError(provider="Anthropic", message=f"Connection error: {error}")
-        elif isinstance(error, InternalServerError):
-             return ServerError(provider="Anthropic", status_code=getattr(error, 'status_code', 500))
-        elif isinstance(error, PermissionDeniedError):
-             return InvalidRequestError(message=f"Anthropic permission denied: {error}")
-        elif isinstance(error, APIStatusError):
-            if 500 <= error.status_code < 600:
-                return ServerError(provider="Anthropic", status_code=error.status_code)
-            elif error.status_code == 429:
-                return QuotaExceededError(provider="Anthropic", limit_type="rate")
-            elif error.status_code == 400:
-                 return InvalidRequestError(message=f"API Error {error.status_code}: {error}")
-            else:
-                 return LLMError(message=f"Anthropic API Error {error.status_code}: {error}")
-        elif isinstance(error, asyncio.TimeoutError) or "timed out" in str(object=error).lower():
-            return ConnectionError(provider="Anthropic", message="Request timed out")
-            
-        # Fallback for unexpected errors
-        return LLMError(message=f"An unexpected Anthropic error occurred: {error}")
-    
-    def _parse_tool_call_sync(self, tool_call: List[Any]) -> List[ToolCall]:
-        """Convert tool_call objects into ToolCall schema objects.
+        """Map HTTPX/Anthropic API errors into provider-standard errors."""
+        if isinstance(error, LLMError):
+            return error
 
-        Handles both dict-style and object-style tool calls from Anthropic responses.
-        Ensures the arguments field is a mapping (JSON-decoded if it was
-        received as a JSON string) so it satisfies the schema.
-        """
+        if isinstance(error, httpx.HTTPStatusError):
+            status_code, message, error_type, param = self._extract_error_details(error)
+            message_l = message.lower()
+            error_type_l = (error_type or "").lower()
+
+            if status_code == 401 or error_type_l == "authentication_error":
+                return EnvironmentError(
+                    message=f"Anthropic authentication failed: {message}",
+                    missing_vars=["ANTHROPIC_API_KEY"],
+                )
+
+            if status_code == 429 or error_type_l == "rate_limit_error":
+                return QuotaExceededError(provider="Anthropic", limit_type="rate")
+
+            if status_code == 404 or error_type_l == "not_found_error":
+                if "model" in message_l or "model" in error_type_l:
+                    return ModelNotFoundError(model_id=self.model_id, provider="Anthropic")
+                return InvalidRequestError(message=message, param=param)
+
+            if status_code == 400:
+                if "context_length_exceeded" in message_l or "maximum context length" in message_l:
+                    numbers = [int(n) for n in re.findall(r"\d+", message)]
+                    tokens = numbers[0] if numbers else None
+                    max_tokens = numbers[1] if len(numbers) > 1 else None
+                    return ContextLengthExceededError(
+                        model_id=self.model_id,
+                        tokens=tokens,
+                        max_tokens=max_tokens,
+                    )
+                if "content_policy_violation" in message_l or "safety" in message_l:
+                    return ContentFilterError(provider="Anthropic", filter_reason=message)
+                if "tool_choice" in message_l:
+                    return InvalidRequestError(message=f"Tool choice configuration error: {message}", param=param)
+                if "input_schema" in message_l:
+                    return InvalidRequestError(message=f"Tool schema validation error: {message}", param=param)
+                if "tool" in message_l and ("invalid" in message_l or "missing" in message_l):
+                    return InvalidRequestError(message=f"Tool validation error: {message}", param=param)
+                return InvalidRequestError(message=message, param=param)
+
+            if status_code == 403 or error_type_l == "permission_error":
+                return InvalidRequestError(message=f"Anthropic permission denied: {message}", param=param)
+
+            if status_code == 422:
+                return ContentFilterError(provider="Anthropic", filter_reason=message)
+
+            if status_code >= 500 or error_type_l in {"overloaded_error", "api_error"}:
+                return ServerError(provider="Anthropic", status_code=status_code)
+
+            return LLMError(message=f"Anthropic API Error {status_code}: {message}")
+
+        if isinstance(error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+            return ConnectionError(provider="Anthropic", message="Request timed out")
+        if isinstance(error, asyncio.TimeoutError) or "timed out" in str(error).lower():
+            return ConnectionError(provider="Anthropic", message="Request timed out")
+        if isinstance(error, (httpx.NetworkError, httpx.TransportError, httpx.ConnectError)):
+            return ConnectionError(provider="Anthropic", message=f"Connection error: {error}")
+        if isinstance(error, httpx.HTTPError):
+            return ConnectionError(provider="Anthropic", message=f"HTTP error: {error}")
+
+        return LLMError(message=f"An unexpected Anthropic error occurred: {error}")
+
+    def _parse_tool_call_sync(self, tool_call: List[Any]) -> List[ToolCall]:
+        """Convert raw tool-call payloads into ToolCall schema objects."""
         processed_tool_calls: List[ToolCall] = []
 
         for tc in tool_call:
-            # Handle ToolCall objects that already have the right structure
             if isinstance(tc, ToolCall):
                 processed_tool_calls.append(tc)
                 continue
-            
-            # Handle dict-style tool calls
+
             if isinstance(tc, dict):
                 args = tc.get("arguments", tc.get("input", {}))
                 if isinstance(args, str):
@@ -207,255 +207,184 @@ class _AnthropicProviderMixin:
                         args = json_loads(args)
                     except Exception:
                         args = {}
-                
-                processed_tool_calls.append(ToolCall(
-                    id=tc.get("id", ""),
+
+                processed_tool_calls.append(
+                    ToolCall(
+                        id=str(tc.get("id", "")),
+                        type="function_call",
+                        function_name=str(tc.get("function_name", tc.get("name", ""))),
+                        arguments=args if isinstance(args, dict) else {},
+                    )
+                )
+                continue
+
+            args = getattr(tc, "arguments", getattr(tc, "input", {}))
+            if isinstance(args, str):
+                try:
+                    args = json_loads(args)
+                except Exception:
+                    args = {}
+
+            processed_tool_calls.append(
+                ToolCall(
+                    id=str(getattr(tc, "id", "")),
                     type="function_call",
-                    function_name=tc.get("function_name", tc.get("name", "")),
-                    arguments=args
-                ))
-            else:
-                # Handle object-style (from Anthropic SDK)
-                args = getattr(tc, 'arguments', getattr(tc, 'input', {}))
-                if isinstance(args, str):
-                    try:
-                        args = json_loads(args)
-                    except Exception:
-                        args = {}
-                
-                processed_tool_calls.append(ToolCall(
-                    id=getattr(tc, 'id', ''),
-                    type="function_call",
-                    function_name=getattr(tc, 'function_name', getattr(tc, 'name', '')),
-                    arguments=args
-                ))
+                    function_name=str(getattr(tc, "function_name", getattr(tc, "name", ""))),
+                    arguments=args if isinstance(args, dict) else {},
+                )
+            )
 
         return processed_tool_calls
-    
+
     def _format_tool_choice(self, tool_choice: Optional[Union[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
-        """
-        Format tool_choice parameter for the Anthropic Messages API.
-        
-        Supported formats:
-            - String: "auto", "any", "none" -> {"type": "<value>"}
-            - Dict with type: {"type": "auto"}, {"type": "any"}, {"type": "none"}
-            - Dict with name: {"type": "tool", "name": "tool_name"}
-            - Dict with disable_parallel_tool_use: {"type": "auto", "disable_parallel_tool_use": true}
-        
-        Args:
-            tool_choice: Tool choice specification.
-            
-        Returns:
-            Formatted tool_choice dict or None.
-        """
+        """Format tool_choice for Anthropic Messages API."""
         if tool_choice is None:
             return None
-        
+
         if isinstance(tool_choice, str):
             if tool_choice in {"auto", "any", "none"}:
                 return {"type": tool_choice}
-            else:
-                # Assume it's a tool name
-                return {"type": "tool", "name": tool_choice}
-        
+            return {"type": "tool", "name": tool_choice}
+
         if isinstance(tool_choice, dict):
-            # Ensure type is present
             if "type" not in tool_choice:
                 if "name" in tool_choice:
                     return {"type": "tool", **tool_choice}
-                else:
-                    return {"type": "auto", **tool_choice}
+                return {"type": "auto", **tool_choice}
             return tool_choice
-        
+
         return None
 
     def _format_tool_call_sync(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Format the tool calls into the format expected by the Anthropic Messages API.
-        
-        Supports both OpenAI-style format and native Anthropic format:
-        
-        OpenAI format (converted):
-            [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}]
-        
-        Anthropic native format (passed through):
-            [{"name": "...", "description": "...", "input_schema": {...}}]
-        
-        Special tool types (passed through):
-            - bash_20250124: {"type": "bash_20250124", "name": "bash"}
-            - text_editor_20250124: {"type": "text_editor_20250124", "name": "str_replace_editor"}
-            - web_search_20250305: {"type": "web_search_20250305", "name": "web_search", ...}
-        
-        Returns:
-            List of tools in Anthropic format.
-        """
+        """Format tools to the schema expected by Anthropic Messages API."""
         formatted_tools: List[Dict[str, Any]] = []
-        
+
         for tool in tools:
-            # Check if it's a special Anthropic tool type
             if "type" in tool and tool["type"] in {
-                "bash_20250124", 
-                "text_editor_20250124", 
+                "bash_20250124",
+                "text_editor_20250124",
                 "text_editor_20250429",
                 "text_editor_20250728",
-                "web_search_20250305"
+                "web_search_20250305",
             }:
-                # Pass through special tool types as-is
                 formatted_tools.append(tool)
-            elif "function" in tool:
-                # OpenAI-style format - convert to Anthropic format
+                continue
+
+            if "function" in tool:
                 func = tool["function"]
-                formatted_tool = {
+                formatted_tool: Dict[str, Any] = {
                     "name": str(func.get("name", "")),
                     "description": func.get("description", ""),
-                    "input_schema": func.get("parameters", {"type": "object", "properties": {}})
+                    "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
                 }
-                # Add cache_control if provided
                 if "cache_control" in tool:
                     formatted_tool["cache_control"] = tool["cache_control"]
+                if "strict" in func:
+                    formatted_tool["strict"] = func["strict"]
                 formatted_tools.append(formatted_tool)
-            elif "name" in tool and "input_schema" in tool:
-                # Already in Anthropic format - pass through
+                continue
+
+            if "name" in tool and "input_schema" in tool:
                 formatted_tools.append(tool)
-            elif "name" in tool:
-                # Minimal format - add required fields
-                formatted_tools.append({
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "input_schema": tool.get("input_schema", tool.get("parameters", {"type": "object", "properties": {}}))
-                })
-        
+                continue
+
+            if "name" in tool:
+                formatted_tools.append(
+                    {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "input_schema": tool.get(
+                            "input_schema",
+                            tool.get("parameters", {"type": "object", "properties": {}}),
+                        ),
+                    }
+                )
+
         return formatted_tools
 
     def _convert_image_content_anthropic(self, content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Convert image content blocks to Anthropic's vision format.
-        
-        Supported input formats:
-            - {"type": "text", "text": "..."} - Text content (passed through)
-            - {"type": "image", "url": "https://..."} - Image from URL
-            - {"type": "image", "base64": "...", "media_type": "image/jpeg"} - Base64 encoded image
-            - {"type": "image", "source": {...}} - Already in Anthropic format (passed through)
-        
-        Returns:
-            List of content blocks in Anthropic's format.
-        """
+        """Convert image blocks into Anthropic input format."""
         converted: List[Dict[str, Any]] = []
-        
+
         for block in content:
             block_type = block.get("type")
-            
+
             if block_type == "text":
                 converted.append({"type": "text", "text": block.get("text", "")})
-            elif block_type == "image":
-                # Check if already in Anthropic format
+                continue
+
+            if block_type == "image":
                 if "source" in block:
                     converted.append(block)
                 elif "url" in block:
-                    # Convert URL format to Anthropic's format
-                    converted.append({
-                        "type": "image",
-                        "source": {
-                            "type": "url",
-                            "url": block["url"]
+                    converted.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": block["url"]},
                         }
-                    })
+                    )
                 elif "base64" in block:
-                    # Convert base64 format to Anthropic's format
-                    media_type = block.get("media_type", "image/jpeg")
-                    converted.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": block["base64"]
-                        }
-                    })
-            elif block_type == "image_url":
-                # Convert OpenAI format to Anthropic format
-                image_url = block.get("image_url", {})
-                url = image_url.get("url", "")
-                if url.startswith("data:"):
-                    # Parse data URL: data:image/jpeg;base64,{data}
-                    try:
-                        header, data = url.split(",", 1)
-                        media_type = header.split(":")[1].split(";")[0]
-                        converted.append({
+                    converted.append(
+                        {
                             "type": "image",
                             "source": {
                                 "type": "base64",
-                                "media_type": media_type,
-                                "data": data
+                                "media_type": block.get("media_type", "image/jpeg"),
+                                "data": block["base64"],
+                            },
+                        }
+                    )
+                continue
+
+            if block_type == "image_url":
+                image_url = block.get("image_url", {})
+                url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url)
+                if url.startswith("data:"):
+                    try:
+                        header, data = url.split(",", 1)
+                        media_type = header.split(":")[1].split(";")[0]
+                        converted.append(
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": data,
+                                },
                             }
-                        })
+                        )
                     except (ValueError, IndexError):
-                        # Fallback if parsing fails
-                        converted.append({
-                            "type": "image",
-                            "source": {"type": "url", "url": url}
-                        })
+                        converted.append(
+                            {
+                                "type": "image",
+                                "source": {"type": "url", "url": url},
+                            }
+                        )
                 else:
-                    converted.append({
-                        "type": "image",
-                        "source": {"type": "url", "url": url}
-                    })
-            else:
-                # Unknown type, pass through as-is
-                converted.append(block)
-        
+                    converted.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": url},
+                        }
+                    )
+                continue
+
+            converted.append(block)
+
         return converted
-    
-    def _prepare_chat_history_sync(self,
-                                   chat_history: List[Dict[str, Any]],
-                                   *,
-                                   enable_cache: bool = False) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Prepare the chat history for the Anthropic Messages API.
 
-        Parameters
-        ----------
-        chat_history : List[Dict[str, Any]]
-            Raw chat history provided by the caller (can include dataclass based
-            messages as well as plain ``dict``s).
-        enable_cache : bool, optional
-            When *True*, the method will tag **system** blocks with
-            ``{"cache_control": {"type": "ephemeral"}}`` so that the Anthropic
-            backend will attempt to reuse these blocks across subsequent calls
-            (see Anthropic prompt-caching documentation). Defaults to *False* so
-            existing behaviour is preserved.
-
-        Returns
-        -------
-        Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
-            Two lists representing the formatted ``system`` blocks and the
-            conversation ``messages`` respectively, ready to be forwarded to
-            ``anthropic.messages.create``.
-        
-        Message Format (per Anthropic API spec):
-            - System messages are extracted to a separate `system` parameter
-            - Messages array must alternate between user and assistant roles
-            - Tool calls appear as `tool_use` blocks in assistant messages
-            - Tool results appear as `tool_result` blocks in user messages
-        
-        Supports vision/image content in messages. Images can be included using:
-            - {"type": "image", "url": "https://..."} - Image from URL (URLImageSource)
-            - {"type": "image", "base64": "...", "media_type": "image/jpeg"} - Base64 encoded (Base64ImageSource)
-        
-        Example with images:
-            [
-                {"role": "user", "content": [
-                    {"type": "text", "text": "What's in this image?"},
-                    {"type": "image", "url": "https://example.com/image.jpg"}
-                ]}
-            ]
-        """
+    def _prepare_chat_history_sync(
+        self,
+        chat_history: List[Dict[str, Any]],
+        *,
+        enable_cache: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Prepare system/message payloads for Anthropic Messages API."""
         prepared_chat_history: List[Dict[str, Any]] = []
         system_message: List[Dict[str, Any]] = []
 
         for message in chat_history:
-            # Handle ToolCallRequest pydantic model
-            # This represents the assistant requesting to use a tool (tool_use block)
             if isinstance(message, ToolCallRequest):
-                # Parse arguments - ensure it's a dict
                 args = message.arguments
                 if isinstance(args, str):
                     try:
@@ -464,56 +393,54 @@ class _AnthropicProviderMixin:
                         args = {}
                 elif args is None:
                     args = {}
-                
-                # Tool use goes in assistant message content
-                prepared_chat_history.append({
-                    "role": "assistant",
-                    "content": [{
-                        "type": "tool_use",
-                        "id": str(message.id),
-                        "name": message.name,
-                        "input": args
-                    }]
-                })
+
+                prepared_chat_history.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": str(message.id),
+                                "name": message.name,
+                                "input": args if isinstance(args, dict) else {},
+                            }
+                        ],
+                    }
+                )
                 continue
 
-            # Handle ToolCallResult pydantic model
-            # This represents the result of a tool execution (tool_result block)
             if isinstance(message, ToolCallResult):
-                # Tool result goes in user message content
                 result_content = message.result
-                # Content can be string or list of content blocks
-                if isinstance(result_content, str):
-                    content_value = result_content
-                else:
-                    content_value = str(result_content)
-                
-                prepared_chat_history.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": str(message.tool_call_id),
-                        "content": content_value
-                    }]
-                })
+                content_value = result_content if isinstance(result_content, str) else str(result_content)
+
+                prepared_chat_history.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": str(message.tool_call_id),
+                                "content": content_value,
+                            }
+                        ],
+                    }
+                )
                 continue
 
-            # Handle AssistantMessage and UserMessage pydantic models
             if isinstance(message, (AssistantMessage, UserMessage)):
                 content = message.content
-                # Check if content is multimodal (list of content blocks)
                 if isinstance(content, list):
                     content = self._convert_image_content_anthropic(content)
                     prepared_chat_history.append({"role": message.role, "content": content})
                 else:
-                    # Convert string to text content block
-                    prepared_chat_history.append({
-                        "role": message.role,
-                        "content": [{"type": "text", "text": str(content)}]
-                    })
+                    prepared_chat_history.append(
+                        {
+                            "role": message.role,
+                            "content": [{"type": "text", "text": str(content) if content is not None else ""}],
+                        }
+                    )
                 continue
 
-            # Handle SystemMessage pydantic model
             if isinstance(message, SystemMessage):
                 sys_block = {"type": "text", "text": message.content}
                 if enable_cache:
@@ -521,873 +448,980 @@ class _AnthropicProviderMixin:
                 system_message.append(sys_block)
                 continue
 
-            # Handle dict messages
             role = message.get("role")
-            
-            # Handle system messages (goes to separate system parameter)
+
             if role == "system":
                 content = message.get("content", "")
                 if isinstance(content, str):
                     sys_block = {"type": "text", "text": content}
+                    if enable_cache:
+                        sys_block["cache_control"] = {"type": "ephemeral"}
+                    system_message.append(sys_block)
                 elif isinstance(content, list):
-                    # Already in content block format
                     for block in content:
                         sys_block = block.copy()
                         if enable_cache:
                             sys_block["cache_control"] = {"type": "ephemeral"}
                         system_message.append(sys_block)
-                    continue
                 else:
                     sys_block = {"type": "text", "text": str(content)}
-                
-                if enable_cache:
-                    sys_block["cache_control"] = {"type": "ephemeral"}
-                system_message.append(sys_block)
-                
-            # Handle tool_call (internal format for tool use request)
-            elif role == "tool_call":
+                    if enable_cache:
+                        sys_block["cache_control"] = {"type": "ephemeral"}
+                    system_message.append(sys_block)
+                continue
+
+            if role == "tool_call":
                 args = message.get("arguments", {})
                 if isinstance(args, str):
                     try:
                         args = json_loads(args)
                     except (ValueError, TypeError):
                         args = {}
-                
-                prepared_chat_history.append({
-                    "role": "assistant",
-                    "content": [{
-                        "type": "tool_use",
-                        "id": str(message.get("id", "")),
-                        "name": message.get("name", ""),
-                        "input": args
-                    }]
-                })
-                
-            # Handle tool_result (internal format for tool execution result)
-            elif role == "tool_result" or role == "tool":
+
+                prepared_chat_history.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": str(message.get("id", "")),
+                                "name": message.get("name", ""),
+                                "input": args if isinstance(args, dict) else {},
+                            }
+                        ],
+                    }
+                )
+                continue
+
+            if role in {"tool_result", "tool"}:
                 result = message.get("result", message.get("content", ""))
                 tool_use_id = message.get("tool_call_id", message.get("tool_use_id", ""))
-                is_error = message.get("is_error", False)
-                
-                tool_result_block = {
+                is_error = bool(message.get("is_error", False))
+
+                tool_result_block: Dict[str, Any] = {
                     "type": "tool_result",
                     "tool_use_id": str(tool_use_id),
-                    "content": str(result) if isinstance(result, str) else result
+                    "content": result if isinstance(result, str) else str(result),
                 }
-                
                 if is_error:
                     tool_result_block["is_error"] = True
-                
-                prepared_chat_history.append({
-                    "role": "user",
-                    "content": [tool_result_block]
-                })
-                
-            # Handle regular assistant/user messages
-            elif role in {"assistant", "user"}:
+
+                prepared_chat_history.append({"role": "user", "content": [tool_result_block]})
+                continue
+
+            if role in {"assistant", "user"}:
                 content = message.get("content")
-                
-                # Check if content is multimodal (list of content blocks)
                 if isinstance(content, list):
-                    # Process content blocks - convert images and handle special types
-                    processed_content = []
+                    processed_content: List[Dict[str, Any]] = []
                     for block in content:
                         block_type = block.get("type")
-                        
-                        # Handle thinking blocks (for multi-turn with extended thinking)
+
                         if block_type == "thinking":
-                            processed_content.append({
-                                "type": "thinking",
-                                "thinking": block.get("thinking", ""),
-                                "signature": block.get("signature", "")
-                            })
-                        # Handle redacted thinking blocks
-                        elif block_type == "redacted_thinking":
-                            processed_content.append({
-                                "type": "redacted_thinking",
-                                "data": block.get("data", "")
-                            })
-                        # Handle tool_use blocks in assistant messages
-                        elif block_type == "tool_use":
+                            processed_content.append(
+                                {
+                                    "type": "thinking",
+                                    "thinking": block.get("thinking", ""),
+                                    "signature": block.get("signature", ""),
+                                }
+                            )
+                            continue
+
+                        if block_type == "redacted_thinking":
+                            processed_content.append({"type": "redacted_thinking", "data": block.get("data", "")})
+                            continue
+
+                        if block_type == "tool_use":
                             args = block.get("input", {})
                             if isinstance(args, str):
                                 try:
                                     args = json_loads(args)
                                 except (ValueError, TypeError):
                                     args = {}
-                            processed_content.append({
-                                "type": "tool_use",
-                                "id": block.get("id", ""),
-                                "name": block.get("name", ""),
-                                "input": args
-                            })
-                        # Handle tool_result blocks in user messages
-                        elif block_type == "tool_result":
-                            processed_content.append({
+                            processed_content.append(
+                                {
+                                    "type": "tool_use",
+                                    "id": block.get("id", ""),
+                                    "name": block.get("name", ""),
+                                    "input": args if isinstance(args, dict) else {},
+                                }
+                            )
+                            continue
+
+                        if block_type == "tool_result":
+                            tool_result_block = {
                                 "type": "tool_result",
                                 "tool_use_id": block.get("tool_use_id", ""),
                                 "content": block.get("content", ""),
-                                **({"is_error": True} if block.get("is_error") else {})
-                            })
-                        else:
-                            # Convert images and pass through other types
-                            converted = self._convert_image_content_anthropic([block])
-                            processed_content.extend(converted)
-                    
+                            }
+                            if block.get("is_error"):
+                                tool_result_block["is_error"] = True
+                            processed_content.append(tool_result_block)
+                            continue
+
+                        converted = self._convert_image_content_anthropic([block])
+                        processed_content.extend(converted)
+
                     prepared_chat_history.append({"role": role, "content": processed_content})
                 else:
-                    # String content - wrap in text block
-                    prepared_chat_history.append({
-                        "role": role,
-                        "content": [{"type": "text", "text": str(content) if content else ""}]
-                    })
+                    prepared_chat_history.append(
+                        {
+                            "role": role,
+                            "content": [{"type": "text", "text": str(content) if content is not None else ""}],
+                        }
+                    )
 
-        # Apply cache control to first message if no system message and caching enabled
         if enable_cache and not system_message and prepared_chat_history:
             first_msg = prepared_chat_history[0]
             content = first_msg.get("content")
             if isinstance(content, list) and content:
-                # Attach marker to the final block of the list
                 content[-1]["cache_control"] = {"type": "ephemeral"}
 
         return system_message, prepared_chat_history
-    
-    def _validate_model_sync(self, client: "anthropic.Anthropic", model_id: str) -> None:
-        """
-        Validate that the requested model is available via the Anthropic API.
-        
-        Args:
-            client: The Anthropic client instance.
-            model_id: The model identifier to validate.
-            
-        Raises:
-            ModelNotFoundError: If the model is not available, includes list of available models.
-        """
+
+    def _extract_usage(self, payload: Dict[str, Any]) -> LLMUsage:
+        """Extract normalized token usage from Anthropic response/event payloads."""
+        usage = payload.get("usage") or {}
+        prompt_tokens = int(usage.get("input_tokens", 0) or 0)
+        completion_tokens = int(usage.get("output_tokens", 0) or 0)
+        return LLMUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
+
+    def _extract_message_output(
+        self, payload: Dict[str, Any], fallback_model: str
+    ) -> tuple[Optional[str], Optional[str], List[Dict[str, Any]], Optional[str], str, LLMUsage]:
+        """Extract text/thinking/tool-calls + metadata from a message payload."""
+        text_parts: List[str] = []
+        thinking_parts: List[str] = []
+        tool_calls: List[Dict[str, Any]] = []
+
+        content_blocks = payload.get("content") or []
+        if isinstance(content_blocks, list):
+            for block in content_blocks:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+
+                if block_type == "text":
+                    txt = block.get("text")
+                    if txt:
+                        text_parts.append(txt)
+                    continue
+
+                if block_type == "thinking":
+                    thinking = block.get("thinking")
+                    if thinking:
+                        thinking_parts.append(thinking)
+                    continue
+
+                if block_type == "tool_use":
+                    args = block.get("input", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json_loads(args)
+                        except Exception:
+                            args = {}
+                    tool_calls.append(
+                        {
+                            "id": str(block.get("id", "")),
+                            "name": str(block.get("name", "")),
+                            "function_name": str(block.get("name", "")),
+                            "arguments": args if isinstance(args, dict) else {},
+                        }
+                    )
+
+        model_used = str(payload.get("model", fallback_model))
+        stop_reason = payload.get("stop_reason")
+        usage_obj = self._extract_usage(payload)
+        text = "".join(text_parts) if text_parts else None
+        thinking = "".join(thinking_parts) if thinking_parts else None
+        return text, thinking, tool_calls, stop_reason, model_used, usage_obj
+
+    @staticmethod
+    def _extract_model_ids_from_items(items: Any) -> List[str]:  # noqa: ANN401
+        """Extract model IDs from mixed dict/object collections."""
+        if not isinstance(items, list):
+            return []
+
+        ids: List[str] = []
+        for item in items:
+            model_id: Optional[str] = None
+            if isinstance(item, dict):
+                raw = item.get("id")
+                if raw:
+                    model_id = str(raw)
+            else:
+                raw = getattr(item, "id", None)
+                if raw:
+                    model_id = str(raw)
+
+            if model_id:
+                ids.append(model_id)
+        return ids
+
+    def _validate_model_sync(self, client: httpx.Client, model_id: str) -> None:
+        """Validate requested model by calling `GET /v1/models`."""
         try:
-            models_response = client.models.list()
-            available_models = [model.id for model in models_response.data]
-            
+            available_models: List[str] = []
+
+            # Backward-compatible path used by unit tests that mock SDK style.
+            if hasattr(client, "models") and hasattr(client.models, "list") and callable(client.models.list):
+                models_response = client.models.list()
+                available_models = self._extract_model_ids_from_items(getattr(models_response, "data", []))
+            else:
+                response = client.get("/v1/models")
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict):
+                    raw_data = payload.get("data", [])
+                    data: List[Any] = raw_data if isinstance(raw_data, list) else []
+                elif isinstance(payload, list):
+                    data = payload
+                else:
+                    data = []
+                available_models = self._extract_model_ids_from_items(data)
+
             if model_id not in available_models:
                 raise ModelNotFoundError(
                     model_id=model_id,
                     provider="Anthropic",
-                    available_models=available_models
+                    available_models=available_models,
                 )
         except ModelNotFoundError:
             raise
         except Exception as e:
-            # If we can't fetch models, wrap the error
-            mapped_error = self._handle_error(error=e)
-            raise mapped_error
-    
-    async def _validate_model_async(self, async_client: "anthropic.AsyncAnthropic", model_id: str) -> None:
-        """
-        Asynchronously validate that the requested model is available via the Anthropic API.
-        
-        Args:
-            async_client: The async Anthropic client instance.
-            model_id: The model identifier to validate.
-            
-        Raises:
-            ModelNotFoundError: If the model is not available, includes list of available models.
-        """
+            raise self._handle_error(e)
+
+    async def _validate_model_async(self, async_client: httpx.AsyncClient, model_id: str) -> None:
+        """Async variant of model validation with `GET /v1/models`."""
         try:
-            models_response = await async_client.models.list()
-            available_models = [model.id for model in models_response.data]
-            
+            available_models: List[str] = []
+
+            # Backward-compatible path used by unit tests that mock SDK style.
+            if hasattr(async_client, "models") and hasattr(async_client.models, "list") and callable(async_client.models.list):
+                models_response = await async_client.models.list()
+                available_models = self._extract_model_ids_from_items(getattr(models_response, "data", []))
+            else:
+                response = await async_client.get("/v1/models")
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict):
+                    raw_data = payload.get("data", [])
+                    data: List[Any] = raw_data if isinstance(raw_data, list) else []
+                elif isinstance(payload, list):
+                    data = payload
+                else:
+                    data = []
+                available_models = self._extract_model_ids_from_items(data)
+
             if model_id not in available_models:
                 raise ModelNotFoundError(
                     model_id=model_id,
                     provider="Anthropic",
-                    available_models=available_models
+                    available_models=available_models,
                 )
         except ModelNotFoundError:
             raise
         except Exception as e:
-            # If we can't fetch models, wrap the error
-            mapped_error = self._handle_error(error=e)
-            raise mapped_error
+            raise self._handle_error(e)
+
+    def _parse_sse_line_payload(self, event_name: Optional[str], data_lines: List[str]) -> Optional[Dict[str, Any]]:
+        """Parse buffered SSE payload for one event."""
+        if not data_lines:
+            return None
+
+        data_str = "\n".join(data_lines).strip()
+        if not data_str:
+            return None
+        if data_str == "[DONE]":
+            return {"type": "[DONE]"}
+
+        try:
+            payload = json_loads(data_str)
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if "type" not in payload and event_name:
+            payload["type"] = event_name
+        return payload
+
+    def _iter_sse_events(self, response: httpx.Response) -> Generator[Dict[str, Any], None, None]:
+        """Yield parsed SSE events from a sync HTTPX streaming response."""
+        event_name: Optional[str] = None
+        data_lines: List[str] = []
+
+        for line in response.iter_lines():
+            if line is None:
+                continue
+            stripped = line.strip()
+            if stripped == "":
+                payload = self._parse_sse_line_payload(event_name, data_lines)
+                if payload is not None:
+                    yield payload
+                event_name = None
+                data_lines = []
+                continue
+            if stripped.startswith(":"):
+                continue
+            if stripped.startswith("event:"):
+                event_name = stripped[6:].strip()
+                continue
+            if stripped.startswith("data:"):
+                data_lines.append(stripped[5:].strip())
+
+        payload = self._parse_sse_line_payload(event_name, data_lines)
+        if payload is not None:
+            yield payload
+
+    async def _aiter_sse_events(self, response: httpx.Response) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield parsed SSE events from an async HTTPX streaming response."""
+        event_name: Optional[str] = None
+        data_lines: List[str] = []
+
+        async for line in response.aiter_lines():
+            if line is None:
+                continue
+            stripped = line.strip()
+            if stripped == "":
+                payload = self._parse_sse_line_payload(event_name, data_lines)
+                if payload is not None:
+                    yield payload
+                event_name = None
+                data_lines = []
+                continue
+            if stripped.startswith(":"):
+                continue
+            if stripped.startswith("event:"):
+                event_name = stripped[6:].strip()
+                continue
+            if stripped.startswith("data:"):
+                data_lines.append(stripped[5:].strip())
+
+        payload = self._parse_sse_line_payload(event_name, data_lines)
+        if payload is not None:
+            yield payload
 
 
 class AsyncAnthropicProvider(AsyncBaseProvider, _AnthropicProviderMixin):
-    """
-    Asynchronous provider implementation for Anthropic's Claude API.
-    
-    This class provides async methods to generate text completions
-    and stream responses from Anthropic's Claude models,
-    integrating robust error handling and retry mechanisms.
-    Supports tool usage and function calling.
-    """
-    
+    """Asynchronous Anthropic provider implemented with HTTPX."""
+
     def __init__(self, model_id: Optional[str] = None, api_key: Optional[str] = None, **kwargs) -> None:
-        """
-        Initialize the asynchronous Anthropic provider.
-        
-        Args:
-            model_id: Identifier for the model to use (e.g., "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"). Required.
-            api_key: Explicit API key for authentication. If None, falls back to ANTHROPIC_API_KEY environment variable.
-            **kwargs: Additional parameters for model generation and client configuration:
-                Query kwargs (passed to Anthropic API):
-                    - temperature (float): Sampling temperature (default: 0.7)
-                    - max_tokens (int): Maximum tokens to generate (default: 1024).
-                    - top_p (float): Nucleus sampling parameter (default: 1.0)
-                    - top_k (int): Top-k sampling parameter
-                    - stop_sequences (List[str]): Sequence(s) that stop generation.
-                    - metadata (dict): Metadata for the request
-                    - tools (List[Dict]): List of tools available for the model to use
-                    - tool_choice (Dict): Tool choice configuration
-                Client kwargs (used for client setup):
-                    - timeout (float): Request timeout in seconds (default: 30.0)
-                    - max_retries (int): Maximum number of retries for retryable errors (default: 3)
-        
-        Raises
-        ------
-            EnvironmentError: If ANTHROPIC_API_KEY environment variable is not set.
-            ConnectionError: If the async client cannot be initialized.
-        """
-        api_key, client_kwargs, self.model_id, self.default_params, self.max_retries = self._init_common(
-            model_id, api_key, **kwargs
-        )
-        
+        (
+            _api_key,
+            client_kwargs,
+            self.model_id,
+            self.default_params,
+            self.max_retries,
+        ) = self._init_common(model_id, api_key, **kwargs)
+
         try:
-            # Create and assign the async client
-            self.async_client = anthropic.AsyncAnthropic(api_key=api_key, **client_kwargs)
+            self.async_client = httpx.AsyncClient(**client_kwargs)
         except Exception as e:
-            # Catch any exception during initialization
             raise ConnectionError(provider="Anthropic") from e
-    
+
     async def validate_model(self) -> None:
-        """
-        Validate that the configured model is available via the Anthropic API.
-        
-        Call this method after initialization to verify the model exists.
-        
-        Raises:
-            ModelNotFoundError: If the model is not available, includes list of available models.
-        
-        Example:
-            provider = AsyncAnthropicProvider(model_id="claude-sonnet-4-20250514", api_key="...")
-            await provider.validate_model()  # Raises if model not found
-        """
+        """Validate configured model is available via Anthropic API."""
         await self._validate_model_async(async_client=self.async_client, model_id=self.model_id)
-    
-    # Reuse shared implementation from AsyncBaseProvider
+
     async def _execute_with_retry(self, operation: callable) -> Any:  # type: ignore[override]
         return await super()._execute_with_retry(operation=operation)
-    
+
     async def _parse_tool_call(self, tool_call: List[Dict[str, Any]]) -> List[ToolCall]:
-        """Convert *tool_call* dictionaries into :class:`ToolCall` objects."""
         return self._parse_tool_call_sync(tool_call)
-    
+
     async def _format_tool_call(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Format the tool calls into the format expected by the Anthropic API."""
         return self._format_tool_call_sync(tools)
 
-    async def _prepare_chat_history(self,
-                                    chat_history: List[Dict[str, Any]],
-                                    *,
-                                    enable_cache: bool = False) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Prepare the chat history for the Anthropic API."""
+    async def _prepare_chat_history(
+        self,
+        chat_history: List[Dict[str, Any]],
+        *,
+        enable_cache: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         return self._prepare_chat_history_sync(chat_history, enable_cache=enable_cache)
 
-    async def async_generate(self,
-                             chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
-                             tools: Optional[List[Dict[str, Any]]] = None,
-                             tool_choice: Optional[Dict[str, Any]] = None,
-                             model: Optional[str] = None,
-                             **kwargs) -> Union[LLMResponse, ToolCallList]:
-        """
-        Asynchronously generate a completion for the provided chat history.
-        
-        Supports vision/images by passing multimodal content:
-            [{"role": "user", "content": [
-                {"type": "text", "text": "What's in this image?"},
-                {"type": "image", "url": "https://example.com/image.jpg"}
-            ]}]
-        
-        Image formats supported:
-            - {"type": "image", "url": "https://..."} - Image from URL
-            - {"type": "image", "base64": "...", "media_type": "image/jpeg"} - Base64 encoded
-        
-        Args:
-            chat_history: List of message dictionaries (e.g., [{"role": "user", "content": "Hi"}]).
-            tools: Optional list of tool definitions for function calling.
-                   Each tool should have 'name', 'description', and 'input_schema' fields.
-            tool_choice: Optional tool choice configuration. Can be:
-                        - {"type": "auto"} (default): Let Claude decide whether to use tools
-                        - {"type": "any"}: Force Claude to use at least one tool
-                        - {"type": "tool", "name": "tool_name"}: Force Claude to use a specific tool
-            model: Optional model identifier to override the default model
-            **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
-            
-        Returns
-        -------
-            Union[LLMResponse, ToolCallList]: Response containing:
-                - text (str | None): Generated text string. None if generation fails or is empty.
-                - usage (LLMUsage): Token usage information
-                - tool_calls (List[ToolCall] | None): List of tool calls made by the model, if any.
-                - stop_reason (str): Reason why generation stopped ("end_turn", "tool_use", etc.)
-            
-        Raises
-        ------
-            Various LLMError subclasses depending on the API response or connection issues.
-        """
+    async def async_generate(
+        self,
+        chat_history: List[
+            Union[
+                Dict[str, Any],
+                ToolCallRequest,
+                ToolCallResult,
+                AssistantMessage,
+                UserMessage,
+                SystemMessage,
+            ]
+        ],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> Union[LLMResponse, ToolCallList]:
+        """Asynchronously generate an Anthropic message completion."""
         params = self._prepare_params(**kwargs)
-        
-        # Add tools and tool_choice to params if provided
+
         if tools is not None:
             params["tools"] = await self._format_tool_call(tools=tools)
         if tool_choice is not None:
             params["tool_choice"] = self._format_tool_choice(tool_choice)
 
+        system_message: List[Dict[str, Any]] = []
+        formatted_chat_history: List[Dict[str, Any]] = []
         if chat_history:
             system_message, formatted_chat_history = await self._prepare_chat_history(chat_history=chat_history)
 
         effective_model = model or self.model_id
+        payload: Dict[str, Any] = {
+            "model": effective_model,
+            "messages": formatted_chat_history,
+            **params,
+        }
+        if system_message:
+            payload["system"] = system_message
+
         async def _generate() -> Union[LLMResponse, ToolCallList]:
-            
-            completion = await self.async_client.messages.create(model=effective_model,
-                                                                 messages=formatted_chat_history,
-                                                                 system=system_message,
-                                                                 **params)
-            
-            # Extract text content, thinking, and tool calls
-            text_parts: List[str] = []
-            thinking_parts: List[str] = []
-            tool_calls = []
-            
-            if completion.content and len(completion.content) > 0:
-                for content_block in completion.content:
-                    if hasattr(content_block, 'type'):
-                        if content_block.type == 'text' and hasattr(content_block, 'text'):
-                            if content_block.text:
-                                text_parts.append(content_block.text)
-                        elif content_block.type == 'thinking' and hasattr(content_block, 'thinking'):
-                            # Extract thinking/reasoning content (Claude extended thinking)
-                            if content_block.thinking:
-                                thinking_parts.append(content_block.thinking)
-                        elif content_block.type == 'tool_use':
-                            try:
-                                parsed_args = json_loads(content_block.input) if isinstance(content_block.input, str) else content_block.input
-                            except Exception:
-                                parsed_args = content_block.input
+            response = await self.async_client.post("/v1/messages", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise LLMError(message="Anthropic API returned an unexpected response payload.")
 
-                            # Extract tool use information
-                            tool_calls.append(ToolCall(id=content_block.id,
-                                                       type="function_call",
-                                                       function_name=content_block.name,
-                                                       arguments=parsed_args))
-
-            usage_data = LLMUsage(prompt_tokens=0, 
-                                  completion_tokens=0, 
-                                  total_tokens=0)
-            
-            if completion.usage:
-                usage_data.prompt_tokens = completion.usage.input_tokens or 0
-                usage_data.completion_tokens = completion.usage.output_tokens or 0
-                usage_data.total_tokens = (completion.usage.input_tokens or 0) + (completion.usage.output_tokens or 0)
+            (
+                text_content,
+                thinking_content,
+                tool_calls,
+                stop_reason,
+                model_used,
+                usage_data,
+            ) = self._extract_message_output(data, effective_model)
 
             if tool_calls:
-                return ToolCallList(model_id=effective_model,
-                                    tool_calls=tool_calls,
-                                    usage=usage_data)
+                return ToolCallList(
+                    model_id=model_used,
+                    tool_calls=await self._parse_tool_call(tool_calls),
+                    usage=usage_data,
+                )
 
-            text_content = "".join(text_parts) if text_parts else None
-            thinking_content = "".join(thinking_parts) if thinking_parts else None
+            return LLMResponse(
+                model_id=model_used,
+                type="llm_response",
+                text=text_content,
+                thinking=thinking_content,
+                usage=usage_data,
+                stop_reason=stop_reason,
+            )
 
-            return LLMResponse(model_id=effective_model,
-                               type="llm_response",
-                               text=text_content,
-                               thinking=thinking_content,
-                               usage=usage_data,
-                               stop_reason=completion.stop_reason)
-        
         return await self._execute_with_retry(operation=_generate)
-    
-    async def async_stream(self,
-                           chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
-                           tools: Optional[List[Dict[str, Any]]] = None,
-                           tool_choice: Optional[Dict[str, Any]] = None,
-                           model: Optional[str] = None,
-                           **kwargs) -> AsyncGenerator[Union[str, LLMResponse, ToolCallList], None]:
-        """
-        Asynchronously stream a completion for the provided chat history.
-        
-        Yields content chunks (str) as they arrive, and finally yields a
-        LLMResponse containing the full concatenated text, tool calls, and token usage.
-        
-        Supports vision/images by passing multimodal content:
-            [{"role": "user", "content": [
-                {"type": "text", "text": "What's in this image?"},
-                {"type": "image", "url": "https://example.com/image.jpg"}
-            ]}]
-        
-        Args:
-            chat_history: List of message dictionaries.
-            tools: Optional list of tool definitions for function calling.
-            tool_choice: Optional tool choice configuration.
-            model: Optional model identifier to override the default model
-            **kwargs: Generation parameters overriding defaults.
-            
-        Yields
-        ------
-            str: Text chunks of the generated completion.
-            LLMResponse: Final LLMResponse with "text" (full content), "usage" info, "tool_calls", and "stop_reason".
-                Example: {
-                    "text": "Full response", 
-                    "usage": {...}, 
-                    "tool_calls": [...],
-                    "stop_reason": "tool_use"
-                }
 
-        Raises
-        ------
-            Same exceptions as async_generate() method, potentially during iteration.
-        """
+    async def async_stream(
+        self,
+        chat_history: List[
+            Union[
+                Dict[str, Any],
+                ToolCallRequest,
+                ToolCallResult,
+                AssistantMessage,
+                UserMessage,
+                SystemMessage,
+            ]
+        ],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncGenerator[Union[str, LLMResponse, ToolCallList], None]:
+        """Asynchronously stream Anthropic message deltas and final response."""
         params = self._prepare_params(**kwargs)
-        
-        # Add tools and tool_choice to params if provided
+
         if tools is not None:
             params["tools"] = await self._format_tool_call(tools=tools)
         if tool_choice is not None:
             params["tool_choice"] = self._format_tool_choice(tool_choice)
 
+        system_message: List[Dict[str, Any]] = []
+        formatted_chat_history: List[Dict[str, Any]] = []
         if chat_history:
             system_message, formatted_chat_history = await self._prepare_chat_history(chat_history=chat_history)
 
         effective_model = model or self.model_id
-        async def _create_stream() -> Any:
-            # Use the async client here
-            return await self.async_client.messages.create(model=effective_model,
-                                                          messages=formatted_chat_history,
-                                                          system=system_message,
-                                                          stream=True,
-                                                          **params)
-        
+        payload: Dict[str, Any] = {
+            "model": effective_model,
+            "messages": formatted_chat_history,
+            "stream": True,
+            **params,
+        }
+        if system_message:
+            payload["system"] = system_message
+
+        async def _open_stream():
+            stream_ctx = self.async_client.stream("POST", "/v1/messages", json=payload)
+            response = await stream_ctx.__aenter__()
+            try:
+                response.raise_for_status()
+            except Exception as e:
+                await stream_ctx.__aexit__(type(e), e, e.__traceback__)
+                raise
+            return stream_ctx, response
+
         completion_parts: List[str] = []
         thinking_parts: List[str] = []
         tool_calls: List[ToolCall] = []
-        current_tool_call: ToolCall | None = None
+        current_tool_call: Optional[ToolCall] = None
         current_tool_input_parts: List[str] = []
-        current_block_type = None  # Track current content block type
-        final_usage_data = LLMUsage(prompt_tokens=0, 
-                                    completion_tokens=0, 
-                                    total_tokens=0)
-        stop_reason = None
+        current_block_type: Optional[str] = None
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        stop_reason: Optional[str] = None
+        final_model = effective_model
 
         try:
-            # Get the stream manager and iterate through chunks
-            async for chunk in await self._execute_with_retry(operation=_create_stream):
-                # Handle different event types from Anthropic streaming
-                if chunk.type == "message_start":
-                    # Extract usage from message start event
-                    if hasattr(chunk, 'message') and hasattr(chunk.message, 'usage'):
-                        final_usage_data.prompt_tokens = chunk.message.usage.input_tokens or 0
-                elif chunk.type == "content_block_start":
-                    # Handle start of content blocks (text, thinking, or tool_use)
-                    if hasattr(chunk, 'content_block'):
-                        current_block_type = chunk.content_block.type
-                        if chunk.content_block.type == 'tool_use':
-                            # Start of a tool use block
-                            current_tool_call = ToolCall(id=chunk.content_block.id,
-                                                         type="tool_use",
-                                                         function_name=chunk.content_block.name,
-                                                         arguments=chunk.content_block.input or {})  # May be empty initially
-                            current_tool_input_parts = []  # Reset for accumulating JSON parts
-                elif chunk.type == "content_block_delta":
-                    # Extract text/thinking delta from content block delta
-                    if hasattr(chunk, 'delta'):
-                        if hasattr(chunk.delta, 'text'):
-                            # Text content delta
-                            delta_text = chunk.delta.text
+            stream_ctx, response = await self._execute_with_retry(operation=_open_stream)
+            try:
+                async for event in self._aiter_sse_events(response):
+                    event_type = event.get("type")
+                    if event_type == "[DONE]":
+                        break
+
+                    if event_type == "error":
+                        err = event.get("error", {})
+                        if isinstance(err, dict):
+                            raise LLMError(message=str(err.get("message", "Anthropic streaming error.")))
+                        raise LLMError(message="Anthropic streaming error.")
+
+                    if event_type == "message_start":
+                        message = event.get("message", {})
+                        if isinstance(message, dict):
+                            final_model = str(message.get("model", final_model))
+                            usage = message.get("usage", {})
+                            if isinstance(usage, dict):
+                                prompt_tokens = int(usage.get("input_tokens", 0) or 0)
+                        continue
+
+                    if event_type == "content_block_start":
+                        content_block = event.get("content_block", {})
+                        if not isinstance(content_block, dict):
+                            continue
+                        current_block_type = content_block.get("type")
+                        if current_block_type == "tool_use":
+                            initial_args = content_block.get("input", {})
+                            if isinstance(initial_args, str):
+                                try:
+                                    initial_args = json_loads(initial_args)
+                                except Exception:
+                                    initial_args = {}
+                            current_tool_call = ToolCall(
+                                id=str(content_block.get("id", "")),
+                                type="function_call",
+                                function_name=str(content_block.get("name", "")),
+                                arguments=initial_args if isinstance(initial_args, dict) else {},
+                            )
+                            current_tool_input_parts = []
+                        continue
+
+                    if event_type == "content_block_delta":
+                        delta = event.get("delta", {})
+                        if not isinstance(delta, dict):
+                            continue
+
+                        delta_type = delta.get("type")
+                        if delta_type == "text_delta" or (current_block_type == "text" and "text" in delta):
+                            delta_text = delta.get("text", "")
                             if delta_text:
                                 completion_parts.append(delta_text)
-                                yield LLMResponse(model_id=effective_model, 
-                                                  type="llm_delta", 
-                                                  text=delta_text,
-                                                  thinking=None,
-                                                  usage=None,
-                                                  stop_reason=None)
-                        elif hasattr(chunk.delta, 'thinking'):
-                            # Thinking content delta (Claude extended thinking)
-                            delta_thinking = chunk.delta.thinking
+                                yield LLMResponse(
+                                    model_id=final_model,
+                                    type="llm_delta",
+                                    text=delta_text,
+                                    thinking=None,
+                                    usage=None,
+                                    stop_reason=None,
+                                )
+                            continue
+
+                        if delta_type == "thinking_delta" or (current_block_type == "thinking" and "thinking" in delta):
+                            delta_thinking = delta.get("thinking", "")
                             if delta_thinking:
                                 thinking_parts.append(delta_thinking)
-                                yield LLMResponse(model_id=effective_model, 
-                                                  type="llm_delta", 
-                                                  text=None,
-                                                  thinking=delta_thinking,
-                                                  usage=None,
-                                                  stop_reason=None)
-                        elif hasattr(chunk.delta, 'partial_json') and current_tool_call:
-                            # Tool use input delta (partial JSON)
-                            # Accumulate the partial JSON strings
-                            pj = chunk.delta.partial_json
-                            if pj:
-                                current_tool_input_parts.append(pj)
-                elif chunk.type == "content_block_stop":
-                    # End of a content block
-                    if current_tool_call:
-                        # Complete the tool call and add it to the list
-                        try:
-                            # Parse the accumulated JSON if we have it
-                            if current_tool_input_parts:
-                                current_tool_call.arguments = json_loads("".join(current_tool_input_parts))
-                            tool_calls.append(current_tool_call)
-                        except (ValueError, TypeError):
-                            # If JSON parsing fails, use the input from the start block
-                            tool_calls.append(current_tool_call)
-                        
-                        current_tool_call = None
-                        current_tool_input_parts = []
-                    current_block_type = None
-                elif chunk.type == "message_delta":
-                    # Extract final usage and stop reason from message delta event
-                    if hasattr(chunk, 'usage'):
-                        final_usage_data.completion_tokens = chunk.usage.output_tokens or 0
-                        final_usage_data.total_tokens = final_usage_data.prompt_tokens + final_usage_data.completion_tokens
-                    if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'stop_reason'):
-                        stop_reason = chunk.delta.stop_reason
-            
+                                yield LLMResponse(
+                                    model_id=final_model,
+                                    type="llm_delta",
+                                    text=None,
+                                    thinking=delta_thinking,
+                                    usage=None,
+                                    stop_reason=None,
+                                )
+                            continue
 
-            full_completion_text = "".join(completion_parts)
-            full_thinking_text = "".join(thinking_parts)
+                        if delta_type == "input_json_delta" and current_tool_call:
+                            partial_json = delta.get("partial_json", "")
+                            if partial_json:
+                                current_tool_input_parts.append(partial_json)
+                            continue
+
+                        continue
+
+                    if event_type == "content_block_stop":
+                        if current_tool_call:
+                            if current_tool_input_parts:
+                                try:
+                                    parsed = json_loads("".join(current_tool_input_parts))
+                                    if isinstance(parsed, dict):
+                                        current_tool_call.arguments = parsed
+                                    else:
+                                        current_tool_call.arguments = {}
+                                except Exception:
+                                    current_tool_call.arguments = current_tool_call.arguments or {}
+                            tool_calls.append(current_tool_call)
+                            current_tool_call = None
+                            current_tool_input_parts = []
+                        current_block_type = None
+                        continue
+
+                    if event_type == "message_delta":
+                        usage = event.get("usage", {})
+                        if isinstance(usage, dict):
+                            completion_tokens = int(usage.get("output_tokens", completion_tokens) or completion_tokens)
+                        delta = event.get("delta", {})
+                        if isinstance(delta, dict) and delta.get("stop_reason") is not None:
+                            stop_reason = delta.get("stop_reason")
+                        continue
+            finally:
+                await stream_ctx.__aexit__(None, None, None)
+
+            if current_tool_call:
+                if current_tool_input_parts:
+                    try:
+                        parsed = json_loads("".join(current_tool_input_parts))
+                        if isinstance(parsed, dict):
+                            current_tool_call.arguments = parsed
+                    except Exception:
+                        pass
+                tool_calls.append(current_tool_call)
+
+            usage_obj = LLMUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            )
 
             if tool_calls:
-                yield ToolCallList(model_id=effective_model,
-                                   tool_calls=tool_calls,
-                                   usage=final_usage_data)
+                yield ToolCallList(model_id=final_model, tool_calls=tool_calls, usage=usage_obj)
             else:
-                yield LLMResponse(model_id=effective_model,
-                                  type="llm_response",
-                                  text=full_completion_text,
-                                  thinking=full_thinking_text if full_thinking_text else None,
-                                  usage=final_usage_data,
-                                  stop_reason=stop_reason)
-
+                yield LLMResponse(
+                    model_id=final_model,
+                    type="llm_response",
+                    text="".join(completion_parts) if completion_parts else None,
+                    thinking="".join(thinking_parts) if thinking_parts else None,
+                    usage=usage_obj,
+                    stop_reason=stop_reason,
+                )
         except Exception as e:
-            # Handle errors occurring during async stream iteration
-            mapped_error = self._handle_error(error=e)
-            raise mapped_error
+            raise self._handle_error(e)
 
 
 class AnthropicProvider(BaseProvider, _AnthropicProviderMixin):
-    """
-    Synchronous provider implementation for Anthropic's Claude API.
-    
-    This class provides sync methods to generate text completions
-    and stream responses from Anthropic's Claude models,
-    integrating robust error handling and retry mechanisms.
-    Supports tool usage and function calling.
-    """
-    
+    """Synchronous Anthropic provider implemented with HTTPX."""
+
     def __init__(self, model_id: Optional[str] = None, api_key: Optional[str] = None, **kwargs) -> None:
-        """
-        Initialize the synchronous Anthropic provider.
-        
-        Args:
-            model_id: Identifier for the model to use (e.g., "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"). Required.
-            api_key: Explicit API key for authentication. If None, falls back to ANTHROPIC_API_KEY environment variable.
-            **kwargs: Additional parameters for model generation and client configuration:
-                Query kwargs (passed to Anthropic API):
-                    - temperature (float): Sampling temperature (default: 0.7)
-                    - max_tokens (int): Maximum tokens to generate (default: 1024).
-                    - top_p (float): Nucleus sampling parameter (default: 1.0)
-                    - top_k (int): Top-k sampling parameter
-                    - stop_sequences (List[str]): Sequence(s) that stop generation.
-                    - metadata (dict): Metadata for the request
-                    - tools (List[Dict]): List of tools available for the model to use
-                    - tool_choice (Dict): Tool choice configuration
-                Client kwargs (used for client setup):
-                    - timeout (float): Request timeout in seconds (default: 30.0)
-                    - max_retries (int): Maximum number of retries for retryable errors (default: 3)
-        
-        Raises
-        ------
-            EnvironmentError: If ANTHROPIC_API_KEY environment variable is not set.
-            ConnectionError: If the sync client cannot be initialized.
-        """
-        api_key, client_kwargs, self.model_id, self.default_params, self.max_retries = self._init_common(
-            model_id, api_key, **kwargs
-        )
-        
+        (
+            _api_key,
+            client_kwargs,
+            self.model_id,
+            self.default_params,
+            self.max_retries,
+        ) = self._init_common(model_id, api_key, **kwargs)
+
         try:
-            # Create and assign the sync client
-            self.client = anthropic.Anthropic(api_key=api_key, **client_kwargs)
+            self.client = httpx.Client(**client_kwargs)
         except Exception as e:
-            # Catch any exception during initialization
             raise ConnectionError(provider="Anthropic") from e
-        
-        # Validate that the requested model is available
-        self._validate_model_sync(client=self.client, model_id=self.model_id)
-    
-    def validate_model(self) -> None:
-        """
-        Validate that the configured model is available via the Anthropic API.
-        
-        This is called automatically during initialization, but can be called
-        again if needed (e.g., after changing model_id).
-        
-        Raises:
-            ModelNotFoundError: If the model is not available, includes list of available models.
-        """
+
         self._validate_model_sync(client=self.client, model_id=self.model_id)
 
-    def generate(self,
-                 chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
-                 tools: Optional[List[Dict[str, Any]]] = None,
-                 tool_choice: Optional[Dict[str, Any]] = None,
-                 model: Optional[str] = None,
-                 **kwargs) -> Union[LLMResponse, ToolCallList]:
-        """
-        Synchronously generate a completion for the provided chat history.
-        
-        Supports vision/images by passing multimodal content:
-            [{"role": "user", "content": [
-                {"type": "text", "text": "What's in this image?"},
-                {"type": "image", "url": "https://example.com/image.jpg"}
-            ]}]
-        
-        Image formats supported:
-            - {"type": "image", "url": "https://..."} - Image from URL
-            - {"type": "image", "base64": "...", "media_type": "image/jpeg"} - Base64 encoded
-        
-        Args:
-            chat_history: List of message dictionaries (e.g., [{"role": "user", "content": "Hi"}]).
-            tools: Optional list of tool definitions for function calling.
-                   Each tool should have 'name', 'description', and 'input_schema' fields.
-            tool_choice: Optional tool choice configuration. Can be:
-                        - {"type": "auto"} (default): Let Claude decide whether to use tools
-                        - {"type": "any"}: Force Claude to use at least one tool
-                        - {"type": "tool", "name": "tool_name"}: Force Claude to use a specific tool
-            model: Optional model identifier to override the default model
-            **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
-            
-        Returns
-        -------
-            Union[LLMResponse, ToolCallList]: Response containing:
-                - text (str | None): Generated text string. None if generation fails or is empty.
-                - usage (LLMUsage): Token usage information
-                - tool_calls (List[ToolCall] | None): List of tool calls made by the model, if any.
-                - stop_reason (str): Reason why generation stopped ("end_turn", "tool_use", etc.)
-            
-        Raises
-        ------
-            Various LLMError subclasses depending on the API response or connection issues.
-        """
+    def validate_model(self) -> None:
+        """Validate configured model is available via Anthropic API."""
+        self._validate_model_sync(client=self.client, model_id=self.model_id)
+
+    def generate(
+        self,
+        chat_history: List[
+            Union[
+                Dict[str, Any],
+                ToolCallRequest,
+                ToolCallResult,
+                AssistantMessage,
+                UserMessage,
+                SystemMessage,
+            ]
+        ],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> Union[LLMResponse, ToolCallList]:
+        """Synchronously generate an Anthropic message completion."""
         params = self._prepare_params(**kwargs)
-        
-        # Add tools and tool_choice to params if provided
+
         if tools is not None:
             params["tools"] = self._format_tool_call_sync(tools=tools)
         if tool_choice is not None:
             params["tool_choice"] = self._format_tool_choice(tool_choice)
 
+        system_message: List[Dict[str, Any]] = []
+        formatted_chat_history: List[Dict[str, Any]] = []
         if chat_history:
             system_message, formatted_chat_history = self._prepare_chat_history_sync(chat_history=chat_history)
 
         effective_model = model or self.model_id
-        
+        payload: Dict[str, Any] = {
+            "model": effective_model,
+            "messages": formatted_chat_history,
+            **params,
+        }
+        if system_message:
+            payload["system"] = system_message
+
         def _generate() -> Union[LLMResponse, ToolCallList]:
-            completion = self.client.messages.create(model=effective_model,
-                                                     messages=formatted_chat_history,
-                                                     system=system_message,
-                                                     **params)
-            
-            # Extract text content, thinking, and tool calls
-            text_parts: List[str] = []
-            thinking_parts: List[str] = []
-            tool_calls = []
-            
-            if completion.content and len(completion.content) > 0:
-                for content_block in completion.content:
-                    if hasattr(content_block, 'type'):
-                        if content_block.type == 'text' and hasattr(content_block, 'text'):
-                            if content_block.text:
-                                text_parts.append(content_block.text)
-                        elif content_block.type == 'thinking' and hasattr(content_block, 'thinking'):
-                            # Extract thinking/reasoning content (Claude extended thinking)
-                            if content_block.thinking:
-                                thinking_parts.append(content_block.thinking)
-                        elif content_block.type == 'tool_use':
-                            try:
-                                parsed_args = json_loads(content_block.input) if isinstance(content_block.input, str) else content_block.input
-                            except Exception:
-                                parsed_args = content_block.input
+            response = self.client.post("/v1/messages", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise LLMError(message="Anthropic API returned an unexpected response payload.")
 
-                            tool_calls.append(ToolCall(id=content_block.id,
-                                                       type="function_call",
-                                                       function_name=content_block.name,
-                                                       arguments=parsed_args))
-
-            usage_data = LLMUsage(prompt_tokens=0, 
-                                  completion_tokens=0, 
-                                  total_tokens=0)
-            
-            if completion.usage:
-                usage_data.prompt_tokens = completion.usage.input_tokens or 0
-                usage_data.completion_tokens = completion.usage.output_tokens or 0
-                usage_data.total_tokens = (completion.usage.input_tokens or 0) + (completion.usage.output_tokens or 0)
+            (
+                text_content,
+                thinking_content,
+                tool_calls,
+                stop_reason,
+                model_used,
+                usage_data,
+            ) = self._extract_message_output(data, effective_model)
 
             if tool_calls:
-                return ToolCallList(model_id=effective_model,
-                                    tool_calls=tool_calls,
-                                    usage=usage_data)
+                return ToolCallList(
+                    model_id=model_used,
+                    tool_calls=self._parse_tool_call_sync(tool_calls),
+                    usage=usage_data,
+                )
 
-            text_content = "".join(text_parts) if text_parts else None
-            thinking_content = "".join(thinking_parts) if thinking_parts else None
+            return LLMResponse(
+                model_id=model_used,
+                type="llm_response",
+                text=text_content,
+                thinking=thinking_content,
+                usage=usage_data,
+                stop_reason=stop_reason,
+            )
 
-            return LLMResponse(model_id=effective_model,
-                               type="llm_response",
-                               text=text_content,
-                               thinking=thinking_content,
-                               usage=usage_data,
-                               stop_reason=completion.stop_reason)
-        
         return self._execute_with_retry(operation=_generate)
-    
-    def stream(self,
-               chat_history: List[Union[Dict[str, Any], "ToolCallRequest", "ToolCallResult", "AssistantMessage", "UserMessage", "SystemMessage"]],
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[Dict[str, Any]] = None,
-               model: Optional[str] = None,
-               **kwargs) -> Generator[Union[str, LLMResponse, ToolCallList], None, None]:
-        """
-        Synchronously stream a completion for the provided chat history.
-        
-        Yields content chunks as they arrive, and finally yields a
-        LLMResponse containing the full concatenated text, tool calls, and token usage.
-        
-        Supports vision/images by passing multimodal content:
-            [{"role": "user", "content": [
-                {"type": "text", "text": "What's in this image?"},
-                {"type": "image", "url": "https://example.com/image.jpg"}
-            ]}]
-        
-        Args:
-            chat_history: List of message dictionaries.
-            tools: Optional list of tool definitions for function calling.
-            tool_choice: Optional tool choice configuration.
-            model: Optional model identifier to override the default model
-            **kwargs: Generation parameters overriding defaults.
-            
-        Yields
-        ------
-            LLMResponse: Delta chunks and final response with full content, usage info, and tool_calls.
 
-        Raises
-        ------
-            Same exceptions as generate() method, potentially during iteration.
-        """
+    def stream(
+        self,
+        chat_history: List[
+            Union[
+                Dict[str, Any],
+                ToolCallRequest,
+                ToolCallResult,
+                AssistantMessage,
+                UserMessage,
+                SystemMessage,
+            ]
+        ],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> Generator[Union[str, LLMResponse, ToolCallList], None, None]:
+        """Synchronously stream Anthropic message deltas and final response."""
         params = self._prepare_params(**kwargs)
-        
-        # Add tools and tool_choice to params if provided
+
         if tools is not None:
             params["tools"] = self._format_tool_call_sync(tools=tools)
         if tool_choice is not None:
             params["tool_choice"] = self._format_tool_choice(tool_choice)
 
+        system_message: List[Dict[str, Any]] = []
+        formatted_chat_history: List[Dict[str, Any]] = []
         if chat_history:
             system_message, formatted_chat_history = self._prepare_chat_history_sync(chat_history=chat_history)
 
         effective_model = model or self.model_id
-        
-        def _create_stream() -> Any:
-            return self.client.messages.create(model=effective_model,
-                                               messages=formatted_chat_history,
-                                               system=system_message,
-                                               stream=True,
-                                               **params)
-        
+        payload: Dict[str, Any] = {
+            "model": effective_model,
+            "messages": formatted_chat_history,
+            "stream": True,
+            **params,
+        }
+        if system_message:
+            payload["system"] = system_message
+
+        def _open_stream():
+            stream_ctx = self.client.stream("POST", "/v1/messages", json=payload)
+            response = stream_ctx.__enter__()
+            try:
+                response.raise_for_status()
+            except Exception as e:
+                stream_ctx.__exit__(type(e), e, e.__traceback__)
+                raise
+            return stream_ctx, response
+
         completion_parts: List[str] = []
         thinking_parts: List[str] = []
         tool_calls: List[ToolCall] = []
-        current_tool_call: ToolCall | None = None
+        current_tool_call: Optional[ToolCall] = None
         current_tool_input_parts: List[str] = []
-        current_block_type = None  # Track current content block type
-        final_usage_data = LLMUsage(prompt_tokens=0, 
-                                    completion_tokens=0, 
-                                    total_tokens=0)
-        stop_reason = None
+        current_block_type: Optional[str] = None
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        stop_reason: Optional[str] = None
+        final_model = effective_model
 
         try:
-            # Get the stream and iterate through chunks
-            for chunk in self._execute_with_retry(operation=_create_stream):
-                # Handle different event types from Anthropic streaming
-                if chunk.type == "message_start":
-                    if hasattr(chunk, 'message') and hasattr(chunk.message, 'usage'):
-                        final_usage_data.prompt_tokens = chunk.message.usage.input_tokens or 0
-                elif chunk.type == "content_block_start":
-                    if hasattr(chunk, 'content_block'):
-                        current_block_type = chunk.content_block.type
-                        if chunk.content_block.type == 'tool_use':
-                            current_tool_call = ToolCall(id=chunk.content_block.id,
-                                                         type="tool_use",
-                                                         function_name=chunk.content_block.name,
-                                                         arguments=chunk.content_block.input or {})
+            stream_ctx, response = self._execute_with_retry(operation=_open_stream)
+            try:
+                for event in self._iter_sse_events(response):
+                    event_type = event.get("type")
+                    if event_type == "[DONE]":
+                        break
+
+                    if event_type == "error":
+                        err = event.get("error", {})
+                        if isinstance(err, dict):
+                            raise LLMError(message=str(err.get("message", "Anthropic streaming error.")))
+                        raise LLMError(message="Anthropic streaming error.")
+
+                    if event_type == "message_start":
+                        message = event.get("message", {})
+                        if isinstance(message, dict):
+                            final_model = str(message.get("model", final_model))
+                            usage = message.get("usage", {})
+                            if isinstance(usage, dict):
+                                prompt_tokens = int(usage.get("input_tokens", 0) or 0)
+                        continue
+
+                    if event_type == "content_block_start":
+                        content_block = event.get("content_block", {})
+                        if not isinstance(content_block, dict):
+                            continue
+                        current_block_type = content_block.get("type")
+                        if current_block_type == "tool_use":
+                            initial_args = content_block.get("input", {})
+                            if isinstance(initial_args, str):
+                                try:
+                                    initial_args = json_loads(initial_args)
+                                except Exception:
+                                    initial_args = {}
+                            current_tool_call = ToolCall(
+                                id=str(content_block.get("id", "")),
+                                type="function_call",
+                                function_name=str(content_block.get("name", "")),
+                                arguments=initial_args if isinstance(initial_args, dict) else {},
+                            )
                             current_tool_input_parts = []
-                elif chunk.type == "content_block_delta":
-                    if hasattr(chunk, 'delta'):
-                        if hasattr(chunk.delta, 'text'):
-                            delta_text = chunk.delta.text
+                        continue
+
+                    if event_type == "content_block_delta":
+                        delta = event.get("delta", {})
+                        if not isinstance(delta, dict):
+                            continue
+
+                        delta_type = delta.get("type")
+                        if delta_type == "text_delta" or (current_block_type == "text" and "text" in delta):
+                            delta_text = delta.get("text", "")
                             if delta_text:
                                 completion_parts.append(delta_text)
-                                yield LLMResponse(model_id=effective_model, 
-                                                  type="llm_delta", 
-                                                  text=delta_text,
-                                                  thinking=None,
-                                                  usage=None,
-                                                  stop_reason=None)
-                        elif hasattr(chunk.delta, 'thinking'):
-                            # Thinking content delta (Claude extended thinking)
-                            delta_thinking = chunk.delta.thinking
+                                yield LLMResponse(
+                                    model_id=final_model,
+                                    type="llm_delta",
+                                    text=delta_text,
+                                    thinking=None,
+                                    usage=None,
+                                    stop_reason=None,
+                                )
+                            continue
+
+                        if delta_type == "thinking_delta" or (current_block_type == "thinking" and "thinking" in delta):
+                            delta_thinking = delta.get("thinking", "")
                             if delta_thinking:
                                 thinking_parts.append(delta_thinking)
-                                yield LLMResponse(model_id=effective_model, 
-                                                  type="llm_delta", 
-                                                  text=None,
-                                                  thinking=delta_thinking,
-                                                  usage=None,
-                                                  stop_reason=None)
-                        elif hasattr(chunk.delta, 'partial_json') and current_tool_call:
-                            pj = chunk.delta.partial_json
-                            if pj:
-                                current_tool_input_parts.append(pj)
-                elif chunk.type == "content_block_stop":
-                    if current_tool_call:
-                        try:
-                            if current_tool_input_parts:
-                                current_tool_call.arguments = json_loads("".join(current_tool_input_parts))
-                            tool_calls.append(current_tool_call)
-                        except (ValueError, TypeError):
-                            tool_calls.append(current_tool_call)
-                        
-                        current_tool_call = None
-                        current_tool_input_parts = []
-                    current_block_type = None
-                elif chunk.type == "message_delta":
-                    if hasattr(chunk, 'usage'):
-                        final_usage_data.completion_tokens = chunk.usage.output_tokens or 0
-                        final_usage_data.total_tokens = final_usage_data.prompt_tokens + final_usage_data.completion_tokens
-                    if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'stop_reason'):
-                        stop_reason = chunk.delta.stop_reason
-            
+                                yield LLMResponse(
+                                    model_id=final_model,
+                                    type="llm_delta",
+                                    text=None,
+                                    thinking=delta_thinking,
+                                    usage=None,
+                                    stop_reason=None,
+                                )
+                            continue
 
-            full_completion_text = "".join(completion_parts)
-            full_thinking_text = "".join(thinking_parts)
+                        if delta_type == "input_json_delta" and current_tool_call:
+                            partial_json = delta.get("partial_json", "")
+                            if partial_json:
+                                current_tool_input_parts.append(partial_json)
+                            continue
+
+                        continue
+
+                    if event_type == "content_block_stop":
+                        if current_tool_call:
+                            if current_tool_input_parts:
+                                try:
+                                    parsed = json_loads("".join(current_tool_input_parts))
+                                    if isinstance(parsed, dict):
+                                        current_tool_call.arguments = parsed
+                                    else:
+                                        current_tool_call.arguments = {}
+                                except Exception:
+                                    current_tool_call.arguments = current_tool_call.arguments or {}
+                            tool_calls.append(current_tool_call)
+                            current_tool_call = None
+                            current_tool_input_parts = []
+                        current_block_type = None
+                        continue
+
+                    if event_type == "message_delta":
+                        usage = event.get("usage", {})
+                        if isinstance(usage, dict):
+                            completion_tokens = int(usage.get("output_tokens", completion_tokens) or completion_tokens)
+                        delta = event.get("delta", {})
+                        if isinstance(delta, dict) and delta.get("stop_reason") is not None:
+                            stop_reason = delta.get("stop_reason")
+                        continue
+            finally:
+                stream_ctx.__exit__(None, None, None)
+
+            if current_tool_call:
+                if current_tool_input_parts:
+                    try:
+                        parsed = json_loads("".join(current_tool_input_parts))
+                        if isinstance(parsed, dict):
+                            current_tool_call.arguments = parsed
+                    except Exception:
+                        pass
+                tool_calls.append(current_tool_call)
+
+            usage_obj = LLMUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            )
 
             if tool_calls:
-                yield ToolCallList(model_id=effective_model,
-                                   tool_calls=tool_calls,
-                                   usage=final_usage_data)
+                yield ToolCallList(model_id=final_model, tool_calls=tool_calls, usage=usage_obj)
             else:
-                yield LLMResponse(model_id=effective_model,
-                                  type="llm_response",
-                                  text=full_completion_text,
-                                  thinking=full_thinking_text if full_thinking_text else None,
-                                  usage=final_usage_data,
-                                  stop_reason=stop_reason)
-
+                yield LLMResponse(
+                    model_id=final_model,
+                    type="llm_response",
+                    text="".join(completion_parts) if completion_parts else None,
+                    thinking="".join(thinking_parts) if thinking_parts else None,
+                    usage=usage_obj,
+                    stop_reason=stop_reason,
+                )
         except Exception as e:
-            mapped_error = self._handle_error(error=e)
-            raise mapped_error
+            raise self._handle_error(e)
+

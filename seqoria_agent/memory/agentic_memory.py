@@ -194,6 +194,22 @@ class AgenticMemory:
         self._context_manager.add_message({"role": "system", "content": content})
         self._append_timeline_event("system_message", {"content": content})
 
+    @property
+    def system_prompt(self) -> str | None:
+        """Current base system prompt used during LLM context assembly."""
+        return self._context_manager.base_system_prompt
+
+    def update_system_prompt(self, content: str | None) -> None:
+        """Update or clear the base system prompt without appending a new message."""
+        self._context_manager.set_base_system_prompt(content)
+        self._append_timeline_event(
+            "system_prompt_updated",
+            {
+                "content": self._context_manager.base_system_prompt,
+                "cleared": self._context_manager.base_system_prompt is None,
+            },
+        )
+
     def add_tool_call(self, tool_call: ToolCallRequest) -> None:
         self._context_manager.add_message(tool_call)
         payload = tool_call.model_dump() if hasattr(tool_call, "model_dump") else message_to_dict(tool_call)

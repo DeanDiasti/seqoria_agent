@@ -26,3 +26,30 @@ async def test_context_assembly_orders_system_compressed_recent():
     assert any(m.get("role") == "user" for m in messages)
     assert any(m.get("role") == "assistant" for m in messages)
 
+
+def test_update_system_prompt_replaces_base_prompt_in_context():
+    memory = AgenticMemory(config=AgenticMemoryConfig(total_context_budget=12000))
+    memory.add_system_message("Original system prompt")
+    memory.update_system_prompt("Updated system prompt")
+
+    messages = memory.to_messages()
+
+    assert memory.system_prompt == "Updated system prompt"
+    assert messages
+    assert messages[0]["role"] == "system"
+    assert "Updated system prompt" in messages[0]["content"]
+    assert "Original system prompt" not in messages[0]["content"]
+
+
+def test_update_system_prompt_can_clear_base_prompt():
+    memory = AgenticMemory(config=AgenticMemoryConfig(total_context_budget=12000))
+    memory.add_system_message("Prompt to clear")
+    memory.add_user_message("hello")
+    memory.update_system_prompt(None)
+
+    messages = memory.to_messages()
+
+    assert memory.system_prompt is None
+    assert messages
+    assert messages[0]["role"] == "user"
+

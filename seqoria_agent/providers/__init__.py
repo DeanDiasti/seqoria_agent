@@ -18,12 +18,7 @@ variants are useful for simple scripts, notebooks, and non-async contexts.
 
 Installation
 ------------
-Providers are optional dependencies. Install what you need:
-    pip install seqoria-agent[openai]      # OpenAI only
-    pip install seqoria-agent[anthropic]   # Anthropic only
-    pip install seqoria-agent[ollama]      # Ollama only
-    pip install seqoria-agent[providers]   # All providers
-    pip install seqoria-agent[all]         # Everything
+Providers in this package use HTTPX transport directly.
 """
 
 from __future__ import annotations
@@ -49,6 +44,10 @@ from seqoria_agent.providers.errors import (
 # Type checking imports (no runtime cost)
 if TYPE_CHECKING:
     from seqoria_agent.providers.openai_provider import AsyncOpenAIProvider, OpenAIProvider
+    from seqoria_agent.providers.openai_compatible_provider import (
+        AsyncOpenAICompatibleProvider,
+        OpenAICompatibleProvider,
+    )
     from seqoria_agent.providers.anthropic_provider import AsyncAnthropicProvider, AnthropicProvider
     from seqoria_agent.providers.ollama_provider import AsyncOllamaProvider, OllamaProvider
 
@@ -60,6 +59,9 @@ __all__ = [
     # OpenAI providers (lazy loaded)
     "AsyncOpenAIProvider",
     "OpenAIProvider",
+    # OpenAI-compatible HTTPX providers (lazy loaded)
+    "AsyncOpenAICompatibleProvider",
+    "OpenAICompatibleProvider",
     # Anthropic providers (lazy loaded)
     "AsyncAnthropicProvider",
     "AnthropicProvider",
@@ -87,15 +89,23 @@ __all__ = [
 # Lazy loading implementation
 # ---------------------------------------------------------------------------
 
-# Map provider names to their module and required package
-_PROVIDER_REGISTRY: dict[str, tuple[str, str, str | None]] = {
-    # name: (module_path, class_name, required_package)
-    "AsyncOpenAIProvider": ("seqoria_agent.providers.openai_provider", "AsyncOpenAIProvider", "openai"),
-    "OpenAIProvider": ("seqoria_agent.providers.openai_provider", "OpenAIProvider", "openai"),
-    "AsyncAnthropicProvider": ("seqoria_agent.providers.anthropic_provider", "AsyncAnthropicProvider", "anthropic"),
-    "AnthropicProvider": ("seqoria_agent.providers.anthropic_provider", "AnthropicProvider", "anthropic"),
-    "AsyncOllamaProvider": ("seqoria_agent.providers.ollama_provider", "AsyncOllamaProvider", "ollama"),
-    "OllamaProvider": ("seqoria_agent.providers.ollama_provider", "OllamaProvider", "ollama"),
+# Map provider names to their module and class name.
+_PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
+    # name: (module_path, class_name)
+    "AsyncOpenAIProvider": ("seqoria_agent.providers.openai_provider", "AsyncOpenAIProvider"),
+    "OpenAIProvider": ("seqoria_agent.providers.openai_provider", "OpenAIProvider"),
+    "AsyncOpenAICompatibleProvider": (
+        "seqoria_agent.providers.openai_compatible_provider",
+        "AsyncOpenAICompatibleProvider",
+    ),
+    "OpenAICompatibleProvider": (
+        "seqoria_agent.providers.openai_compatible_provider",
+        "OpenAICompatibleProvider",
+    ),
+    "AsyncAnthropicProvider": ("seqoria_agent.providers.anthropic_provider", "AsyncAnthropicProvider"),
+    "AnthropicProvider": ("seqoria_agent.providers.anthropic_provider", "AnthropicProvider"),
+    "AsyncOllamaProvider": ("seqoria_agent.providers.ollama_provider", "AsyncOllamaProvider"),
+    "OllamaProvider": ("seqoria_agent.providers.ollama_provider", "OllamaProvider"),
 }
 
 # Cache for loaded providers
@@ -119,14 +129,7 @@ def _load_provider(name: str) -> type:
     if name not in _PROVIDER_REGISTRY:
         raise AttributeError(f"Provider '{name}' not found in seqoria_agent.providers")
     
-    module_path, class_name, required_package = _PROVIDER_REGISTRY[name]
-    
-    # Check if required package is installed
-    if required_package and not _check_package_available(required_package):
-        raise ImportError(
-            f"Provider '{name}' requires the '{required_package}' package. "
-            f"Install it with: pip install seqoria-agent[{required_package}]"
-        )
+    module_path, class_name = _PROVIDER_REGISTRY[name]
     
     # Import the module and get the class
     module = importlib.import_module(module_path)
@@ -165,8 +168,6 @@ def get_provider(name: str, async_variant: bool = True) -> type:
         
     Raises
     ------
-    ImportError
-        If the required package is not installed.
     ValueError
         If the provider name is not recognized.
         
@@ -179,6 +180,7 @@ def get_provider(name: str, async_variant: bool = True) -> type:
     
     provider_map = {
         "openai": ("AsyncOpenAIProvider", "OpenAIProvider"),
+        "openai_compatible": ("AsyncOpenAICompatibleProvider", "OpenAICompatibleProvider"),
         "anthropic": ("AsyncAnthropicProvider", "AnthropicProvider"),
         "ollama": ("AsyncOllamaProvider", "OllamaProvider"),
     }
@@ -206,10 +208,11 @@ def list_available_providers() -> dict[str, bool]:
     >>> list_available_providers()
     {'openai': True, 'anthropic': True, 'ollama': False}
     """
-    providers = {
-        "openai": "openai",
-        "anthropic": "anthropic",
-        "ollama": "ollama",
+    # All first-party providers now share HTTPX transport.
+    available = _check_package_available("httpx")
+    return {
+        "openai": available,
+        "openai_compatible": available,
+        "anthropic": available,
+        "ollama": available,
     }
-    
-    return {name: _check_package_available(pkg) for name, pkg in providers.items()}
