@@ -422,6 +422,46 @@ class _OpenAICompatibleProviderMixin:
             return refusal
         return None
 
+    @staticmethod
+    def _extract_reasoning_text(obj: Dict[str, Any]) -> Optional[str]:
+        """Extract reasoning/thinking text from a Chat Completions message or delta.
+
+        OpenRouter (and some other providers) surface reasoning tokens via:
+        - ``reasoning`` (str) — plain-text reasoning content
+        - ``reasoning_content`` (str) — alias used by some providers (e.g. DeepSeek)
+        - ``reasoning_details`` (list[dict]) — structured reasoning detail objects
+          with types ``reasoning.text`` and ``reasoning.summary``
+
+        Some providers send both ``reasoning`` and ``reasoning_details`` in the
+        same chunk with identical content.  To avoid duplication we prefer the
+        structured ``reasoning_details`` when present and fall back to the
+        plain-text field only when the structured array is absent or empty.
+        """
+        details_parts: List[str] = []
+        reasoning_details = obj.get("reasoning_details")
+        if isinstance(reasoning_details, list):
+            for detail in reasoning_details:
+                if not isinstance(detail, dict):
+                    continue
+                detail_type = detail.get("type", "")
+                if detail_type == "reasoning.text":
+                    text = detail.get("text")
+                    if text:
+                        details_parts.append(text)
+                elif detail_type == "reasoning.summary":
+                    summary = detail.get("summary")
+                    if summary:
+                        details_parts.append(summary)
+
+        if details_parts:
+            return "".join(details_parts)
+
+        reasoning_str = obj.get("reasoning") or obj.get("reasoning_content")
+        if isinstance(reasoning_str, str) and reasoning_str:
+            return reasoning_str
+
+        return None
+
     def _extract_usage(self, payload: Dict[str, Any]) -> LLMUsage:
         """Extract token usage from Chat Completions payload."""
         usage = payload.get("usage") or {}
@@ -688,11 +728,12 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                 return ToolCallList(model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj)
 
             text = self._extract_text_from_message(message)
+            thinking = self._extract_reasoning_text(message)
             return LLMResponse(
                 model_id=model_used,
                 type="llm_response",
                 text=text,
-                thinking=None,
+                thinking=thinking,
                 usage=usage_obj,
                 stop_reason=choice.get("finish_reason"),
             )
@@ -750,6 +791,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
             return stream_ctx, response
 
         completion_parts: List[str] = []
+        thinking_parts: List[str] = []
         final_model = effective_model
         stop_reason: Optional[str] = None
         usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -787,6 +829,18 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
 
                     for choice in chunk.get("choices", []) or []:
                         delta = choice.get("delta", {}) or {}
+
+                        delta_thinking = self._extract_reasoning_text(delta)
+                        if delta_thinking:
+                            thinking_parts.append(delta_thinking)
+                            yield LLMResponse(
+                                model_id=final_model,
+                                type="llm_delta",
+                                text=None,
+                                thinking=delta_thinking,
+                                usage=None,
+                                stop_reason=None,
+                            )
 
                         delta_content = delta.get("content")
                         if isinstance(delta_content, str) and delta_content:
@@ -860,7 +914,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                     model_id=final_model,
                     type="llm_response",
                     text="".join(completion_parts) if completion_parts else None,
-                    thinking=None,
+                    thinking="".join(thinking_parts) if thinking_parts else None,
                     usage=usage_obj,
                     stop_reason=stop_reason,
                 )
@@ -953,11 +1007,12 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                 return ToolCallList(model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj)
 
             text = self._extract_text_from_message(message)
+            thinking = self._extract_reasoning_text(message)
             return LLMResponse(
                 model_id=model_used,
                 type="llm_response",
                 text=text,
-                thinking=None,
+                thinking=thinking,
                 usage=usage_obj,
                 stop_reason=choice.get("finish_reason"),
             )
@@ -1013,6 +1068,7 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
             return stream_ctx, response
 
         completion_parts: List[str] = []
+        thinking_parts: List[str] = []
         final_model = effective_model
         stop_reason: Optional[str] = None
         usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -1050,6 +1106,18 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
 
                     for choice in chunk.get("choices", []) or []:
                         delta = choice.get("delta", {}) or {}
+
+                        delta_thinking = self._extract_reasoning_text(delta)
+                        if delta_thinking:
+                            thinking_parts.append(delta_thinking)
+                            yield LLMResponse(
+                                model_id=final_model,
+                                type="llm_delta",
+                                text=None,
+                                thinking=delta_thinking,
+                                usage=None,
+                                stop_reason=None,
+                            )
 
                         delta_content = delta.get("content")
                         if isinstance(delta_content, str) and delta_content:
@@ -1123,7 +1191,7 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                     model_id=final_model,
                     type="llm_response",
                     text="".join(completion_parts) if completion_parts else None,
-                    thinking=None,
+                    thinking="".join(thinking_parts) if thinking_parts else None,
                     usage=usage_obj,
                     stop_reason=stop_reason,
                 )
