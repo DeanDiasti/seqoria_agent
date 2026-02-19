@@ -25,12 +25,13 @@ class PgVectorStore(VectorStoreProtocol):
             raise ImportError("PgVectorStore requires `pgvector` to be installed.") from exc
 
         self._psycopg = psycopg
+        self._register_vector = register_vector
         self._schema = schema
         self._table_name = table_name
         self._dimensions = dimensions
         self._conn = psycopg.connect(dsn, autocommit=True)
-        register_vector(self._conn)
         self._ensure_schema()
+        register_vector(self._conn)
 
     def _table(self) -> str:
         return f"{self._schema}.{self._table_name}"

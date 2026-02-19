@@ -517,7 +517,7 @@ class _OpenAICompatibleProviderMixin:
         if isinstance(error, httpx.HTTPStatusError):
             status_code, message, code, param = self._extract_error_details_from_status_error(error)
             message_l = message.lower()
-            code_l = (code or "").lower()
+            code_l = str(code or "").lower()
 
             if status_code == 401:
                 return EnvironmentError(

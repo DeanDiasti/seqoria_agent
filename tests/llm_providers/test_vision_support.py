@@ -339,6 +339,47 @@ class TestOpenAIChatHistoryWithImages:
         assert input_items[0]["content"][1]["type"] == "input_image"
         assert f"data:image/jpeg;base64,{test_base64}" == input_items[0]["content"][1]["image_url"]
 
+    def test_prepare_history_tool_call_uses_call_id_without_invalid_id(self):
+        """Tool-call history with internal call_* IDs should not emit invalid item IDs."""
+        from seqoria_agent.models.chunk import ToolCallRequest
+        from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
+
+        mixin = _OpenAIProviderMixin()
+        history = [
+            ToolCallRequest(
+                id="call_abc123",
+                name="search_markets",
+                arguments={"status": "open"},
+            )
+        ]
+
+        _, input_items = mixin._prepare_input_responses(history)
+
+        assert input_items[0]["type"] == "function_call"
+        assert input_items[0]["call_id"] == "call_abc123"
+        assert "id" not in input_items[0]
+
+    def test_prepare_history_tool_call_keeps_fc_item_id_when_present(self):
+        """Raw dict tool-call history keeps valid Responses item IDs."""
+        from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
+
+        mixin = _OpenAIProviderMixin()
+        history = [
+            {
+                "role": "tool_call",
+                "id": "fc_abc123",
+                "call_id": "call_abc123",
+                "name": "search_markets",
+                "arguments": {"status": "open"},
+            }
+        ]
+
+        _, input_items = mixin._prepare_input_responses(history)
+
+        assert input_items[0]["type"] == "function_call"
+        assert input_items[0]["id"] == "fc_abc123"
+        assert input_items[0]["call_id"] == "call_abc123"
+
 
 class TestAnthropicChatHistoryWithImages:
     """Tests for Anthropic chat history preparation with images."""

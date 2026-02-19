@@ -536,21 +536,22 @@ class AgenticMemory:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], **kwargs: Any) -> "AgenticMemory":
-        cfg_dict = data.get("config", {})
-        config = AgenticMemoryConfig(
-            context=ContextConfig(**cfg_dict.get("context", {})),
-            memory=MemoryConfig(**cfg_dict.get("memory", {})),
-            plan=PlanConfig(**cfg_dict.get("plan", {})),
-            tool_handler=ToolHandlerConfig(**cfg_dict.get("tool_handler", {})),
-            memory_agent_provider=cfg_dict.get("memory_agent_provider"),
-            persist_memories=cfg_dict.get("persist_memories", False),
-            session_id=cfg_dict.get("session_id"),
-            tenant_id=cfg_dict.get("tenant_id"),
-            user_id=cfg_dict.get("user_id"),
-            conversation_id=cfg_dict.get("conversation_id"),
-            total_context_budget=cfg_dict.get("total_context_budget", 16000),
-        )
-        obj = cls(config=config, **kwargs)
+        if "config" not in kwargs:
+            cfg_dict = data.get("config", {})
+            kwargs["config"] = AgenticMemoryConfig(
+                context=ContextConfig(**cfg_dict.get("context", {})),
+                memory=MemoryConfig(**cfg_dict.get("memory", {})),
+                plan=PlanConfig(**cfg_dict.get("plan", {})),
+                tool_handler=ToolHandlerConfig(**cfg_dict.get("tool_handler", {})),
+                memory_agent_provider=cfg_dict.get("memory_agent_provider"),
+                persist_memories=cfg_dict.get("persist_memories", False),
+                session_id=cfg_dict.get("session_id"),
+                tenant_id=cfg_dict.get("tenant_id"),
+                user_id=cfg_dict.get("user_id"),
+                conversation_id=cfg_dict.get("conversation_id"),
+                total_context_budget=cfg_dict.get("total_context_budget", 16000),
+            )
+        obj = cls(**kwargs)
         obj._scope = MemoryScope(**data.get("scope", {}))
         obj._turn_count = int(data.get("turn_count", 0))
         context = data.get("context", {})

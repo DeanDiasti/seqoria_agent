@@ -97,6 +97,21 @@ class _OpenAIProviderMixin:
         params.update(kwargs)
         return {k: v for k, v in params.items() if v is not None}
 
+    @staticmethod
+    def _model_disallowed_params(model_id: str) -> set[str]:
+        """Return request keys that should not be sent for a model family."""
+        normalized = str(model_id or "").lower()
+        if normalized.startswith("gpt-5"):
+            return {"temperature"}
+        return set()
+
+    def _sanitize_params_for_model(self, model_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop params that are known to be rejected by the target model."""
+        disallowed = self._model_disallowed_params(model_id)
+        if not disallowed:
+            return params
+        return {k: v for k, v in params.items() if k not in disallowed}
+
     def _safe_response_text(self, response: httpx.Response, *, max_chars: int = 1200) -> Optional[str]:
         """Best-effort extraction of response body text for error transparency."""
         try:
@@ -295,16 +310,24 @@ class _OpenAIProviderMixin:
         instructions_parts: List[str] = []
         input_items: List[Dict[str, Any]] = []
 
+        def _is_responses_function_id(value: Any) -> bool:
+            return isinstance(value, str) and value.startswith("fc_")
+
         for raw_msg in chat_history:
             if isinstance(raw_msg, ToolCallRequest):
+                call_id = str(raw_msg.id)
+                item: Dict[str, Any] = {
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": raw_msg.name,
+                    "arguments": json_dumps(raw_msg.arguments) if raw_msg.arguments else _EMPTY_JSON,
+                }
+                # Responses API item IDs use the "fc_" prefix. Internal tool-call IDs
+                # are typically "call_*" and should not be sent as item IDs.
+                if _is_responses_function_id(raw_msg.id):
+                    item["id"] = str(raw_msg.id)
                 input_items.append(
-                    {
-                        "type": "function_call",
-                        "id": str(raw_msg.id),
-                        "call_id": str(raw_msg.id),
-                        "name": raw_msg.name,
-                        "arguments": json_dumps(raw_msg.arguments) if raw_msg.arguments else _EMPTY_JSON,
-                    }
+                    item
                 )
                 continue
 
@@ -338,16 +361,21 @@ class _OpenAIProviderMixin:
                 instructions_parts.append(content if isinstance(content, str) else str(content))
 
             elif role == "tool_call":
+                raw_id = raw_msg.get("id")
+                raw_call_id = raw_msg.get("call_id")
+                call_id = raw_call_id if raw_call_id is not None else raw_id
+                item = {
+                    "type": "function_call",
+                    "call_id": str(call_id) if call_id is not None else "",
+                    "name": raw_msg.get("name"),
+                    "arguments": json_dumps(raw_msg.get("arguments", {}))
+                    if raw_msg.get("arguments")
+                    else _EMPTY_JSON,
+                }
+                if _is_responses_function_id(raw_id):
+                    item["id"] = str(raw_id)
                 input_items.append(
-                    {
-                        "type": "function_call",
-                        "id": str(raw_msg.get("id")),
-                        "call_id": str(raw_msg.get("id")),
-                        "name": raw_msg.get("name"),
-                        "arguments": json_dumps(raw_msg.get("arguments", {}))
-                        if raw_msg.get("arguments")
-                        else _EMPTY_JSON,
-                    }
+                    item
                 )
 
             elif role in {"tool_result", "tool"}:
@@ -377,24 +405,26 @@ class _OpenAIProviderMixin:
             if tool_type == "function":
                 func_def = tool.get("function", tool)
                 parameters = func_def.get("parameters", {}) or {}
-                strict = func_def.get("strict", True)
+                strict = func_def.get("strict")
 
                 if isinstance(parameters, dict) and parameters.get("type") == "object":
                     props = parameters.get("properties")
                     if isinstance(props, dict) and props:
                         parameters = self._make_strict_json_schema(parameters)
-                    else:
+                    elif strict is True:
+                        # Mapping-style object schemas are incompatible with strict mode.
                         strict = False
 
-                formatted_tools.append(
-                    {
-                        "type": "function",
-                        "name": func_def.get("name"),
-                        "description": func_def.get("description", ""),
-                        "parameters": parameters,
-                        "strict": strict,
-                    }
-                )
+                tool_payload: Dict[str, Any] = {
+                    "type": "function",
+                    "name": func_def.get("name"),
+                    "description": func_def.get("description", ""),
+                }
+                if parameters is not None:
+                    tool_payload["parameters"] = parameters
+                if strict is not None:
+                    tool_payload["strict"] = strict
+                formatted_tools.append(tool_payload)
             else:
                 formatted_tools.append(tool)
 
@@ -413,7 +443,7 @@ class _OpenAIProviderMixin:
 
             processed_tool_calls.append(
                 ToolCall(
-                    id=tc.get("id", tc.get("call_id", "")),
+                    id=tc.get("call_id", tc.get("id", "")),
                     type="function_call",
                     function_name=tc.get("function_name", tc.get("name", "")),
                     arguments=args or {},
@@ -468,11 +498,12 @@ class _OpenAIProviderMixin:
 
                 elif item_type == "function_call":
                     call_id = output_item.get("call_id", output_item.get("id", ""))
+                    item_id = output_item.get("id", "")
                     name = output_item.get("name", "")
                     arguments = output_item.get("arguments", _EMPTY_JSON)
                     tool_calls.append(
                         {
-                            "id": call_id,
+                            "id": item_id,
                             "call_id": call_id,
                             "name": name,
                             "function_name": name,
@@ -730,6 +761,7 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
             params["tool_choice"] = tool_choice
 
         effective_model = model or self.model_id
+        params = self._sanitize_params_for_model(effective_model, params)
         payload: Dict[str, Any] = {"model": effective_model, **params}
         if input_items:
             payload["input"] = input_items
@@ -787,6 +819,7 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
             params["tool_choice"] = tool_choice
 
         effective_model = model or self.model_id
+        params = self._sanitize_params_for_model(effective_model, params)
         payload: Dict[str, Any] = {"model": effective_model, "stream": True, **params}
         if input_items:
             payload["input"] = input_items
@@ -1055,6 +1088,7 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
             params["tool_choice"] = tool_choice
 
         effective_model = model or self.model_id
+        params = self._sanitize_params_for_model(effective_model, params)
         payload: Dict[str, Any] = {"model": effective_model, **params}
         if input_items:
             payload["input"] = input_items
@@ -1112,6 +1146,7 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
             params["tool_choice"] = tool_choice
 
         effective_model = model or self.model_id
+        params = self._sanitize_params_for_model(effective_model, params)
         payload: Dict[str, Any] = {"model": effective_model, "stream": True, **params}
         if input_items:
             payload["input"] = input_items
