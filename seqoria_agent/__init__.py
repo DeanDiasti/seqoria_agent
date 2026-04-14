@@ -28,8 +28,12 @@ if TYPE_CHECKING:
     from seqoria_agent.providers import (  # noqa: F401
         AnthropicProvider,
         AsyncAnthropicProvider,
+        AsyncMLXLMProvider,
+        AsyncMLXVLMProvider,
         AsyncOllamaProvider,
         AsyncOpenAIProvider,
+        MLXLMProvider,
+        MLXVLMProvider,
         OllamaProvider,
         OpenAIProvider,
     )
@@ -47,6 +51,10 @@ _LAZY_EXPORTS: set[str] = {
     "AnthropicProvider",
     "AsyncOllamaProvider",
     "OllamaProvider",
+    "AsyncMLXLMProvider",
+    "MLXLMProvider",
+    "AsyncMLXVLMProvider",
+    "MLXVLMProvider",
 }
 
 
@@ -85,4 +93,8 @@ __all__ = [
     "AnthropicProvider",
     "AsyncOllamaProvider",
     "OllamaProvider",
+    "AsyncMLXLMProvider",
+    "MLXLMProvider",
+    "AsyncMLXVLMProvider",
+    "MLXVLMProvider",
 ]
