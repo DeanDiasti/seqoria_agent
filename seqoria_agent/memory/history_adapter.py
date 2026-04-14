@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Dict, List, Protocol, Union, runtime_checkable
 
 from seqoria_agent.models.chunk import LLMUsage, ToolCallError, ToolCallRequest, ToolCallResult
 
@@ -14,6 +14,7 @@ class MemoryAwareHistory(Protocol):
         user_query: str,
         *,
         retrieval_query: str | None = None,
+        user_message_content: Union[str, List[Dict[str, Any]], None] = None,
     ) -> list[dict[str, Any]]: ...
 
     def messages_for_llm(self, query: str | None = None) -> list[dict[str, Any]]: ...

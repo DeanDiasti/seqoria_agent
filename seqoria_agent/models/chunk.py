@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -44,11 +44,17 @@ class AssistantMessage(BaseModel):  # noqa: D101 – simple container
 
 
 class UserMessage(BaseModel):  # noqa: D101 – simple container
-    """Incremental piece of a streamed chat response.
+    """User turn: plain text or OpenAI-style multimodal content blocks (text, image, audio).
+
+    Providers that support multimodal input (e.g. Ollama, MLX-VLM) receive ``content`` as-is
+    in chat history; others may only use the text parts.
     """
     model_config = ConfigDict(slots=True)
     role: Literal["user"] = Field(default=None, description="The role of the message.")
-    content: str = Field(default=None, description="The content of the message.")
+    content: Union[str, List[Dict[str, Any]], None] = Field(
+        default=None,
+        description="Plain string or list of content blocks (e.g. type text, image_url, audio).",
+    )
 
 
 class ToolCallRequest(BaseModel):  # noqa: D101 – simple container

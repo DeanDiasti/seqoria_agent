@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, List, Mapping, Self, Tuple, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Iterable, List, Mapping, Self, Tuple, Union
 
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.ai_client.executor import Executor
@@ -49,6 +49,8 @@ if TYPE_CHECKING:
     from seqoria_agent.memory.agentic_memory import AgenticMemory
 
 HistoryInput = Union[list[dict[str, Any]], "AgenticMemory"]
+
+UserContentInput = Union[str, List[Dict[str, Any]]]
 
 
 class AsyncAIClient:
@@ -444,6 +446,7 @@ class AsyncAIClient:
         self,
         history: HistoryInput,
         *,
+        append_user_message: Union[UserContentInput, None] = None,
         use_tools: bool = True,
         tool_choice: str = "auto",
         model: str | None = None,
@@ -451,6 +454,18 @@ class AsyncAIClient:
         """Single LLM generation step."""
         if history is None:
             raise ValueError("history required")
+        if append_user_message is not None:
+            if is_memory_aware_history(history):
+                text = self._user_text_for_planning(append_user_message)
+                plan_q = text or "[multimodal]"
+                history.begin_turn(
+                    plan_q,
+                    retrieval_query=plan_q,
+                    user_message_content=append_user_message,
+                )
+            else:
+                self._ensure_system_prompt(history=history)
+                history.append(UserMessage(role="user", content=append_user_message))
         llm_history = self._history_for_llm(history=history, ensure_system_prompt=True)
 
         if use_tools and self.tools_enabled():
@@ -467,6 +482,7 @@ class AsyncAIClient:
         self,
         history: HistoryInput,
         *,
+        append_user_message: Union[UserContentInput, None] = None,
         use_tools: bool = True,
         tool_choice: str = "auto",
         model: str | None = None,
@@ -476,6 +492,18 @@ class AsyncAIClient:
         """Stream a single LLM generation step."""
         if history is None:
             raise ValueError("history required")
+        if append_user_message is not None:
+            if is_memory_aware_history(history):
+                text = self._user_text_for_planning(append_user_message)
+                plan_q = text or "[multimodal]"
+                history.begin_turn(
+                    plan_q,
+                    retrieval_query=plan_q,
+                    user_message_content=append_user_message,
+                )
+            else:
+                self._ensure_system_prompt(history=history)
+                history.append(UserMessage(role="user", content=append_user_message))
         llm_history = self._history_for_llm(history=history, ensure_system_prompt=True)
 
         if use_tools and self.tools_enabled():
@@ -498,6 +526,8 @@ class AsyncAIClient:
         max_turns: int = 5,
         model: str | None = None,
         context: ParamContext | None = None,
+        user_message_content: Union[UserContentInput, None] = None,
+        retrieval_query: str | None = None,
     ) -> AsyncGenerator[
         Union[AssistantMessage, ToolCallRequestList, ToolMessages], None
     ]:
@@ -508,11 +538,13 @@ class AsyncAIClient:
         tool_ctx: ParamContext = context or {}
         memory_aware = is_memory_aware_history(history)
 
-        if memory_aware:
-            history.begin_turn(user_query, retrieval_query=user_query)
-        else:
-            self._ensure_system_prompt(history=history)
-            history.append(UserMessage(role="user", content=user_query))
+        self._append_user_turn(
+            history,
+            user_query=user_query,
+            user_message_content=user_message_content,
+            retrieval_query=retrieval_query,
+            memory_aware=memory_aware,
+        )
 
         # LLM-only fast path
         if not self.tools_enabled():
@@ -613,6 +645,8 @@ class AsyncAIClient:
         max_turns: int = 5,
         model: str | None = None,
         context: ParamContext | None = None,
+        user_message_content: Union[UserContentInput, None] = None,
+        retrieval_query: str | None = None,
     ) -> AsyncGenerator[
         Union[str, ChatChunk, AssistantMessage, ToolMessages], None
     ]:
@@ -625,11 +659,13 @@ class AsyncAIClient:
         tool_ctx: ParamContext = context or {}
         memory_aware = is_memory_aware_history(history)
 
-        if memory_aware:
-            history.begin_turn(user_query, retrieval_query=user_query)
-        else:
-            self._ensure_system_prompt(history=history)
-            history.append(UserMessage(role="user", content=user_query))
+        self._append_user_turn(
+            history,
+            user_query=user_query,
+            user_message_content=user_message_content,
+            retrieval_query=retrieval_query,
+            memory_aware=memory_aware,
+        )
 
         total_usage = LLMUsage(
             prompt_tokens=0, completion_tokens=0, total_tokens=0
@@ -739,6 +775,58 @@ class AsyncAIClient:
         else:
             history.append(turn_limit_message)
         yield turn_limit_message
+
+    def _user_text_for_planning(self, content: UserContentInput) -> str:
+        """Extract plain text from a user turn for planning / retrieval (multimodal-safe)."""
+        if isinstance(content, str):
+            return content
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in ("text", "input_text"):
+                parts.append(str(block.get("text", "") or block.get("content", "")))
+        return " ".join(parts).strip()
+
+    def _append_user_turn(
+        self,
+        history: HistoryInput,
+        *,
+        user_query: str,
+        user_message_content: Union[UserContentInput, None],
+        retrieval_query: str | None,
+        memory_aware: bool,
+    ) -> None:
+        """Append the user turn to list history or start a memory-aware turn."""
+        if memory_aware:
+            plan_q = (
+                (user_query or "").strip()
+                or (
+                    self._user_text_for_planning(user_message_content)
+                    if user_message_content is not None
+                    else ""
+                )
+                or "[multimodal]"
+            )
+            rq = (
+                retrieval_query
+                or (user_query or "").strip()
+                or (
+                    self._user_text_for_planning(user_message_content)
+                    if user_message_content is not None
+                    else ""
+                )
+                or plan_q
+            )
+            history.begin_turn(
+                plan_q,
+                retrieval_query=rq,
+                user_message_content=user_message_content,
+            )
+        else:
+            self._ensure_system_prompt(history=history)
+            payload: UserContentInput = (
+                user_message_content if user_message_content is not None else user_query
+            )
+            history.append(UserMessage(role="user", content=payload))
 
     def _history_for_llm(
         self,

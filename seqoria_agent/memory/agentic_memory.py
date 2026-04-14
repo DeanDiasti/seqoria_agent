@@ -7,7 +7,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Dict, Iterable, Iterator, List, Union
 
 from seqoria_agent.memory.agent.memory_agent import InferredPlan, MemoryAgent, PlanProgressUpdate
 from seqoria_agent.memory.background import BackgroundWorker
@@ -122,8 +122,12 @@ class AgenticMemory:
         user_query: str,
         *,
         retrieval_query: str | None = None,
+        user_message_content: Union[str, List[Dict[str, Any]], None] = None,
     ) -> list[dict[str, Any]]:
-        self.add_user_message(user_query)
+        payload: Union[str, List[Dict[str, Any]]] = (
+            user_message_content if user_message_content is not None else user_query
+        )
+        self.add_user_message(payload)
         self._current_retrieval_query = retrieval_query or user_query
         self._maybe_infer_plan(user_query)
         return self.messages_for_llm(query=self._current_retrieval_query)
@@ -182,9 +186,10 @@ class AgenticMemory:
     # ------------------------------------------------------------------
     # Message operations
     # ------------------------------------------------------------------
-    def add_user_message(self, content: str) -> None:
+    def add_user_message(self, content: Union[str, List[Dict[str, Any]]]) -> None:
         self._context_manager.add_message(UserMessage(role="user", content=content))
-        self._append_timeline_event("user_message", {"content": content})
+        summary = content if isinstance(content, str) else "[multimodal]"
+        self._append_timeline_event("user_message", {"content": summary})
 
     def add_assistant_message(self, content: str) -> None:
         self._context_manager.add_message(AssistantMessage(role="assistant", content=content))

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Generator, Iterable, List, Mapping, Self, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Generator, Iterable, List, Mapping, Self, Tuple, Union
 
 from seqoria_agent.client.ai_client.async_client import AsyncAIClient
 from seqoria_agent.client.cache import CacheProtocol
@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from seqoria_agent.memory.agentic_memory import AgenticMemory
 
 HistoryInput = Union[list[dict[str, Any]], "AgenticMemory"]
+
+UserContentInput = Union[str, List[Dict[str, Any]]]
 
 
 def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
@@ -394,6 +396,7 @@ class AIClient:
         self,
         history: HistoryInput,
         *,
+        append_user_message: Union[UserContentInput, None] = None,
         use_tools: bool = True,
         tool_choice: str = "auto",
         model: str | None = None,
@@ -402,6 +405,7 @@ class AIClient:
         return _run_sync(
             self._async_client.llm_generate_once(
                 history=history,
+                append_user_message=append_user_message,
                 use_tools=use_tools,
                 tool_choice=tool_choice,
                 model=model,
@@ -412,6 +416,7 @@ class AIClient:
         self,
         history: HistoryInput,
         *,
+        append_user_message: Union[UserContentInput, None] = None,
         use_tools: bool = True,
         tool_choice: str = "auto",
         model: str | None = None,
@@ -421,6 +426,7 @@ class AIClient:
         """Stream a single LLM generation step (blocking generator)."""
         async_gen = self._async_client.llm_stream_once(
             history=history,
+            append_user_message=append_user_message,
             use_tools=use_tools,
             tool_choice=tool_choice,
             model=model,
@@ -446,6 +452,8 @@ class AIClient:
         max_turns: int = 5,
         model: str | None = None,
         context: ParamContext | None = None,
+        user_message_content: Union[UserContentInput, None] = None,
+        retrieval_query: str | None = None,
     ) -> Generator[
         Union[AssistantMessage, ToolCallRequestList, ToolMessages], None, None
     ]:
@@ -460,6 +468,8 @@ class AIClient:
             max_turns=max_turns,
             model=model,
             context=context,
+            user_message_content=user_message_content,
+            retrieval_query=retrieval_query,
         )
 
         loop = _get_or_create_event_loop()
@@ -482,6 +492,8 @@ class AIClient:
         max_turns: int = 5,
         model: str | None = None,
         context: ParamContext | None = None,
+        user_message_content: Union[UserContentInput, None] = None,
+        retrieval_query: str | None = None,
     ) -> AssistantMessage:
         """Chat with the LLM and return final response (blocking, non-streaming).
 
@@ -496,6 +508,8 @@ class AIClient:
             max_turns=max_turns,
             model=model,
             context=context,
+            user_message_content=user_message_content,
+            retrieval_query=retrieval_query,
         ):
             if isinstance(item, AssistantMessage):
                 final_response = item
@@ -513,6 +527,8 @@ class AIClient:
         max_turns: int = 5,
         model: str | None = None,
         context: ParamContext | None = None,
+        user_message_content: Union[UserContentInput, None] = None,
+        retrieval_query: str | None = None,
     ) -> Generator[
         Union[str, ChatChunk, AssistantMessage, ToolMessages], None, None
     ]:
@@ -526,6 +542,8 @@ class AIClient:
             max_turns=max_turns,
             model=model,
             context=context,
+            user_message_content=user_message_content,
+            retrieval_query=retrieval_query,
         )
 
         loop = _get_or_create_event_loop()

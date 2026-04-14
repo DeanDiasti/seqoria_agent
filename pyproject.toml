@@ -17,6 +17,7 @@ classifiers = [
 dependencies = [
     "httpx[http2]>=0.28.1",
     "mcp[cli]>=1.25.0",
+    "mlx-vlm>=0.4.4",
     "pydantic>=2.12.5",
     "structlog>=25.5.0",
 ]
@@ -56,6 +57,9 @@ memory = [
     "qdrant-client",
 ]
 
+# Local Apple Silicon inference (MLX)
+mlx-lm = ["mlx-lm"]
+mlx-vlm = ["mlx-vlm"]
 
 # Full installation with all features
 all = [
