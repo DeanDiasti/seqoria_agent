@@ -4,8 +4,7 @@ These tests verify the resilience features (circuit breaker, retry)
 work correctly with the new MCP-based connection pool.
 """
 
-import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

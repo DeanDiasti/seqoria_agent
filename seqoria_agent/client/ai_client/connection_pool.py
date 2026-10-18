@@ -25,10 +25,12 @@ from typing import Any, Dict, Iterable, List, Optional, Self
 from mcp import ClientSession
 from mcp.types import TextContent
 
-from seqoria_agent.client.mcp_transport import (MCPServerConfig,
-                                                MCPTransportFactory,
-                                                TransportType,
-                                                HTTPClientPool)
+from seqoria_agent.client.mcp_transport import (
+    MCPServerConfig,
+    MCPTransportFactory,
+    TransportType,
+    HTTPClientPool,
+)
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError
 
@@ -43,11 +45,14 @@ class _ActiveConnection:
     url: str
     transport_type: TransportType
     _context_manager: Any = field(default=None, repr=False)
+    _owner_task: asyncio.Task | None = field(default=None, repr=False)
+    _stop_event: asyncio.Event | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
 class _TextItem:
     """Lightweight text wrapper matching the `.text` contract used by Executor."""
+
     text: str
 
 
@@ -76,15 +81,17 @@ class MCPConnectionPool:
         Mutable mapping of tool_name -> connection (shared with ToolRegistry).
     """
 
-    def __init__(self,
-                 servers: Iterable[str | MCPServerConfig] | None = None,
-                 *,
-                 logger: Optional[logging.Logger] = None,
-                 retry_policy: Optional[Dict[str, Any]] = None,
-                 breaker_threshold: int = 5,
-                 breaker_reset_after: int = 60,
-                 tool_map: Optional[Dict[str, Any]] = None,
-                 http_client_pool: Optional[HTTPClientPool] = None) -> None:
+    def __init__(
+        self,
+        servers: Iterable[str | MCPServerConfig] | None = None,
+        *,
+        logger: Optional[logging.Logger] = None,
+        retry_policy: Optional[Dict[str, Any]] = None,
+        breaker_threshold: int = 5,
+        breaker_reset_after: int = 60,
+        tool_map: Optional[Dict[str, Any]] = None,
+        http_client_pool: Optional[HTTPClientPool] = None,
+    ) -> None:
         # Normalize server configs
         self._server_configs: List[MCPServerConfig] = []
         for server in servers or []:
@@ -114,6 +121,7 @@ class MCPConnectionPool:
 
         # Tool routing
         self._tool_map: Dict[str, Any] = tool_map if tool_map is not None else {}
+        self._tool_names: dict[str, str] = {}
         self._session_to_url: Dict[ClientSession, str] = {}
 
     async def __aenter__(self) -> Self:
@@ -150,8 +158,9 @@ class MCPConnectionPool:
             self._started = True
 
             # Initialize shared HTTP client pool if not provided
-            if self._http_client_pool is None:
-                self._http_client_pool = await HTTPClientPool.get_shared()
+            if self._http_client_pool is None and self._server_configs:
+                self._http_client_pool = HTTPClientPool()
+                self._owns_http_pool = True
 
             connected_urls = {c.url for c in self._connections}
             missing = [cfg for cfg in self._server_configs if cfg.url not in connected_urls]
@@ -188,7 +197,11 @@ class MCPConnectionPool:
 
         async with self._lock:
             existing_urls = {cfg.url for cfg in self._server_configs}
-            to_add = [cfg for cfg in new_configs if cfg.url not in existing_urls]
+            to_add = []
+            for cfg in new_configs:
+                if cfg.url not in existing_urls:
+                    to_add.append(cfg)
+                    existing_urls.add(cfg.url)
             if not to_add:
                 return 0
             self._server_configs.extend(to_add)
@@ -241,6 +254,7 @@ class MCPConnectionPool:
                         remaining.append(conn)
                         continue
 
+                    await self._close_connection(conn)
                     cm = getattr(conn, "_context_manager", None)
                     if cm is not None:
                         try:
@@ -271,7 +285,9 @@ class MCPConnectionPool:
     async def close(self) -> None:
         """Gracefully shut down all connections."""
         async with self._lock:
-            # Close all context managers
+            for conn in self._connections:
+                await self._close_connection(conn)
+            # Legacy/test context managers without an owner task.
             for cm in self._context_managers:
                 try:
                     await cm.__aexit__(None, None, None)
@@ -281,12 +297,19 @@ class MCPConnectionPool:
             self._connections.clear()
             self._context_managers.clear()
             self._session_to_url.clear()
+            self._tool_map.clear()
+            self._tool_names.clear()
+            self._fail_log.clear()
+            self._breaker_until.clear()
+            self._started = False
+            if self._owns_http_pool and self._http_client_pool is not None:
+                await self._http_client_pool.close()
+                self._http_client_pool = None
+                self._owns_http_pool = False
 
-    async def call_tool(self,
-                        name: str,
-                        arguments: Dict[str, Any],
-                        *,
-                        server_args: Optional[Dict[str, Any]] = None) -> List[Any]:
+    async def call_tool(
+        self, name: str, arguments: Dict[str, Any], *, server_args: Optional[Dict[str, Any]] = None
+    ) -> List[Any]:
         """Invoke a tool on the appropriate server with resilience guards.
 
         Parameters
@@ -317,13 +340,20 @@ class MCPConnectionPool:
         if target is None:
             raise ValueError(f"Tool '{name}' not found on any connected server.")
 
+        name = self._tool_names.get(name, name)
+
         # Handle LocalToolbox (non-MCP)
 
-
         if isinstance(target, LocalToolbox):
-            return await target.call_tool(name=name,
-                                          arguments=arguments,
-                                          server_args=server_args or {})
+            return await target.call_tool(
+                name=name, arguments=arguments, server_args=server_args or {}
+            )
+
+        if server_args:
+            raise ValueError(
+                "Remote MCP server parameters must be resolved on the server from "
+                "authenticated request context; client server_args are only supported for local tools"
+            )
 
         # Get server URL for circuit breaker tracking
         # Accept ClientSession or any object with call_tool method (for testing)
@@ -351,6 +381,13 @@ class MCPConnectionPool:
                 # Call tool via MCP protocol
                 result = await session.call_tool(name, arguments)
 
+                # MCP tool errors arrive as results, not transport exceptions.
+                if getattr(result, "isError", False) is True:
+                    details = "\n".join(
+                        item.text for item in result.content if hasattr(item, "text")
+                    )
+                    raise ToolRemoteError(details or f"Tool '{name}' failed")
+
                 # Success - reset failure counter
                 self._fail_log.pop(server_url, None)
                 self._breaker_until.pop(server_url, None)
@@ -358,6 +395,9 @@ class MCPConnectionPool:
                 # Convert MCP result to our format
                 return self._convert_tool_result(result)
 
+            except ToolRemoteError:
+                # Do not replay a tool that has already run and reported failure.
+                raise
             except Exception as exc:
                 last_error = exc
                 self._fail_log[server_url] = self._fail_log.get(server_url, 0) + 1
@@ -395,29 +435,47 @@ class MCPConnectionPool:
 
         return contents
 
+    @staticmethod
+    async def _close_connection(conn: _ActiveConnection) -> None:
+        if conn._stop_event is not None and conn._owner_task is not None:
+            conn._stop_event.set()
+            await conn._owner_task
+
     async def _connect(self, config: MCPServerConfig) -> _ActiveConnection:
-        """Create a single MCP connection."""
+        """Keep each SDK transport's task group in its own long-lived owner task."""
+        ready = asyncio.get_running_loop().create_future()
+        stop = asyncio.Event()
+
+        async def own_connection() -> None:
+            try:
+                async with MCPTransportFactory.connect(
+                    config, client_pool=self._http_client_pool
+                ) as conn:
+                    ready.set_result(conn)
+                    await stop.wait()
+            except BaseException as exc:
+                if not ready.done():
+                    ready.set_exception(exc)
+                elif not isinstance(exc, asyncio.CancelledError):
+                    self._logger.warning(
+                        "MCP connection closed with error (%s): %s", config.url, exc
+                    )
+
+        owner = asyncio.create_task(own_connection())
         try:
-            # Create transport context manager with shared HTTP pool
-            cm = MCPTransportFactory.connect(config, client_pool=self._http_client_pool)
-            conn = await cm.__aenter__()
-
-            # Store context manager to keep connection alive
-            self._context_managers.append(cm)
-
-            self._logger.info("Connected to MCP server: %s", config.url)
-
-            return _ActiveConnection(
-                session=conn.session,
-                url=config.url,
-                transport_type=conn.transport_type,
-                _context_manager=cm,
-            )
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to connect to MCP server %s: %s", config.url, exc
-            )
+            conn = await ready
+        except BaseException:
+            owner.cancel()
+            await asyncio.gather(owner, return_exceptions=True)
             raise
+        self._logger.info("Connected to MCP server: %s", config.url)
+        return _ActiveConnection(
+            session=conn.session,
+            url=config.url,
+            transport_type=conn.transport_type,
+            _owner_task=owner,
+            _stop_event=stop,
+        )
 
     def get_session_for_url(self, url: str) -> Optional[ClientSession]:
         """Get the ClientSession for a specific server URL."""

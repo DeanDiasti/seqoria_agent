@@ -1,4 +1,4 @@
-"""examples/providers/ollama_stream.py
+"""examples/providers/ollama_stream.py.
 
 Demonstration of using `OllamaProvider.stream` for streaming responses.
 
@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import base64
 import sys
-from typing import Union
 
 from seqoria_agent.providers import OllamaProvider
 from seqoria_agent.providers.schemas import LLMResponse, ToolCallList

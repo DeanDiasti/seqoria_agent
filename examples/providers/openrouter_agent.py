@@ -1,10 +1,10 @@
-"""examples/providers/openrouter_agent.py
+"""examples/providers/openrouter_agent.py.
 
 Interactive CLI agent using the OpenAI-compatible provider with OpenRouter.
 
 This example demonstrates how to connect to OpenRouter's API using the
 ``AsyncOpenAICompatibleProvider`` and run a full agentic loop with **streaming**
-output, tool calling, memory, and thinking-token display — all powered by
+output, tool calling, conversation history, and thinking-token display — all powered by
 MiniMax M2.5 (via OpenRouter).
 
 Two inline tools are registered:
@@ -17,7 +17,7 @@ inside a ``[Thinking]`` block before the visible answer.
 Prerequisites
 -------------
 1. Set ``OPENROUTER_API_KEY`` in your environment (or a ``.env`` file).
-2. Python >= 3.10 with ``seqoria_agent`` installed (``pip install -e .[dev]``).
+2. Python >= 3.12 with ``seqoria_agent`` installed (``pip install -e .[dev]``).
 
 Run with::
 
@@ -38,7 +38,6 @@ from seqoria_agent.models.chunk import (
     ChatChunk,
     ToolCallRequestList,
 )
-from seqoria_agent.memory import AgenticMemory, AgenticMemoryConfig
 from seqoria_agent.providers import AsyncOpenAICompatibleProvider
 from seqoria_agent.toolbox import LocalToolbox
 
@@ -147,13 +146,7 @@ async def main() -> None:
         providers=[provider],
         local_toolbox=box,
     ) as ai:
-        memory = AgenticMemory(
-            config=AgenticMemoryConfig(
-                session_id="openrouter-demo",
-                conversation_id="interactive-cli",
-                persist_memories=False,
-            )
-        )
+        history = []
 
         MAX_ROUNDS = 10
         for turn in range(1, MAX_ROUNDS + 1):
@@ -167,24 +160,20 @@ async def main() -> None:
                 print("Exiting — empty input.")
                 break
 
-            llm_history = memory.begin_turn(user_query, retrieval_query=user_query)
+            from seqoria_agent.models.chunk import UserMessage
+            history.append(UserMessage(role="user", content=user_query))
 
             for _ in range(5):
-                resp = await _stream_and_collect(ai, llm_history)
+                resp = await _stream_and_collect(ai, history)
 
                 if isinstance(resp, ToolCallRequestList):
                     tool_results = await ai.run_tool_calls(tool_calls=resp.tool_calls)
-                    memory.record_tool_cycle(resp.tool_calls, tool_results)
-                    llm_history = memory.messages_for_llm(query=user_query)
+                    for request, result in zip(resp.tool_calls, tool_results, strict=True):
+                        history.extend([request, result])
                     continue
 
                 if isinstance(resp, AssistantMessage):
-                    memory.commit_assistant_response(
-                        content=resp.content,
-                        model=resp.model,
-                        usage=resp.usage,
-                    )
-                    memory.end_turn()
+                    history.append(resp)
                     break
 
                 break

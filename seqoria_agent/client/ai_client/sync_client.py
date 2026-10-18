@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Generator, Iterable, List, Mapping, Self, Tuple, Union
+from typing import Any, Dict, Generator, Iterable, List, Mapping, Self, Tuple, Union
 
 from seqoria_agent.client.ai_client.async_client import AsyncAIClient
 from seqoria_agent.client.cache import CacheProtocol
@@ -36,10 +36,7 @@ from seqoria_agent.toolbox import LocalToolbox
 
 __all__ = ["AIClient"]
 
-if TYPE_CHECKING:
-    from seqoria_agent.memory.agentic_memory import AgenticMemory
-
-HistoryInput = Union[list[dict[str, Any]], "AgenticMemory"]
+HistoryInput = list[Any]
 
 UserContentInput = Union[str, List[Dict[str, Any]]]
 
@@ -47,29 +44,52 @@ UserContentInput = Union[str, List[Dict[str, Any]]]
 def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
     """Get running event loop or create a new one."""
     try:
-        loop = asyncio.get_running_loop()
-        # We're in an async context - this is problematic for sync wrapper
-        raise RuntimeError(
-            "AIClient (sync) cannot be used inside an async context. "
-            "Use AsyncAIClient instead."
-        )
+        asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop - create one for sync execution
         try:
             loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         return loop
+    raise RuntimeError(
+        "AIClient (sync) cannot be used inside an async context. Use AsyncAIClient instead."
+    )
 
 
 def _run_sync(coro):
     """Run a coroutine synchronously."""
-    loop = _get_or_create_event_loop()
+    try:
+        loop = _get_or_create_event_loop()
+    except RuntimeError:
+        coro.close()
+        raise
     return loop.run_until_complete(coro)
+
+
+class _SyncProviderAdapter(AsyncBaseProvider):
+    """Run blocking providers in worker threads for the sync client facade."""
+
+    def __init__(self, provider: BaseProvider) -> None:
+        self._provider = provider
+
+    async def async_generate(self, **kwargs):
+        return await asyncio.to_thread(self._provider.generate, **kwargs)
+
+    async def async_stream(self, **kwargs):
+        stream = self._provider.stream(**kwargs)
+        sentinel = object()
+        try:
+            while True:
+                item = await asyncio.to_thread(next, stream, sentinel)
+                if item is sentinel:
+                    return
+                yield item
+        finally:
+            await asyncio.to_thread(stream.close)
 
 
 class AIClient:
@@ -139,22 +159,20 @@ class AIClient:
         # Logging
         logger: logging.Logger | None = None,
         # Tool registry
-        refresh_interval: float = 0,
+        refresh_interval: float | None = None,
         # Caching
         cache: CacheProtocol | None = None,
-        cache_ttl: int | None = 300,
+        cache_ttl: int | None = None,
         # Execution
         max_concurrency: int | None = None,
         tool_timeout: float | None = None,
         # Resilience
         retry_policy: dict[str, Any] | None = None,
-        breaker_threshold: int = 5,
-        breaker_reset_after: int = 60,
+        breaker_threshold: int | None = None,
+        breaker_reset_after: int | None = None,
         # Parameters
-        param_registry: Union[
-            Mapping[str, ParameterSource], ParameterRegistry, None
-        ] = None,
-        allow_override: bool = False,
+        param_registry: Union[Mapping[str, ParameterSource], ParameterRegistry, None] = None,
+        allow_override: bool | None = None,
         # Settings
         settings: ClientSettings | None = None,
         # System prompt
@@ -163,13 +181,15 @@ class AIClient:
     ) -> None:
         # Convert sync providers to async providers if needed
         async_providers: List[AsyncBaseProvider] = []
-        if providers:
-            for p in providers:
+        selected_providers = (
+            providers if providers is not None else (settings.providers if settings else [])
+        )
+        if selected_providers:
+            for p in selected_providers:
                 if isinstance(p, AsyncBaseProvider):
                     async_providers.append(p)
                 elif isinstance(p, BaseProvider):
-                    # Sync providers have an _async_provider attribute
-                    async_providers.append(p._async_provider)
+                    async_providers.append(_SyncProviderAdapter(p))
                 else:
                     raise TypeError(
                         f"Provider must be BaseProvider or AsyncBaseProvider, got {type(p)}"
@@ -338,9 +358,7 @@ class AIClient:
         context: ParamContext | None = None,
     ) -> List[ToolCallResult]:
         """Execute tool calls and return results (blocking)."""
-        return _run_sync(
-            self._async_client.run_tool_calls(tool_calls=tool_calls, context=context)
-        )
+        return _run_sync(self._async_client.run_tool_calls(tool_calls=tool_calls, context=context))
 
     def run_call_stream(
         self,
@@ -349,9 +367,7 @@ class AIClient:
         context: ParamContext | None = None,
     ) -> Generator[Tuple[ToolCallRequest, ToolCallResult], None, None]:
         """Stream tool call results as they complete (blocking generator)."""
-        async_gen = self._async_client.run_call_stream(
-            tool_calls=tool_calls, context=context
-        )
+        async_gen = self._async_client.run_call_stream(tool_calls=tool_calls, context=context)
 
         loop = _get_or_create_event_loop()
 
@@ -420,9 +436,7 @@ class AIClient:
         use_tools: bool = True,
         tool_choice: str = "auto",
         model: str | None = None,
-    ) -> Generator[
-        Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None, None
-    ]:
+    ) -> Generator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None, None]:
         """Stream a single LLM generation step (blocking generator)."""
         async_gen = self._async_client.llm_stream_once(
             history=history,
@@ -453,10 +467,7 @@ class AIClient:
         model: str | None = None,
         context: ParamContext | None = None,
         user_message_content: Union[UserContentInput, None] = None,
-        retrieval_query: str | None = None,
-    ) -> Generator[
-        Union[AssistantMessage, ToolCallRequestList, ToolMessages], None, None
-    ]:
+    ) -> Generator[Union[AssistantMessage, ToolCallRequestList, ToolMessages], None, None]:
         """Chat with the LLM, handling tool calls automatically (blocking generator).
 
         This method yields responses as they are generated, handling tool calls
@@ -469,7 +480,6 @@ class AIClient:
             model=model,
             context=context,
             user_message_content=user_message_content,
-            retrieval_query=retrieval_query,
         )
 
         loop = _get_or_create_event_loop()
@@ -493,7 +503,6 @@ class AIClient:
         model: str | None = None,
         context: ParamContext | None = None,
         user_message_content: Union[UserContentInput, None] = None,
-        retrieval_query: str | None = None,
     ) -> AssistantMessage:
         """Chat with the LLM and return final response (blocking, non-streaming).
 
@@ -509,7 +518,6 @@ class AIClient:
             model=model,
             context=context,
             user_message_content=user_message_content,
-            retrieval_query=retrieval_query,
         ):
             if isinstance(item, AssistantMessage):
                 final_response = item
@@ -528,10 +536,7 @@ class AIClient:
         model: str | None = None,
         context: ParamContext | None = None,
         user_message_content: Union[UserContentInput, None] = None,
-        retrieval_query: str | None = None,
-    ) -> Generator[
-        Union[str, ChatChunk, AssistantMessage, ToolMessages], None, None
-    ]:
+    ) -> Generator[Union[str, ChatChunk, AssistantMessage, ToolMessages], None, None]:
         """Stream a chat session with the LLM (blocking generator).
 
         Yields chunks as they are received, including tool call results.
@@ -543,7 +548,6 @@ class AIClient:
             model=model,
             context=context,
             user_message_content=user_message_content,
-            retrieval_query=retrieval_query,
         )
 
         loop = _get_or_create_event_loop()
@@ -557,4 +561,3 @@ class AIClient:
                     break
         finally:
             loop.run_until_complete(async_gen.aclose())
-

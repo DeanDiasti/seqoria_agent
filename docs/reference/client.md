@@ -1,31 +1,9 @@
-# AIClient API Reference
+# Client API
 
-This page provides an auto-generated API reference for the `xmcp.client` module.
+::: seqoria_agent.client.ai_client.async_client.AsyncAIClient
 
-## AIClient
+::: seqoria_agent.client.ai_client.sync_client.AIClient
 
-::: seqoria_agent.client.AIClient
-    handler: python
-    options:
-      show_root_heading: true
-      show_root_toc_entry: true
-      members_order: source
-      heading_level: 2
-
-## ChatChunk
-
-::: seqoria_agent.models.chunk.ChatChunk
-    handler: python
-    options:
-      show_root_heading: true
-      show_root_toc_entry: true
-      heading_level: 2
-
-## Caching
+::: seqoria_agent.client.settings.ClientSettings
 
 ::: seqoria_agent.client.cache
-    handler: python
-    options:
-      show_root_heading: true
-      show_root_toc_entry: true
-      heading_level: 2 

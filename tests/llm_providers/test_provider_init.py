@@ -1,9 +1,9 @@
 """Tests for provider initialization: model_id requirement and no default params."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from seqoria_agent.providers.errors import InvalidRequestError, ModelNotFoundError
+from seqoria_agent.providers.errors import InvalidRequestError
 
 
 class TestOpenAIProviderInit:

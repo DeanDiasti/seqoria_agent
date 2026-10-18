@@ -19,11 +19,11 @@ from .schemas import LLMResponse, ToolCallList
 class AsyncBaseProvider(ABC):
     """
     Abstract base class for all asynchronous LLM providers.
-    
+
     This class defines the standard interface that all async provider implementations
     must follow, ensuring consistency and type safety across different LLM providers.
     """
-    
+
     def __init__(self, model_id: Optional[str] = None, **kwargs) -> None:  # noqa: D401
         """No-op default constructor.
 
@@ -35,17 +35,31 @@ class AsyncBaseProvider(ABC):
         state established here.
         """
         self.model_id = model_id
-    
+
+    async def aclose(self) -> None:
+        """Release this provider's HTTP client after all requests have finished."""
+        client = getattr(self, "async_client", None)
+        if client is not None:
+            await client.aclose()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.aclose()
+
     @abstractmethod
-    async def async_generate(self, 
-                             chat_history: List[Dict[str, Any]], 
-                             tools: Optional[List[Dict[str, Any]]] = None,
-                             tool_choice: Optional[Dict[str, Any]] = None,
-                             model: Optional[str] = None,
-                             **kwargs) -> Union[LLMResponse, ToolCallList]:
+    async def async_generate(
+        self,
+        chat_history: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> Union[LLMResponse, ToolCallList]:
         """
         Asynchronously generate a completion for the provided chat history.
-        
+
         Args:
             chat_history: List of message dictionaries (e.g., [{"role": "user", "content": "Hi"}]).
             tools: Optional list of tool definitions for function calling.
@@ -53,39 +67,41 @@ class AsyncBaseProvider(ABC):
             tool_choice: Optional tool choice configuration. Format may vary by provider.
             model: Optional identifier for the model.
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
-            
+
         Returns
         -------
             LLMResponse: A standardized response object containing the generated content,
                          tool calls, usage data, and other metadata.
-            
+
         Raises
         ------
             Various LLMError subclasses depending on the API response or connection issues.
         """
         pass
-    
+
     @abstractmethod
-    async def async_stream(self, 
-                           chat_history: List[Dict[str, Any]], 
-                           tools: Optional[List[Dict[str, Any]]] = None,
-                           tool_choice: Optional[Dict[str, Any]] = None,
-                           model: Optional[str] = None,
-                           **kwargs) -> AsyncGenerator[Union[LLMResponse, ToolCallList], None]:
+    async def async_stream(
+        self,
+        chat_history: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncGenerator[Union[LLMResponse, ToolCallList], None]:
         """
         Asynchronously stream a completion for the provided chat history.
-        
+
         Yields content chunks (str) as they arrive, and finally yields a
         single LLMResponse object containing the full concatenated text,
         tool calls, and token usage.
-        
+
         Args:
             chat_history: List of message dictionaries.
             tools: Optional list of tool definitions for function calling.
             tool_choice: Optional tool choice configuration.
             model: Optional identifier for the model.
             **kwargs: Generation parameters overriding defaults.
-            
+
         Yields
         ------
             str: Text chunks of the generated completion.
@@ -145,17 +161,19 @@ class AsyncBaseProvider(ABC):
         from .errors import MaxRetriesExceededError
 
         op_name = getattr(operation, "__name__", "provider operation")
-        raise MaxRetriesExceededError(operation=op_name, max_retries=max_retries, last_error=last_error)
+        raise MaxRetriesExceededError(
+            operation=op_name, max_retries=max_retries, last_error=last_error
+        )
 
 
 class BaseProvider(ABC):
     """
     Abstract base class for all synchronous LLM providers.
-    
+
     This class defines the standard interface that all sync provider implementations
     must follow, ensuring consistency and type safety across different LLM providers.
     """
-    
+
     def __init__(self, model_id: Optional[str] = None, **kwargs) -> None:  # noqa: D401
         """No-op default constructor.
 
@@ -167,17 +185,31 @@ class BaseProvider(ABC):
         state established here.
         """
         self.model_id = model_id
-    
+
+    def close(self) -> None:
+        """Release this provider's HTTP client."""
+        client = getattr(self, "client", None)
+        if client is not None:
+            client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     @abstractmethod
-    def generate(self, 
-                 chat_history: List[Dict[str, Any]], 
-                 tools: Optional[List[Dict[str, Any]]] = None,
-                 tool_choice: Optional[Dict[str, Any]] = None,
-                 model: Optional[str] = None,
-                 **kwargs) -> Union[LLMResponse, ToolCallList]:
+    def generate(
+        self,
+        chat_history: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> Union[LLMResponse, ToolCallList]:
         """
         Synchronously generate a completion for the provided chat history.
-        
+
         Args:
             chat_history: List of message dictionaries (e.g., [{"role": "user", "content": "Hi"}]).
             tools: Optional list of tool definitions for function calling.
@@ -185,39 +217,41 @@ class BaseProvider(ABC):
             tool_choice: Optional tool choice configuration. Format may vary by provider.
             model: Optional identifier for the model.
             **kwargs: Generation parameters overriding defaults (e.g., temperature, max_tokens).
-            
+
         Returns
         -------
             LLMResponse: A standardized response object containing the generated content,
                          tool calls, usage data, and other metadata.
-            
+
         Raises
         ------
             Various LLMError subclasses depending on the API response or connection issues.
         """
         pass
-    
+
     @abstractmethod
-    def stream(self, 
-               chat_history: List[Dict[str, Any]], 
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[Dict[str, Any]] = None,
-               model: Optional[str] = None,
-               **kwargs) -> Generator[Union[LLMResponse, ToolCallList], None, None]:
+    def stream(
+        self,
+        chat_history: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> Generator[Union[LLMResponse, ToolCallList], None, None]:
         """
         Synchronously stream a completion for the provided chat history.
-        
+
         Yields content chunks (str) as they arrive, and finally yields a
         single LLMResponse object containing the full concatenated text,
         tool calls, and token usage.
-        
+
         Args:
             chat_history: List of message dictionaries.
             tools: Optional list of tool definitions for function calling.
             tool_choice: Optional tool choice configuration.
             model: Optional identifier for the model.
             **kwargs: Generation parameters overriding defaults.
-            
+
         Yields
         ------
             str: Text chunks of the generated completion.
@@ -277,4 +311,6 @@ class BaseProvider(ABC):
         from .errors import MaxRetriesExceededError
 
         op_name = getattr(operation, "__name__", "provider operation")
-        raise MaxRetriesExceededError(operation=op_name, max_retries=max_retries, last_error=last_error)
+        raise MaxRetriesExceededError(
+            operation=op_name, max_retries=max_retries, last_error=last_error
+        )

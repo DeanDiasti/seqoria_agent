@@ -13,6 +13,7 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Set, FrozenSet
@@ -43,14 +44,16 @@ class ToolRegistry:
         Logger for registry events.
     """
 
-    def __init__(self,
-                 *,
-                 pool: MCPConnectionPool,
-                 local_toolboxes: Optional[List[LocalToolbox]] = None,
-                 tool_map: Optional[Dict[str, Any]] = None,
-                 blocked_tools: Iterable[str] | None = None,
-                 refresh_interval: float = 0.0,
-                 logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        *,
+        pool: MCPConnectionPool,
+        local_toolboxes: Optional[List[LocalToolbox]] = None,
+        tool_map: Optional[Dict[str, Any]] = None,
+        blocked_tools: Iterable[str] | None = None,
+        refresh_interval: float = 0.0,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         self._pool = pool
         self._local_boxes: List[LocalToolbox] = list(local_toolboxes or [])
         self._tool_map: Dict[str, Any] = tool_map if tool_map is not None else {}
@@ -70,18 +73,19 @@ class ToolRegistry:
         self._refresher_task: Optional[asyncio.Task] = None
         self._version: int = 0
 
-        # Start background refresh if configured
-        if self._refresh_interval > 0:
-            try:
-                loop = asyncio.get_running_loop()
-                self._refresher_task = loop.create_task(self._periodic_refresh())
-            except RuntimeError:
-                pass  # No running loop yet
+        self._source_names: dict[str, str] = {}
+
+    def start(self) -> None:
+        """Start periodic refresh inside the client's active lifespan."""
+        if self._refresh_interval > 0 and (
+            self._refresher_task is None or self._refresher_task.done()
+        ):
+            self._refresher_task = asyncio.create_task(self._periodic_refresh())
 
     @property
     def llm_tools(self) -> List[dict]:
         """Return OpenAI-compatible tool list for LLM interface."""
-        return list(self._llm_tools)
+        return copy.deepcopy(self._llm_tools)
 
     @property
     def blocked_tools(self) -> Set[str]:
@@ -160,30 +164,31 @@ class ToolRegistry:
     async def refresh(self) -> None:
         """Rebuild tool catalogue from all sources."""
         async with self._lock:
+            # Build a complete snapshot without exposing partially cleared routes
+            # to requests already using this client.
+            snapshot = ToolRegistry(
+                pool=self._pool,
+                local_toolboxes=self._local_boxes,
+                blocked_tools=self._blocked_tools,
+                logger=self._logger,
+            )
+            llm_tools: List[dict] = []
+            aliases: Dict[str, str] = {}
+            await snapshot._refresh_remote_tools(llm_tools, aliases)
+            await snapshot._refresh_local_tools(llm_tools, aliases)
             self._tool_map.clear()
-            self._server_params.clear()
-            self._tool_deps.clear()
-            self._seen_schema_hash.clear()
-
-        llm_tools: List[dict] = []
-        base_to_primary_alias: Dict[str, str] = {}
-
-        # 1) Discover tools from remote MCP servers
-        await self._refresh_remote_tools(llm_tools, base_to_primary_alias)
-
-        # 2) Merge local toolbox tools
-        await self._refresh_local_tools(llm_tools, base_to_primary_alias)
-
-        # Atomically update state
-        async with self._lock:
+            self._tool_map.update(snapshot._tool_map)
+            self._pool._tool_names = snapshot._source_names
+            self._server_params = snapshot._server_params
+            self._tool_deps = snapshot._tool_deps
+            self._seen_schema_hash = snapshot._seen_schema_hash
             self._llm_tools = llm_tools
             self._version += 1
-
         self._logger.info("ToolRegistry refreshed with %d tools", len(llm_tools))
 
-    async def _refresh_remote_tools(self,
-                                    llm_tools: List[dict],
-                                    base_to_primary_alias: Dict[str, str]) -> None:
+    async def _refresh_remote_tools(
+        self, llm_tools: List[dict], base_to_primary_alias: Dict[str, str]
+    ) -> None:
         """Discover tools from remote MCP servers."""
         connections = self._pool.connections
         if not connections:
@@ -223,7 +228,9 @@ class ToolRegistry:
             self._logger.warning("Failed to list tools from %s: %s", url, exc)
             return []
 
-    async def _refresh_local_tools(self, llm_tools: List[dict], base_to_primary_alias: Dict[str, str]) -> None:
+    async def _refresh_local_tools(
+        self, llm_tools: List[dict], base_to_primary_alias: Dict[str, str]
+    ) -> None:
         """Merge tools from local toolboxes."""
         for box in self._local_boxes:
             for tool_info in box.list_tools():
@@ -243,14 +250,14 @@ class ToolRegistry:
     ) -> None:
         """Register a tool from a remote MCP server."""
         base_name: str = tool.name
-        
+
         # Get input schema
         input_schema = {}
         if hasattr(tool, "inputSchema"):
             input_schema = tool.inputSchema
         elif hasattr(tool, "input_schema"):
             input_schema = tool.input_schema
-        
+
         schema_fingerprint = self._schema_hash(input_schema)
 
         # Determine public name (handle duplicates)
@@ -275,6 +282,7 @@ class ToolRegistry:
 
         # Register in tool map
         self._tool_map[public_name] = source
+        self._source_names[public_name] = base_name
 
         # Parse annotations
         annotations = getattr(tool, "annotations", None)
@@ -290,14 +298,16 @@ class ToolRegistry:
 
         # Add to LLM tools list
         description = getattr(tool, "description", "") or ""
-        llm_tools.append({
-            "type": "function",
-            "function": {
-                "name": public_name,
-                "description": description,
-                "parameters": input_schema,
-            },
-        })
+        llm_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": public_name,
+                    "description": description,
+                    "parameters": input_schema,
+                },
+            }
+        )
 
     def _register_local_tool(
         self,
@@ -331,6 +341,7 @@ class ToolRegistry:
 
         # Register in tool map
         self._tool_map[public_name] = source
+        self._source_names[public_name] = base_name
 
         # Parse annotations
         annotations = getattr(tool_info, "annotations", None)
@@ -346,14 +357,16 @@ class ToolRegistry:
 
         # Add to LLM tools list
         description = getattr(tool_info, "description", "") or ""
-        llm_tools.append({
-            "type": "function",
-            "function": {
-                "name": public_name,
-                "description": description,
-                "parameters": input_schema,
-            },
-        })
+        llm_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": public_name,
+                    "description": description,
+                    "parameters": input_schema,
+                },
+            }
+        )
 
     async def _periodic_refresh(self) -> None:
         """Background task for periodic refresh."""
@@ -392,5 +405,3 @@ class ToolRegistry:
                 return None
 
         return None
-
-

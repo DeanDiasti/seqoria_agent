@@ -1,37 +1,20 @@
-name: Docs CI
+name: Documentation
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
+  pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: 3.11
-
-      - name: Install dependencies
-        run: |
-          pip install -e '.[dev,docs]'
-
-      - name: Lint with Ruff
-        run: |
-          ruff check .
-          ruff format --check .
-
-      - name: Run tests
-        run: |
-          pytest
-
-      - name: Deploy docs
-        run: |
-          mkdocs gh-deploy --force 
+          python-version: '3.12'
+      - run: python -m pip install '.[docs]'
+      - run: mkdocs build --strict

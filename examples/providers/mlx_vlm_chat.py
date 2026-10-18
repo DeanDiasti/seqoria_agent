@@ -1,4 +1,4 @@
-"""examples/providers/mlx_vlm_chat.py
+"""examples/providers/mlx_vlm_chat.py.
 
 Terminal chat with a local vision-language model via :class:`MLXVLMProvider`
 (MLX-VLM on Apple Silicon).

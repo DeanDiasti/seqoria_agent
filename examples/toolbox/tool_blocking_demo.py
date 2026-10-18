@@ -1,4 +1,4 @@
-"""examples/toolbox/tool_blocking_demo.py
+"""examples/toolbox/tool_blocking_demo.py.
 
 Demonstrates blocking tools from being surfaced to the LLM "tools" context.
 

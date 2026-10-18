@@ -1,60 +1,51 @@
 from __future__ import annotations
 
-"""Execution utilities for *seqoria_agent*'s new AIClient implementation.
-
-The public façade is the :class:`Executor` which receives already parsed
-:class:`~seqoria_agent.providers.schemas.ToolCall` objects (as returned by the
-LLM provider) together with the current conversation *history* list.  The
-Executor then
-
-1. Builds a dependency graph (via the moved ``_compute_execution_layers`` helper)
-2. Executes tools in topological batches with configurable concurrency limits
-3. Handles client-side cache lookup / storage
-4. Applies timeout, retry & circuit-breaker protections delegated to
-   :class:`~seqoria_agent.client.ai_client.connection_pool.ConnectionPool`
-5. Detects early-exit display envelopes and surfaces structured error metadata
-   via the provided callbacks.
-
-The class purposefully stays agnostic of the surrounding *AIClient* orchestra
-all external interaction happens via the injected collaborators passed to the
-constructor.  This design keeps the surface area minimal and makes the Executor
-straight-forward to unit-test in isolation.
-"""
+"""Dependency-aware concurrent tool execution, cancellation, caching, and parameter injection."""
 
 import asyncio
+import copy
+import uuid
 import logging
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple, Mapping
 
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
-from seqoria_agent.client.ai_client.callbacks import (on_error as _on_error_cb,
-                                                      on_metadata as _on_metadata_cb)
+from seqoria_agent.client.ai_client.callbacks import (
+    on_error as _on_error_cb,
+    on_metadata as _on_metadata_cb,
+)
 from seqoria_agent.client.ai_client.utils import json_loads, build_cache_key
 from seqoria_agent.client.cache import CacheProtocol, NullCache
 from seqoria_agent.client.parameters import ParameterRegistry, ParameterSource, ParamContext
-from seqoria_agent.models.errors import CircuitOpenError, DependencyError, ToolRemoteError
-from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY 
-from seqoria_agent.models.chunk import ToolCallResult, ToolCallError, ToolCallRequest, ToolCallRequestList
+from seqoria_agent.models.errors import DependencyError
+from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY
+from seqoria_agent.models.chunk import (
+    ToolCallResult,
+    ToolCallError,
+    ToolCallRequest,
+    ToolCallRequestList,
+)
 
 __all__: list[str] = ["Executor"]
 
 
 class Executor:
-
-    def __init__(self,
-                 *,
-                 pool: MCPConnectionPool,
-                 registry: ToolRegistry,
-                 cache: CacheProtocol | None = None,
-                 cache_ttl: int | None = None,
-                 tool_semaphore: Optional[asyncio.Semaphore] = None,
-                 tool_timeout: float | None = None,
-                 param_registry: Optional[Union[Mapping[str, ParameterSource], ParameterRegistry]] = None,
-                 allow_override: bool = False,
-                 on_error=None,
-                 on_metadata=None,
-                 logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        *,
+        pool: MCPConnectionPool,
+        registry: ToolRegistry,
+        cache: CacheProtocol | None = None,
+        cache_ttl: int | None = None,
+        tool_semaphore: Optional[asyncio.Semaphore] = None,
+        tool_timeout: float | None = None,
+        param_registry: Optional[Union[Mapping[str, ParameterSource], ParameterRegistry]] = None,
+        allow_override: bool = False,
+        on_error=None,
+        on_metadata=None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         # Core collaborators --------------------------------------------------
         self._pool = pool
         self._registry = registry
@@ -62,6 +53,7 @@ class Executor:
         # Caching -------------------------------------------------------------
         self._cache: CacheProtocol = cache or NullCache()
         self._cache_ttl = cache_ttl
+        self._cache_namespace = uuid.uuid4().hex
 
         # Execution controls --------------------------------------------------
         self._tool_semaphore = tool_semaphore or asyncio.Semaphore(value=16)
@@ -81,10 +73,12 @@ class Executor:
         # Logger --------------------------------------------------------------
         self._logger = logger or logging.getLogger(name="seqoria_agent.executor")
 
-    async def run_call_stream(self,
-                              tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
-                              *,
-                              context: ParamContext | None = None) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult]]:
+    async def run_call_stream(
+        self,
+        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
+        *,
+        context: ParamContext | None = None,
+    ) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult]]:
         """Yield :class:`ToolCallResult` objects as soon as they are ready.
 
         The generator respects *dependency layers* computed by
@@ -111,7 +105,9 @@ class Executor:
             layers = self.compute_execution_layers(tool_calls=tool_calls)
         except DependencyError as de:
             # Surface dependency errors via logger and abort stream.
-            self._logger.error(msg="Dependency resolution failed", error=str(object=de))
+            self._logger.error("Dependency resolution failed: %s", de)
+            for tc in tool_calls:
+                yield tc, ToolCallError(tool_call_id=tc.id, name=tc.name, error=str(de))
             return
 
         # ------------------------------------------------------------------
@@ -154,14 +150,18 @@ class Executor:
                     deps = self._registry.depends_on(name=tc.name)
                     deps_cache[tc.name] = deps
                 bad_deps = sorted(deps & failed_names)
-                err_msg = ("Skipped because dependency failure: " + ", ".join(bad_deps)) if bad_deps else "Skipped due to dependency failure"
+                err_msg = (
+                    ("Skipped because dependency failure: " + ", ".join(bad_deps))
+                    if bad_deps
+                    else "Skipped due to dependency failure"
+                )
 
                 if getattr(self._logger, "isEnabledFor", lambda *_: True)(logging.INFO):
-                    self._logger.info(msg="Skipping tool due to failed dependency", tool=tc.name, deps=bad_deps)
+                    self._logger.info(
+                        "Skipping tool %s due to failed dependencies: %s", tc.name, bad_deps
+                    )
 
-                error_entry = ToolCallError(tool_call_id=tc.id,
-                                            name=tc.name,
-                                            error=err_msg)
+                error_entry = ToolCallError(tool_call_id=tc.id, name=tc.name, error=err_msg)
 
                 per_name_success[tc.name].append(False)
                 yield (tc, error_entry)
@@ -178,10 +178,16 @@ class Executor:
 
                 tasks = [asyncio.create_task(coro=_exec_pair(tc=tc)) for tc in ready_calls]
 
-                for fut in asyncio.as_completed(fs=tasks):
-                    tc, res = await fut
-                    per_name_success[tc.name].append(not isinstance(res, ToolCallError))
-                    yield (tc, res)
+                try:
+                    for fut in asyncio.as_completed(fs=tasks):
+                        tc, res = await fut
+                        per_name_success[tc.name].append(not isinstance(res, ToolCallError))
+                        yield (tc, res)
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
             # --------------------------------------------------------------
             # Post-layer aggregation – mark a tool *name* as failed when
@@ -194,28 +200,35 @@ class Executor:
     # ----------------------------------------------------------------------
     # Backwards-compatibility wrapper – accumulate results into a list
     # ----------------------------------------------------------------------
-    async def run_calls(self,
-                        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
-                        *,
-                        context: ParamContext | None = None) -> List[ToolCallResult]:
+    async def run_calls(
+        self,
+        tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
+        *,
+        context: ParamContext | None = None,
+    ) -> List[ToolCallResult]:
         """Execute *tool_calls* and return a list of results.
 
         This is now implemented on top of :pyfunc:`run_call_stream` to avoid
         duplicating the execution logic while preserving the original API.
         """
-        return [res async for _, res in self.run_call_stream(tool_calls=tool_calls, context=context or {})]
+        calls = tool_calls.tool_calls if isinstance(tool_calls, ToolCallRequestList) else tool_calls
+        # Streaming is completion-ordered; callers of run_calls pair by input order.
+        results = {
+            id(req): res
+            async for req, res in self.run_call_stream(tool_calls=calls, context=context or {})
+        }
+        return [results[id(req)] for req in calls]
 
-    async def _run_tool(self,
-                        tool_call: ToolCallRequest,
-                        *,
-                        context: ParamContext) -> ToolCallResult:
+    async def _run_tool(
+        self, tool_call: ToolCallRequest, *, context: ParamContext
+    ) -> ToolCallResult:
         """Execute *tool_call* and return a fully-formed chat *history* entry.
 
         No tuple or additional metadata is returned - early-exit or metadata
         handling is performed via callbacks.
         """
         tool_name = tool_call.name
-        arguments = tool_call.arguments
+        arguments = copy.deepcopy(tool_call.arguments or {})
 
         # Client-side server-populated parameter injection ------------------
         server_args: Dict[str, Any] = {}
@@ -236,9 +249,13 @@ class Executor:
                 if res is not None:
                     server_args[fld] = res
 
-            still_missing = [fld for fld in spp_fields if fld not in arguments and fld not in server_args]
+            still_missing = [
+                fld for fld in spp_fields if fld not in arguments and fld not in server_args
+            ]
             if still_missing:
-                raise RuntimeError(f"Missing server-populated parameters for tool '{tool_name}': {', '.join(still_missing)}")
+                raise RuntimeError(
+                    f"Missing server-populated parameters for tool '{tool_name}': {', '.join(still_missing)}"
+                )
 
         # --------------------------------------------------------------------
         # Client-side caching (best-effort)
@@ -249,12 +266,21 @@ class Executor:
         # --------------------------------------------------------------------
 
         cache_key: str | None = None
-        try:
-            tenant_id = context.get("tenant_id") if hasattr(context, "get") else None  # type: ignore[attr-defined]
-            merged_for_cache: Dict[str, Any] = {"arguments": arguments, "server_args": server_args}
-            cache_key = build_cache_key(tool_name=tool_name, arguments=merged_for_cache, tenant_id=tenant_id if isinstance(tenant_id, str) else None)
-        except Exception:
-            cache_key = None
+        if not isinstance(self._cache, NullCache):
+            try:
+                # Include the whole trusted request context: permissions can vary
+                # between users in the same tenant and between requests by one user.
+                merged_for_cache = {
+                    "client": self._cache_namespace,
+                    "registry_version": self._registry.version,
+                    "arguments": arguments,
+                    "server_args": server_args,
+                    "context": dict(context),
+                }
+                cache_key = build_cache_key(tool_name=tool_name, arguments=merged_for_cache)
+            except (TypeError, ValueError):
+                # Unserializable context cannot be safely cached.
+                cache_key = None
 
         raw_output: Any | None = None
         if cache_key is not None:
@@ -263,21 +289,22 @@ class Executor:
             except Exception:  # pragma: no cover – cache backend must not break execution
                 cached = None
             if cached is not None:
-                raw_output = cached.decode("utf-8") if isinstance(cached, (bytes, bytearray)) else cached
+                raw_output = (
+                    cached.decode("utf-8") if isinstance(cached, (bytes, bytearray)) else cached
+                )
 
         # Regular tool execution (with timeout, circuit-breaker, …)
         if getattr(self._logger, "isEnabledFor", lambda *_: True)(logging.DEBUG):
-            self._logger.debug(msg="Executing tool", tool=tool_name, args=arguments)
+            self._logger.debug("Executing tool %s", tool_name)
 
         if raw_output is None:
             try:
                 async with self._tool_semaphore:
-                    exec_coro = self._pool.call_tool(name=tool_name,
-                                                     arguments=arguments,
-                                                     server_args=server_args)
+                    exec_coro = self._pool.call_tool(
+                        name=tool_name, arguments=arguments, server_args=server_args
+                    )
                     if self._tool_timeout:
-                        exec_coro = asyncio.wait_for(fut=exec_coro,
-                                                     timeout=self._tool_timeout)
+                        exec_coro = asyncio.wait_for(fut=exec_coro, timeout=self._tool_timeout)
                     tool_result = await exec_coro
 
                 # --------------------------- success path ---------------------------
@@ -293,23 +320,28 @@ class Executor:
                     except Exception:  # pragma: no cover – cache backend must not break execution
                         pass
 
-            except (asyncio.TimeoutError, CircuitOpenError, ToolRemoteError, Exception) as exc:
+            except Exception as exc:
                 # -------------------------------------------------------------------
                 # Failure path – encapsulate the error in a ToolCallError instance so
                 # callers can react without relying on side-band callbacks.
                 # -------------------------------------------------------------------
-                err_msg = (f"Tool '{tool_name}' failed: {exc}" if not isinstance(exc, asyncio.TimeoutError)
-                           else f"Tool '{tool_name}' timed out after {self._tool_timeout}s")
+                err_msg = (
+                    f"Tool '{tool_name}' failed: {exc}"
+                    if not isinstance(exc, asyncio.TimeoutError)
+                    else f"Tool '{tool_name}' timed out after {self._tool_timeout}s"
+                )
 
                 # Structured callback so external apps can log/telemetry the error
-                _on_error_cb(error_payload={"tool": tool_name,
-                                            "tool_call_id": tool_call.id,
-                                            "message": err_msg},
-                             cb=self._on_error)
+                _on_error_cb(
+                    error_payload={
+                        "tool": tool_name,
+                        "tool_call_id": tool_call.id,
+                        "message": err_msg,
+                    },
+                    cb=self._on_error,
+                )
 
-                return ToolCallError(tool_call_id=tool_call.id,
-                                     name=tool_name,
-                                     error=err_msg)
+                return ToolCallError(tool_call_id=tool_call.id, name=tool_name, error=err_msg)
         # --------------------------------------------------------------------
 
         # Display envelope & structured metadata extraction ----------------
@@ -329,23 +361,25 @@ class Executor:
                     except Exception:  # noqa: BLE001
                         pass
 
-
-        history_entry = ToolCallResult(tool_call_id=tool_call.id,
-                                       role="tool_result",
-                                       name=tool_name,
-                                       type="tool_use",
-                                       result=raw_output)
+        history_entry = ToolCallResult(
+            tool_call_id=tool_call.id,
+            role="tool_result",
+            name=tool_name,
+            type="tool_use",
+            result=raw_output,
+        )
 
         # Callback – metadata --------------------------------------------------
         if metadata_block is not None:
-            _on_metadata_cb(meta=metadata_block, 
-                            cb=self._on_metadata)
+            _on_metadata_cb(meta=metadata_block, cb=self._on_metadata)
 
         return history_entry
 
-    def compute_execution_layers(self, tool_calls: List[ToolCallRequest]) -> List[List[ToolCallRequest]]:
+    def compute_execution_layers(
+        self, tool_calls: List[ToolCallRequest]
+    ) -> List[List[ToolCallRequest]]:
         """Return topologically-sorted execution layers for *tool_calls*."""
-        
+
         # Group calls by *name* while preserving original order of duplicates
         name_to_calls: Dict[str, List[ToolCallRequest]] = defaultdict(list)
         for tc in tool_calls:

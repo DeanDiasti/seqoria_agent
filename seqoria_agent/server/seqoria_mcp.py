@@ -20,6 +20,7 @@ Example
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import json
@@ -27,6 +28,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 __all__ = [
     "SeqoriaMCP",
@@ -184,6 +186,8 @@ class SeqoriaMCP(FastMCP):
                 description=tool_desc,
             )
 
+            accepts_ctx = "ctx" in inspect.signature(fn).parameters
+
             # Create wrapper that injects server-populated params
             @functools.wraps(fn)
             async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -195,18 +199,19 @@ class SeqoriaMCP(FastMCP):
                             ctx = arg
                             break
 
-                # Inject server-populated parameters
-                if server_populated_list and ctx is not None:
-                    for param in server_populated_list:
-                        if param not in kwargs:
-                            value = await self._resolve_server_param(
-                                ctx, tool_name, param
-                            )
-                            if value is not None:
-                                kwargs[param] = value
-
-                # Call original function
-                result = fn(*args, **kwargs)
+                # Identity is resolved from trusted server context on every call.
+                for param in server_populated_list:
+                    kwargs.pop(param, None)
+                    value = await self._resolve_server_param(ctx, tool_name, param)
+                    if value is None:
+                        raise RuntimeError(f"Missing server-populated parameter: {param}")
+                    kwargs[param] = value
+                if not accepts_ctx:
+                    kwargs.pop("ctx", None)
+                if inspect.iscoroutinefunction(fn):
+                    result = fn(*args, **kwargs)
+                else:
+                    result = await asyncio.to_thread(fn, *args, **kwargs)
                 if inspect.isawaitable(result):
                     result = await result
 
@@ -222,6 +227,7 @@ class SeqoriaMCP(FastMCP):
             parent_decorator = super(SeqoriaMCP, self).tool(
                 name=tool_name,
                 description=tool_desc,
+                annotations=ToolAnnotations(depends_on=depends_on_list),
             )
             parent_decorator(modified_fn)
 
@@ -250,13 +256,10 @@ class SeqoriaMCP(FastMCP):
         params = list(sig.parameters.values())
 
         # Filter out server-populated params
-        filtered_params = [
-            p for p in params if p.name not in server_populated and p.name != "ctx"
-        ]
+        filtered_params = [p for p in params if p.name not in server_populated and p.name != "ctx"]
 
-        # Add ctx as optional at the end if the original had it
-        has_ctx = any(p.name == "ctx" for p in params)
-        if has_ctx:
+        # Always ask FastMCP for request context when injecting hidden fields.
+        if server_populated:
             ctx_param = inspect.Parameter(
                 "ctx",
                 inspect.Parameter.KEYWORD_ONLY,
@@ -274,6 +277,12 @@ class SeqoriaMCP(FastMCP):
             return await wrapper_fn(*args, **kwargs)
 
         schema_fn.__signature__ = new_sig  # type: ignore[attr-defined]
+        schema_fn.__annotations__ = {
+            key: value
+            for key, value in original_fn.__annotations__.items()
+            if key not in server_populated
+        }
+        schema_fn.__annotations__["ctx"] = Context
 
         # Add annotations metadata for client-side awareness
         if not hasattr(schema_fn, "__mcp_annotations__"):
@@ -318,7 +327,7 @@ class SeqoriaMCP(FastMCP):
             principal = self._get_principal_from_context(ctx)
             if principal is not None:
                 if hasattr(principal, "id"):
-                    return getattr(principal, "id")
+                    return principal.id
                 elif isinstance(principal, dict) and "id" in principal:
                     return principal["id"]
 
@@ -461,4 +470,3 @@ class SeqoriaMCP(FastMCP):
             "server_populated": meta.server_populated,
             "depends_on": meta.depends_on,
         }
-

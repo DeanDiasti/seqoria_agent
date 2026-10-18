@@ -1,6 +1,5 @@
 """Tests for SeqoriaMCP response formatting and error handling."""
 
-import pytest
 
 from seqoria_agent.server import SeqoriaMCP
 

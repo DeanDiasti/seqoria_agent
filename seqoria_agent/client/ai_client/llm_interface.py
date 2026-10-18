@@ -1,51 +1,30 @@
 from __future__ import annotations
 
-"""Provider interaction utilities for *seqoria_agent*'s new AIClient implementation.
-
-This module is introduced in **Phase 4 - LLMInterface extraction** (see
-``client-migration.md``) and encapsulates *all* logic that interacts directly
-with Large-Language-Model providers.
-
-Public façade
--------------
-```
-llm = LLMInterface(providers=[...])
-resp = await llm.generate(history, tools=[...])
-async for chunk in llm.stream(history):
-    ...
-```
-
-The class keeps a **narrow** surface so that alternative provider strategies or
-advanced fall-back logic can evolve without touching the surrounding
-`AIClient` orchestration layer.
-"""
+"""Provider fallback and conversion to the client message protocol."""
 
 from typing import Any, AsyncGenerator, List, Optional, Union
 
 import logging
 from contextlib import suppress
 
-# Prefer structlog when available for key-value logging like elsewhere in the codebase
-try:
-    import structlog  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
-    structlog = None
-
 from seqoria_agent.providers.base_provider import AsyncBaseProvider
 from seqoria_agent.providers.errors import LLMError
 from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
-from seqoria_agent.models.chunk import AssistantMessage, UserMessage, SystemMessage, ToolCallRequest, ToolCallResult, ChatChunk, ToolCallRequestList, LLMUsage
+from seqoria_agent.models.chunk import (
+    AssistantMessage,
+    ToolCallRequest,
+    ChatChunk,
+    ToolCallRequestList,
+    LLMUsage,
+)
 
 __all__: list[str] = ["LLMInterface"]
 
 
 class LLMInterface:  # noqa: D101 – module-level docstring provides context
-    # LOC gate: keep implementation short (< 250 lines)
-
-    def __init__(self, 
-                 providers: List[AsyncBaseProvider], 
-                 *, 
-                 logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self, providers: List[AsyncBaseProvider], *, logger: Optional[logging.Logger] = None
+    ) -> None:
         if not providers:
             raise ValueError("'providers' must contain at least one AsyncBaseProvider instance.")
         self._providers: List[AsyncBaseProvider] = providers
@@ -54,19 +33,20 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         if logger is not None:
             self._logger = logger
         else:
-            # Use stdlib logging to avoid structlog API differences during testing
             self._logger = logging.getLogger(name="seqoria_agent.llm_interface")
 
     # ------------------------------------------------------------------
     # Public API – synchronous generation
     # ------------------------------------------------------------------
 
-    async def generate(self,
-                       history: List[Any],
-                       *,
-                       tools: List[dict] | None = None,
-                       tool_choice: str = "auto",
-                       model: str | None = None) -> Union[AssistantMessage, ToolCallRequestList]:
+    async def generate(
+        self,
+        history: List[Any],
+        *,
+        tools: List[dict] | None = None,
+        tool_choice: str = "auto",
+        model: str | None = None,
+    ) -> Union[AssistantMessage, ToolCallRequestList]:
         """Generate a single response using the first provider that succeeds.
 
         Parameters
@@ -89,7 +69,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         kwargs_gen_base: dict[str, Any] = {"chat_history": history}
         kwargs_gen_base["tool_choice"] = (tool_choice or "auto") if tools else None
         kwargs_gen_base["model"] = model
-            
+
         last_err: Optional[Exception] = None
 
         # Build provider iteration order: current primary first, then the rest.
@@ -111,11 +91,15 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                 break  # success
             except LLMError as e:
                 last_err = e
-                self._logger.warning("Provider %s failed to generate: %s", provider.__class__.__name__, e)
+                self._logger.warning(
+                    "Provider %s failed to generate: %s", provider.__class__.__name__, e
+                )
                 continue
             except Exception as e:
                 # Non-LLM errors are not considered retryable – re-raise.
-                self._logger.warning("Provider %s failed to generate: %s", provider.__class__.__name__, e)
+                self._logger.warning(
+                    "Provider %s failed to generate: %s", provider.__class__.__name__, e
+                )
                 raise
 
         if raw_resp is None:
@@ -127,34 +111,51 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
 
         if isinstance(raw_resp, LLMResponse):
             usage = raw_resp.usage or LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-            return AssistantMessage(role="assistant",
-                                    content=raw_resp.text,
-                                    model=raw_resp.model_id,
-                                    usage=LLMUsage(prompt_tokens=usage.prompt_tokens,
-                                                   completion_tokens=usage.completion_tokens,
-                                                   total_tokens=usage.total_tokens))
+            return AssistantMessage(
+                role="assistant",
+                content=raw_resp.text or "",
+                model=raw_resp.model_id,
+                usage=LLMUsage(
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                ),
+            )
 
         if isinstance(raw_resp, ToolCallList):
-            return ToolCallRequestList(tool_calls=[ToolCallRequest(role="tool_call",
-                                                                   id=tool_call.id,
-                                                                   type="function_call",
-                                                                   name=tool_call.function_name,
-                                                                   arguments=tool_call.arguments) for tool_call in raw_resp.tool_calls],
-                                       usage=LLMUsage(prompt_tokens=raw_resp.usage.prompt_tokens,
-                                                      completion_tokens=raw_resp.usage.completion_tokens,
-                                                      total_tokens=raw_resp.usage.total_tokens))
+            usage = raw_resp.usage or LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+            return ToolCallRequestList(
+                tool_calls=[
+                    ToolCallRequest(
+                        role="tool_call",
+                        id=tool_call.id,
+                        type="function_call",
+                        name=tool_call.function_name,
+                        arguments=tool_call.arguments,
+                    )
+                    for tool_call in raw_resp.tool_calls
+                ],
+                usage=LLMUsage(
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                ),
+            )
 
+        raise TypeError(f"Unexpected provider response: {type(raw_resp)}")
 
     # ------------------------------------------------------------------
     # Public API – streaming generation
     # ------------------------------------------------------------------
 
-    async def stream(self,
-                     history: List[Any],
-                     *,
-                     tools: List[dict] | None = None,
-                     tool_choice: str = "auto",
-                     model: str | None = None) -> AsyncGenerator[Union[ChatChunk, AssistantMessage, ToolCallRequestList], None]:
+    async def stream(
+        self,
+        history: List[Any],
+        *,
+        tools: List[dict] | None = None,
+        tool_choice: str = "auto",
+        model: str | None = None,
+    ) -> AsyncGenerator[Union[ChatChunk, AssistantMessage, ToolCallRequestList], None]:
         """Yield incremental deltas followed by the final :class:`LLMResponse`.
 
         The method attempts each provider in order until a stream generator is
@@ -167,42 +168,20 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         kwargs_stream_base["tool_choice"] = (tool_choice or "auto") if tools else None
         kwargs_stream_base["model"] = model
 
-        stream_gen: Optional[AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None]] = None
-        last_err: Optional[Exception] = None
-
-        provider_indices = list(range(len(self._providers)))
-        if self._primary_provider_idx in provider_indices:
-            provider_indices.remove(self._primary_provider_idx)
-        provider_indices.insert(0, self._primary_provider_idx)
-
-        raw_resp: Optional[Union[LLMResponse, ToolCallList]] = None
-        successful_idx: Optional[int] = None
-
-        for idx in provider_indices:
+        last_err = None
+        indices = [self._primary_provider_idx] + [
+            idx for idx in range(len(self._providers)) if idx != self._primary_provider_idx
+        ]
+        for idx in indices:
             provider = self._providers[idx]
+            emitted = False
+            stream_gen = provider.async_stream(**kwargs_stream_base, tools=tools)
             try:
-                kwargs_stream = dict(kwargs_stream_base)
-                kwargs_stream["tools"] = tools if tools is not None else None
-                stream_gen = provider.async_stream(**kwargs_stream)
-                successful_idx = idx
-                break
-            except LLMError as e:
-                last_err = e
-                self._logger.warning("Provider %s failed to start stream: %s", provider.__class__.__name__, e)
-                continue
-            except Exception as e:
-                self._logger.warning("Provider %s failed to start stream: %s", provider.__class__.__name__, e)
-                raise
-
-        if stream_gen is None:
-            raise RuntimeError(f"All LLM providers failed to stream. Last error: {last_err}")
-
-        if successful_idx is not None:
-            self._primary_provider_idx = successful_idx
-
-        try:
-            async for chunk in stream_gen:
-                try:
+                async for chunk in stream_gen:
+                    # Once output is visible, switching providers would duplicate
+                    # text or tool calls. Failover is safe only before first output.
+                    emitted = True
+                    self._primary_provider_idx = idx
                     # Forward recognised response types as-is.
                     if isinstance(chunk, LLMResponse):
                         if chunk.type == "llm_delta":
@@ -229,7 +208,9 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                                 usage=None,
                             )
                         elif chunk.type == "llm_response":
-                            usage = chunk.usage or LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                            usage = chunk.usage or LLMUsage(
+                                prompt_tokens=0, completion_tokens=0, total_tokens=0
+                            )
                             yield AssistantMessage(
                                 role="assistant",
                                 content=chunk.text or "",
@@ -242,7 +223,9 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                                 ),
                             )
                     elif isinstance(chunk, ToolCallList):
-                        usage = chunk.usage or LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                        usage = chunk.usage or LLMUsage(
+                            prompt_tokens=0, completion_tokens=0, total_tokens=0
+                        )
                         yield ToolCallRequestList(
                             tool_calls=[
                                 ToolCallRequest(
@@ -261,13 +244,17 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                             ),
                         )
                     else:
-                        self._logger.warning("Unknown chunk type from provider stream: %s", type(chunk))
-                        continue
+                        raise TypeError(f"Unknown chunk type from provider stream: {type(chunk)}")
 
-                except Exception as e:
-                    self._logger.warning("Provider %s failed to stream: %s", provider.__class__.__name__, e)
+                return
+            except LLMError as exc:
+                if emitted:
                     raise
-        finally:
-            # Best-effort cleanup of provider stream generator.
-            with suppress(Exception):
-                await stream_gen.aclose()
+                last_err = exc
+                self._logger.warning(
+                    "Provider %s failed to start stream: %s", provider.__class__.__name__, exc
+                )
+            finally:
+                with suppress(Exception):
+                    await stream_gen.aclose()
+        raise RuntimeError(f"All LLM providers failed to stream. Last error: {last_err}")

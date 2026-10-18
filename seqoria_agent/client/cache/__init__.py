@@ -1,13 +1,9 @@
-"""Caching utilities for *seqoria_agent* client package.
-
-This file is largely copied from the original `seqoria_agent.cache` module but split
-under the ``seqoria_agent.client.cache`` namespace so that different back-ends can live
-side-by-side.
-"""
+"""Optional asynchronous tool-result caches."""
 
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import json
 import time
 from typing import Any, Dict, Protocol
@@ -59,14 +55,17 @@ class NullCache:
 
 
 class DictCache:
-    """Simple in-memory cache with optional TTL support.
+    """Bounded LRU in-memory cache with optional TTL support.
 
     Thread-safe across coroutines via an ``asyncio.Lock``.  **Not** suitable for
     multi-process deployments – use :class:`RedisCache` instead.
     """
 
-    def __init__(self):
-        self._data: Dict[str, tuple[Any, float | None]] = {}
+    def __init__(self, max_entries: int = 1024):
+        if max_entries < 1:
+            raise ValueError("max_entries must be positive")
+        self._max_entries = max_entries
+        self._data: OrderedDict[str, tuple[Any, float | None]] = OrderedDict()
         self._lock = asyncio.Lock()
 
     async def get(self, key: str):  # noqa: D401
@@ -75,18 +74,22 @@ class DictCache:
             if item is None:
                 return None
             value, expires_at = item
-            if expires_at is not None and expires_at < time.time():
+            if expires_at is not None and expires_at < time.monotonic():
                 # Expired – remove lazily
                 self._data.pop(key, None)
                 return None
+            self._data.move_to_end(key)
             return value
 
     async def set(self, key: str, value: Any, ttl: int | None = None):  # noqa: D401, ANN001
         async with self._lock:
             expires_at: float | None = None
             if ttl is not None and ttl > 0:
-                expires_at = time.time() + ttl
+                expires_at = time.monotonic() + ttl
             self._data[key] = (value, expires_at)
+            self._data.move_to_end(key)
+            while len(self._data) > self._max_entries:
+                self._data.popitem(last=False)
 
     async def delete(self, key: str):  # noqa: D401
         async with self._lock:
@@ -104,9 +107,7 @@ class RedisCache:  # pragma: no cover – optional path
     Requires ``pip install redis>=4.5``.
     """
 
-    _redis_missing_msg = (
-        "RedisCache requires the 'redis' package. Install via 'pip install redis' to use this backend."
-    )
+    _redis_missing_msg = "RedisCache requires the 'redis' package. Install via 'pip install redis' to use this backend."
 
     def __init__(self, url: str = "redis://localhost:6379", ttl: int | None = None):
         """Initialize the RedisCache.
@@ -131,6 +132,10 @@ class RedisCache:  # pragma: no cover – optional path
 
         self._redis = redis_asyncio.from_url(url, encoding="utf-8", decode_responses=False)
         self._default_ttl = ttl
+
+    async def aclose(self) -> None:
+        """Release Redis connections after application shutdown."""
+        await self._redis.aclose()
 
     async def get(self, key: str):  # noqa: D401
         raw = await self._redis.get(key)
@@ -161,7 +166,10 @@ class RedisCache:  # pragma: no cover – optional path
 # Helper – canonical cache keys
 # ---------------------------------------------------------------------------
 
-def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str | None = None) -> str:  # noqa: D401
+
+def build_cache_key(
+    tool_name: str, arguments: Dict[str, Any], *, tenant_id: str | None = None
+) -> str:  # noqa: D401
     """*Deprecated*: Import moved to :pymod:`seqoria_agent.client.ai_client.utils`.
 
     This shim forwards to the new implementation and raises a
@@ -179,4 +187,4 @@ def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str
 
     from seqoria_agent.client.ai_client.utils import build_cache_key as _new_build_cache_key
 
-    return _new_build_cache_key(tool_name=tool_name, arguments=arguments, tenant_id=tenant_id) 
+    return _new_build_cache_key(tool_name=tool_name, arguments=arguments, tenant_id=tenant_id)

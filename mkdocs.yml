@@ -1,87 +1,37 @@
-site_name: Seqoria Agent Documentation
-# site_url: https://deandiasti.github.io/seqoria_agent/
-repo_url: https://github.com/deandiasti/seqoria_agent
-repo_name: seqoria_agent
-site_description: seqoria_agent is a next-generation orchestration layer for building robust, tool-augmented AI applications. It provides a unified protocol and a set of powerful components to seamlessly manage interactions between Large Language Models (LLMs), your custom tools, and rich user interfaces.
-edit_uri: edit/main/docs/
-
+site_name: Seqoria Agent
+site_url: https://deandiasti.github.io/seqoria_agent/
+repo_url: https://github.com/DeanDiasti/seqoria_agent
+site_description: Async MCP tool orchestration for Python web applications.
 theme:
   name: material
-  features:
-    - navigation.tabs
-    - navigation.sections
-    - navigation.top
-    - search.suggest
-    - search.highlight
-    - content.code.copy
-    - content.code.annotate
-  palette:
-    - scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - scheme: slate
-      primary: blue
-      accent: blue
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
-  icon:
-    repo: fontawesome/brands/github
-
-extra:
-  social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/your-username
-
-markdown_extensions:
-  - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
-      pygments_style: solarized-light
-  - pymdownx.superfences
-  - pymdownx.inlinehilite
-  - admonition
-  - toc:
-      permalink: true
+plugins:
+  - search
   - mkdocstrings:
-      default_handler: python
       handlers:
         python:
           options:
-            show_root_heading: true
-            show_root_toc_entry: true
             docstring_style: numpy
-            merge_init_into_class: true
-            show_source: true
-
+            show_source: false
+            show_root_heading: true
+            show_signature_annotations: true
+            show_docstring_parameters: false
+            show_docstring_returns: false
+            show_docstring_raises: false
+markdown_extensions:
+  - pymdownx.superfences
+  - admonition
+  - toc:
+      permalink: true
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
-  - Guides:
-    - Full Overview: guides/overview.md
-    - Using AIClient: guides/ai_client.md
-    - Server Recipes: guides/server_recipes.md
-    - Testing & CI: guides/testing.md
-    - Server Guide: servers.md
-  - Topics:
-    - Streaming Responses: topics/streaming.md
-    - Caching: topics/caching.md
-    - Meta-Tools: topics/meta_tools.md
-    - Multi-Tenancy: topics/multi_tenancy.md
-    - Structured Error Handling: topics/error_handling.md
-    - DisplayEnvelope: display_envelope.md
-  - API Reference:
-    - Client: reference/client.md
-    - Server: reference/server.md
-    - Models: reference/models.md
-    - Providers: reference/providers.md
-  - Coming Soon:
-    - Token Accounting: future/token_accounting.md
-    - Frontend Guide: future/frontend_guide.md
-  - Migration:
-    - XMCP Server Upgrade: migration/xmcp_server.md
-    - SPP Roadmap: migration/spp_update.md
-    - Parameter Registry Migration: migration/parameter_registry.md 
+  - Web applications: topics/multi_tenancy.md
+  - Tool execution: guides/ai_client.md
+  - MCP servers: servers.md
+  - Caching: topics/caching.md
+  - Release review: release-review.md
+  - API reference:
+      - Client: reference/client.md
+      - Server: reference/server.md
+      - Models: reference/models.md
+      - Providers: reference/providers.md

@@ -1,7 +1,7 @@
 """Tests for model validation functionality in providers."""
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock
 
 from seqoria_agent.providers.errors import ModelNotFoundError
 

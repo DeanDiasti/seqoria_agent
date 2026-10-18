@@ -36,9 +36,7 @@ class LLMUsage(BaseModel):
 
 
 class ToolCallList(BaseModel):
-    """
-    Standardized representation of a list of tool calls.
-    """
+    """Standardized representation of a list of tool calls."""
     model_config = ConfigDict(slots=True)
     model_id: str = Field(default=..., description="The actual model ID used for the response.")
     tool_calls: List[ToolCall] = Field(default=..., description="The tool calls of the message.")

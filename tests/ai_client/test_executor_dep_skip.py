@@ -1,4 +1,3 @@
-import asyncio
 import pytest
 
 from seqoria_agent.toolbox import LocalToolbox

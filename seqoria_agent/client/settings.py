@@ -64,11 +64,14 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
         new.providers.append(provider)
         return new
 
-    # Simple shallow copy since we only store primitives / references         
+    # Simple shallow copy since we only store primitives / references
     def copy(self) -> "ClientSettings":  # noqa: D401 – tiny helper
         import copy
 
-        return copy.copy(self)
+        result = copy.copy(self)
+        result.providers = list(self.providers)
+        result.client_kwargs = dict(self.client_kwargs)
+        return result
 
     # Provide a readable string representation helpful in debug logs
     def __repr__(self) -> str:  # noqa: D401

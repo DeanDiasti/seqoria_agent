@@ -1,139 +1,34 @@
 # Quickstart
 
-This guide will get you up and running with **Seqoria-Agent / FastXMCP** in just a few minutes.
-
-## Installation
-
-First, install the library from source. It's recommended to do this in a virtual environment.
-
-```bash
-pip install -e .
-```
-
-This will install `seqoria-agent` along with its core dependencies, including `fastapi`, `pydantic` and `uvicorn`.
-
-To use the full feature set including documentation generation and testing, install the optional extras:
-
-```bash
-pip install -e '.[dev,docs]'
-```
-
-## 1. Create a FastXMCP Server
-
-An `XMCP` server exposes your Python functions as tools that an AI can call. The key is the `@mcp.display_tool` decorator, which can return either data for the LLM or a rich `DisplayEnvelope` for the user.
-
-Here's a simple server, which you can find in `examples/servers/server1.py`:
-
-```python
-from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent.models.envelope import DisplayEnvelope
-
-app = FastXMCP(title="Demo Server")
-
-@app.display_tool
-def greet(name: str) -> DisplayEnvelope:
-    """A simple tool that greets the user."""
-    return DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
-
-@app.display_tool
-def sales_summary(region: str, show_user: bool = False):
-    """
-    A tool that returns a sales summary. If show_user is True, it
-    returns a DisplayEnvelope for rendering a table. Otherwise, it
-    returns raw data for the LLM.
-    """
-    # In a real app, you would fetch this from a database.
-    summary = {"region": region, "sales": 42, "prospects": 120}
-    
-    if show_user:
-        # Construct a fancy table for the user
-        return DisplayEnvelope(
-            type="table",
-            payload=[summary],
-            title=f"Sales Summary: {region}"
-        )
-    
-    # Return a simpler dictionary for the LLM to process
-    return {"region": region, "sales": summary["sales"]}
-
-# To run this server, save the code and run:
-# uvicorn examples.servers.server1:app --port 3333
-```
-
-To run this server, execute the following command from your terminal:
-
-```bash
-uvicorn examples.servers.server1:app --port 3333
-```
-
-## 2. Call Tools with AIClient
-
-The `AIClient` connects to one or more `XMCP` servers, lets an LLM decide which tools to call based on a user query, and returns the final answer.
-
-This example is available in `examples/clients/demo.py`:
+Install with `pip install seqoria-agent` and set `OPENAI_API_KEY` and `OPENAI_MODEL` in your environment. HTTP providers are included in the core package.
 
 ```python
 import asyncio
-from seqoria_agent import AIClient
-from seqoria_agent.providers import OpenAIProvider  # Or AnthropicProvider, etc.
+import os
+from seqoria_agent import AsyncAIClient, LocalToolbox
+from seqoria_agent.providers import AsyncOpenAIProvider
+from seqoria_agent.models import AssistantMessage
 
-# A dummy renderer for demonstration purposes
-def render(display_data: dict):
-    print("--- DISPLAY ---")
-    print(display_data)
-    print("-----------------")
+tools = LocalToolbox()
+
+@tools.tool()
+async def add(a: int, b: int) -> int:
+    """Add two integers."""
+    return a + b
 
 async def main():
-    # Make sure you have OPENAI_API_KEY set in your environment
-    providers = [OpenAIProvider(model_id="gpt-4o")]
-    
-    # AIClient can connect to multiple servers
-    async with AIClient(urls=["http://localhost:3333"], providers=providers) as ai:
-        
-        # The client needs a mutable history list to manage conversation state
-        history = []
-        
-        result = await ai.chat("Show me sales for EMEA using a chart", history=history)
-        
-        if result.get("display"):
-            render(result["display"])
-        else:
-            print(f"Assistant: {result['answer']}")
+    history = []
+    async with AsyncOpenAIProvider(model_id=os.environ["OPENAI_MODEL"]) as provider:
+        async with AsyncAIClient(providers=[provider], local_toolbox=tools) as client:
+            async for event in client.chat("What is 2 + 3?", history=history):
+                if isinstance(event, AssistantMessage):
+                    print(event.content)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
 
-To run the client demo:
+`chat()` yields tool messages and the final assistant message. `stream_chat()` additionally yields `ChatChunk` text deltas; render deltas and use the final message for accounting rather than rendering its text a second time.
 
-```bash
-python examples/clients/demo.py
-```
+Use `Async*Provider` classes with `AsyncAIClient`. For synchronous scripts, use `AIClient` as a regular context manager and `chat_sync()` to return the final answer.
 
-You should see the `AIClient` call the `sales_summary` tool and the `render` function printing the display envelope. 
-
-New in **v0.2**: servers can declare `depends_on` between tools, and the client runs them in parallel layers automatically.  The client is completely **stateless**; you must pass `history` each turn.
-
-### 3. Ask the AI
-
-If the LLM decides to call `current_time` **and** `timestamped_divide` in one turn, `AIClient` runs them in order thanks to the dependency graph and returns the final answer.
-
----
-
-Need richer UX?  Pass `stream_chat()` instead and update your UI as chunks arrive.
-
-```python
-result = await ai.chat(
-    "current_time then divide 10 by 2 and show_user=true",
-    history=history,
-)
-``` 
-
-> **Also new:**
-> * **LocalToolbox** ‑ run tools directly inside the client process.
-> * **FastXMCPRouter** ‑ compose large servers from modular routers.
-> * **LLM-only mode** ‑ skip the tool loop when no tools are available.
-> * **Manual Loop helpers** ‑ drive each LLM step yourself ([guide](guides/ai_client.md#manual-loop)).
-
-> **Note** Authentication helpers were removed from this library; handle auth at your API gateway / reverse proxy
-> or in your own FastAPI middleware.
+Reuse the history list for later turns in the same conversation. Keep histories separate across users and serialize simultaneous turns for one conversation. Close provider resources after closing the client.

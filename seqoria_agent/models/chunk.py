@@ -7,8 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 class LLMUsage(BaseModel):
-    """Usage information for an LLM call.
-    """
+    """Usage information for an LLM call."""
     model_config = ConfigDict(slots=True)
     prompt_tokens: int = Field(default=None, description="The number of tokens in the prompt.")
     completion_tokens: int = Field(default=None, description="The number of tokens in the completion.")
@@ -16,8 +15,7 @@ class LLMUsage(BaseModel):
 
 
 class ChatChunk(BaseModel):  # noqa: D101 – simple container
-    """Incremental piece of a streamed chat response.
-    """
+    """Incremental piece of a streamed chat response."""
     model_config = ConfigDict(slots=True)
     role: Literal["assistant"] = Field(default="assistant", description="The role of the message.")
     content: str = Field(default="", description="The content of the message.")
@@ -26,15 +24,13 @@ class ChatChunk(BaseModel):  # noqa: D101 – simple container
     usage: Optional[LLMUsage] = Field(default=None, description="The usage of the message.")
 
 class SystemMessage(BaseModel):  # noqa: D101 – simple container
-    """Incremental piece of a streamed chat response.
-    """
+    """Incremental piece of a streamed chat response."""
     model_config = ConfigDict(slots=True)
     role: Literal["system"] = Field(default=None, description="The role of the message.")
     content: str = Field(default=None, description="The content of the message.")
 
 class AssistantMessage(BaseModel):  # noqa: D101 – simple container
-    """Incremental piece of a streamed chat response.
-    """
+    """Incremental piece of a streamed chat response."""
     model_config = ConfigDict(slots=True)
     role: Literal["user", "assistant", "system"] = Field(default=None, description="The role of the message.")
     content: str = Field(default="", description="The content of the message.")
@@ -83,8 +79,7 @@ class ToolCallRequest(BaseModel):  # noqa: D101 – simple container
 
 
 class ToolCallRequestList(BaseModel):  # noqa: D101 – simple container
-    """Incremental piece of a streamed chat response.
-    """
+    """Incremental piece of a streamed chat response."""
     model_config = ConfigDict(slots=True)
     tool_calls: List[ToolCallRequest] = Field(default=None, description="The tool calls of the message.")
     usage: LLMUsage = Field(default=None, description="The usage of the message.")

@@ -13,11 +13,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, List, Optional
 
-try:
-    import structlog  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover – optional dependency
-    structlog = None
-
 _logger = logging.getLogger(name="seqoria_agent.callbacks")
 
 __all__: list[str] = ["on_error", "on_metadata"]
@@ -37,6 +32,7 @@ def _safe_call(cb: Optional[Callable[[Any, List[dict] | None], None]], *args) ->
 # Public wrappers
 # ---------------------------------------------------------------------------
 
+
 def on_error(error_payload: dict, cb):  # noqa: D401, ANN001
     """Safely forward *error_payload* to *cb* if callable."""
     _safe_call(cb, error_payload)
@@ -44,4 +40,4 @@ def on_error(error_payload: dict, cb):  # noqa: D401, ANN001
 
 def on_metadata(meta: dict, cb):  # noqa: D401, ANN001
     """Safely forward *meta* block to *cb* if callable."""
-    _safe_call(cb, meta) 
+    _safe_call(cb, meta)

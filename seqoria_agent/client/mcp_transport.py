@@ -220,8 +220,7 @@ async def _start_loopback_callback_server(
                 b"Content-Type: text/html; charset=utf-8\r\n"
                 + f"Content-Length: {len(body)}\r\n".encode("utf-8")
                 + b"Connection: close\r\n"
-                b"\r\n"
-                + body
+                b"\r\n" + body
             )
             await writer.drain()
         except Exception:
@@ -252,12 +251,12 @@ async def _start_loopback_callback_server(
 
 class HTTPClientPool:
     """Shared pool of httpx.AsyncClient instances for connection reuse.
-    
+
     This pool maintains one AsyncClient per unique (host, port) combination,
     enabling HTTP connection reuse (keep-alive) across multiple MCP requests.
-    
+
     Thread-safe via asyncio.Lock.
-    
+
     Example
     -------
     >>> pool = HTTPClientPool()
@@ -266,10 +265,10 @@ class HTTPClientPool:
     ...     response = await client.get("/health")
     >>> await pool.close()  # Cleanup when done
     """
-    
+
     _instance: ClassVar[Optional["HTTPClientPool"]] = None
     _lock: ClassVar[asyncio.Lock] = asyncio.Lock()
-    
+
     def __init__(
         self,
         *,
@@ -279,7 +278,7 @@ class HTTPClientPool:
         max_keepalive_connections: int = 20,
     ) -> None:
         """Initialize the HTTP client pool.
-        
+
         Parameters
         ----------
         default_timeout : float
@@ -300,7 +299,7 @@ class HTTPClientPool:
             max_keepalive_connections=max_keepalive_connections,
         )
         self._closed = False
-    
+
     @classmethod
     async def get_shared(cls) -> "HTTPClientPool":
         """Get or create the shared singleton instance."""
@@ -308,7 +307,7 @@ class HTTPClientPool:
             if cls._instance is None or cls._instance._closed:
                 cls._instance = cls()
             return cls._instance
-    
+
     @classmethod
     async def close_shared(cls) -> None:
         """Close the shared singleton instance."""
@@ -316,7 +315,7 @@ class HTTPClientPool:
             if cls._instance is not None:
                 await cls._instance.close()
                 cls._instance = None
-    
+
     def _headers_fingerprint(self, headers: Dict[str, str] | None) -> str:
         """Return a stable fingerprint for headers without retaining raw values.
 
@@ -340,7 +339,7 @@ class HTTPClientPool:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         hdr_fp = self._headers_fingerprint(headers)
         return f"{parsed.scheme}://{parsed.hostname}:{port}|h={hdr_fp}"
-    
+
     async def get_client(
         self,
         url: str,
@@ -349,7 +348,7 @@ class HTTPClientPool:
         timeout: float | None = None,
     ) -> httpx.AsyncClient:
         """Get or create an AsyncClient for the given URL's host.
-        
+
         Parameters
         ----------
         url : str
@@ -358,7 +357,7 @@ class HTTPClientPool:
             Additional headers to include in requests.
         timeout : float | None
             Custom timeout override.
-            
+
         Returns
         -------
         httpx.AsyncClient
@@ -366,9 +365,9 @@ class HTTPClientPool:
         """
         if self._closed:
             raise RuntimeError("HTTPClientPool is closed")
-        
-        pool_key = self._get_pool_key(url, headers)
-        
+
+        pool_key = f"{self._get_pool_key(url, headers)}|t={timeout or self._default_timeout}"
+
         async with self._client_lock:
             if pool_key not in self._clients:
                 effective_timeout = httpx.Timeout(
@@ -382,7 +381,7 @@ class HTTPClientPool:
                     http2=True,  # Enable HTTP/2 for better multiplexing
                 )
             return self._clients[pool_key]
-    
+
     async def close(self) -> None:
         """Close all pooled clients and release resources."""
         async with self._client_lock:
@@ -489,7 +488,7 @@ class MCPTransportFactory:
         url_lower = url.lower()
         if url_lower.startswith("http://") or url_lower.startswith("https://"):
             return "http"
-        elif url_lower.startswith("sse://"):
+        elif url_lower.startswith(("sse://", "sses://")):
             return "sse"
         elif url_lower.startswith("stdio://"):
             return "stdio"
@@ -549,7 +548,7 @@ class MCPTransportFactory:
         client_pool: HTTPClientPool | None = None,
     ) -> AsyncIterator[MCPConnection]:
         """Connect via Streamable HTTP transport.
-        
+
         Parameters
         ----------
         config : MCPServerConfig
@@ -559,8 +558,9 @@ class MCPTransportFactory:
         """
         url = config.url
         # Normalize URL to include /mcp if not present
-        if not url.endswith("/mcp") and not url.endswith("/mcp/"):
-            url = url.rstrip("/") + "/mcp"
+        parsed = urlparse(url)
+        if parsed.path in ("", "/"):
+            url = parsed._replace(path="/mcp").geturl()
 
         # Check if OAuth is enabled
         if config.oauth:
@@ -571,13 +571,13 @@ class MCPTransportFactory:
         # Non-OAuth path: use shared client pool for connection reuse
         if client_pool is None:
             client_pool = await HTTPClientPool.get_shared()
-        
+
         http_client = await client_pool.get_client(
             url,
             headers=config.headers,
             timeout=config.timeout,
         )
-        
+
         async with streamable_http_client(url, http_client=http_client) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -686,8 +686,7 @@ class MCPTransportFactory:
         elif url.startswith("sses://"):
             url = "https://" + url[7:]
 
-        # MCP SDK's sse_client takes only the URL
-        async with sse_client(url) as (read, write):
+        async with sse_client(url, headers=config.headers, timeout=config.timeout) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield MCPConnection(

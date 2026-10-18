@@ -1,19 +1,9 @@
-# Welcome to xmcp
+# Seqoria Agent
 
-xmcp (**eXtended Multi-Channel Protocol**) is a next-generation orchestration layer that makes tool-augmented AI applications easier to author, faster to run, and richer to present.
+Async tool orchestration for Python web applications. Combine MCP servers and local Python tools with HTTP-based LLM providers. Python 3.12 or newer; alpha stability.
 
-This site provides comprehensive documentation for developers building with xmcp.
+Start with the [quickstart](quickstart.md), then read the [web application guide](topics/multi_tenancy.md).
 
-**Key Features:**
+The supported core includes streaming and non-streaming agent loops, explicit conversation history, concurrent tool execution, tool dependencies, per-request local parameter injection, remote MCP transports, and optional tool-result caching.
 
-- **`@display_tool`**: Send rich UI components directly to the user.
-- **`DisplayEnvelope`**: A frontend-agnostic JSON contract for rendering.
-- **`AIClient`**: Orchestrates multi-tool workflows, parallel execution, caching, retries.
-  - **Meta-tools** (`__think__`, `__summarize__`, `__clarify__`) for smarter prompting.
-  - **Structured error & display channels** with XML envelopes.
-  - **Streaming API** for token-level updates and live UI rendering.
-- **And much more...**: Explore the guides and API reference to learn more.
-
-## Getting Started
-
-To get started, head over to the **[Quickstart](quickstart.md)** guide. 
+Version 0.7 removes automatic memory and planning, embeddings, vector/database adapters, and background capture. Applications own their context, authorization, storage, and retention. See the [release review](release-review.md) for scope and limitations.

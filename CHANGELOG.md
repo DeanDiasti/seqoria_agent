@@ -1,22 +1,27 @@
-## [Unreleased]
-### Added
-- HeaderApiKeyBackend and StaticApiKeyProvider for lightweight header-based authentication.
-- Helper migration: legacy FastAPI `Depends(get_current_user)` patterns can now be replaced with `server_populated=["user_id"]` on tools and an `AuthBackend` configured once per app/router.
-- Planned improvements and bug fixes.
-- Deprecation shims for legacy import paths (`seqoria_agent.server.fastxmcp.app`, `seqoria_agent.server.fastxmcp.router`, `seqoria_agent.toolbox.local`) now emit a single `DeprecationWarning` when imported.
-- Comprehensive migration guide covering new server runtime paths (`docs/migration/xmcp_server.md`).
-- New upgrade checklist and guidance embedded in docs.
-- Tests relocated into scoped packages (`tests/xmcp_core/`) with coverage > 90 % for `xmcp_core`.
-- Documentation updated with new canonical import paths; MkDocs reference pages rebuilt.
-- Logging defaults tuned – diagnostic `.info()` calls in `xmcp_core` demoted to `.debug()`.
+# Changelog
 
-### Changed
-- Phase 9 polish: lint/style clean-up, constant centralisation, updated docs, full 100 % coverage verified with pytest-cov, and quieter logging in `ai_client` stack.
-- **0.2.0** – Server-side refactor complete (Phases 6-8):
-  - Thin façade adapters introduced (`fastxmcp_public`, `local_public`).
-  - Deprecation shims added; behaviour unchanged for existing imports.
-  - API docs & quick-start snippets use the new canonical import paths.
-  - Build pipeline now enforces coverage thresholds for core modules.
+## 0.7.0 — 2026-10-18
+
+### Breaking changes
+
+- Remove automatic memory/planning, embeddings, vector/database adapters, and memory-specific examples, extras, and `retrieval_query` parameters. Use application-owned history lists.
+- Align package metadata and documentation with the existing Apache-2.0 license file.
+- Reject unknown client options and sync providers passed directly to `AsyncAIClient`. Remote identity parameters must resolve on the authenticated server; explicit client `server_args` are local-only.
+- Namespace cached results per client and full request context to isolate users and permissions.
+
+### Fixes and release preparation
+
+- Preserve tool request/result pairing across parallel completion and dependency scheduling; cancel unfinished async tools when a stream closes.
+- Run synchronous tools in worker threads and generate nested/default/optional argument schemas using Pydantic.
+- Refresh tool catalogues atomically and route schema aliases to their original names.
+- Own MCP transport lifecycles in dedicated tasks and close client-owned HTTP pools at shutdown.
+- Treat MCP error results as failures; fail over streaming providers before the first output only.
+- Add provider resource cleanup and a working synchronous provider adapter. Fix settings copies and consumed server iterables.
+- Bound the in-process cache with LRU eviction; use monotonic TTLs.
+- Remove MLX from the core dependencies and remove database dependencies for deleted features.
+- Add Python 3.12/3.13 CI, package smoke checks, verified API documentation, and tokenless PyPI Trusted Publishing configuration.
+
+Earlier entries below describe historical releases and may refer to removed APIs.
 
 ## [0.1.0] - 2025-06-21
 ### Added
@@ -29,7 +34,7 @@
 
 ### Added
 * `ParameterRegistry`, `ParameterSource`, `ParamContext` utilities.
-* Comprehensive documentation & migration guide (`docs/migration/parameter_registry.md`).
+* Parameter registry migration documentation (retired in 0.7).
 * New `examples/param_demo/` demonstrating constant and callable parameter sources.
 
 ### Changed

@@ -1,133 +1,41 @@
-# Building a FastXMCP Server
+# MCP servers
 
-`XMCP` is a thin wrapper around FastAPI + Model Context Protocol (MCP) that adds:
-
-* `@display_tool` decorator for rich UI payloads
-* Automatic **XML envelopes** (optionally wrapped in JSON) for deterministic prompt parsing
-* Declarative **XML formatting** with automatic schema derivation
-* **Structured error channel** via `<error>` tags
-* Declarative **dependency graph** with `depends_on` annotation
-* **Server-populated parameters** to inject user_id, geo, etc.
-* **Modular routers** with `FastXMCPRouter` for large projects
-
----
-
-## 1. Regular vs Display Tools
+`SeqoriaMCP` extends the official MCP Python SDK's `FastMCP` server. Its transport, authentication, and deployment settings come from that SDK.
 
 ```python
-from seqoria_agent.server.fastxmcp import FastXMCP
-from seqoria_agent.models.envelope import DisplayEnvelope
-mcp = FastXMCP()
+from seqoria_agent import SeqoriaMCP
 
-@mcp.tool
-def add(a: int, b: int) -> int:
+server = SeqoriaMCP("Example", host="127.0.0.1", port=8000)
+
+@server.tool()
+async def add(a: int, b: int) -> int:
+    """Add two integers."""
     return a + b
-
-@mcp.display_tool
-def greet(name: str, show_user: bool = False):
-    if show_user:
-        return DisplayEnvelope(type="markdown", payload=f"### Hello {name}! 👋")
-    return {"greeting": f"Hello {name}!"}
-
-### JSON Wrapper & Declarative Formatter (v0.3+)
-
-Enable the JSON envelope and influence the **inner** XML tags with a declarative formatter:
-
-```python
-from seqoria_agent.server.formatters import make_formatter
-
-app = FastXMCP(json_wrapper=True)  # ← responses are now {"ai_message": xml, "metadata": {...}}
-
-# Build a tiny formatter inline – emits <product> inside <tool_response>
-product_fmt = make_formatter(top_level_fields=["product"])
-
-@app.tool(response_format=product_fmt)
-def multiply(a: int, b: int):
-    return {"product": int(a) * int(b)}
-
-# No formatter supplied?  FastXMCP derives one automatically from the *first* result
-@app.tool()
-def add(a: int, b: int):
-    return int(a) + int(b)  # → <sum>7</sum> (derived on first call)
-```
-
-`json_wrapper=False` by default for backward-compatibility.
-
-## 2. Dependencies
-
-```python
-@mcp.tool
-def current_time() -> str: ...
-
-@mcp.tool(depends_on=["current_time"])
-def timestamped_divide(a: float, b: float):
-    return f"{current_time()} – {a/b}"  # safe: current_time ran first
-```
-
-When the LLM requests both tools in the same turn, `timestamped_divide` waits for `current_time`.
-
-## 3. Strict Mode
-
-Enable at app level to validate every payload.
-
-```python
-app = FastXMCP(strict_mode=True)
-```
-
-Invalid XML or non-DisplayEnvelope returns turn into a structured error with `code="INVALID_PAYLOAD"`.
-
-## 4. Server-Populated Parameters (SPP)
-
-```python
-@mcp.tool(server_populated=["user_id"])
-def get_profile(user_id: str, name: str):
-    ...
-
-```
-
-The LLM **cannot** override `user_id` unless you set `strict_server_params=False`.
-
-## 5. Running the Server
-
-```bash
-uvicorn my_server:app --port 3333
-```
-
-Use `--reload` for hot-reloading during development.
-
-## 6. Modular Routers
-
-Use `FastXMCPRouter` (similar to FastAPI's `APIRouter`) to group related tools
-and mount them on a main application.  All router tools are automatically
-merged into the parent registry and exposed via `tools/list` & `tools/call`.
-
-```python
-from seqoria_agent.server.fastxmcp import FastXMCP, FastXMCPRouter
-
-math = FastXMCPRouter(prefix="/math", tags=["math"])
-
-@math.tool()
-def add(a: int, b: int) -> int:
-    return a + b
-
-@math.tool()
-def multiply(a: int, b: int) -> int:
-    return a * b
-
-app = FastXMCP(title="Utility Server")
-app.include_router(math)
 
 if __name__ == "__main__":
-    app.run(port=8000)
+    server.run(transport="streamable-http")
 ```
 
-If two routers (or the parent app) attempt to register the **same tool name**
-`include_router()` raises `XMCPError(code="DUPLICATE_TOOL")` to prevent
-ambiguous calls. 
+Connect a client with `mcp_servers=["http://127.0.0.1:8000/mcp"]`. A bare HTTP origin is expanded to `/mcp`; explicit endpoint paths are preserved. Use `MCPServerConfig` for headers, timeout, transport type, subprocess environment, or OAuth. OAuth's default interactive browser/loopback flow is intended for local scripts; a web service must provide its own user authorization flow and handlers.
 
-## 7. Securing Tools
+## Hidden server parameters
 
-Authentication helpers were removed from this library. Secure your MCP endpoint using your existing infrastructure:
+```python
+@server.register_param_provider
+async def resolve_identity(ctx, tool_name, param_name):
+    # Authenticate the transport and verify authorization in your application.
+    if param_name == "tenant_id":
+        return await authenticated_tenant_for_request(ctx)
+    return None
 
-- Run behind a reverse proxy / API gateway (recommended).
-- Use FastAPI middleware in your own app to validate headers/cookies before requests reach the MCP server.
+@server.tool(server_populated=["tenant_id"])
+async def report(region: str, tenant_id: str) -> dict:
+    """Read a regional report for the authenticated tenant."""
+    return await reports.read(tenant_id=tenant_id, region=region)
+```
+
+Hidden parameters are omitted from the public tool schema. Their values come from server-side providers or authenticated request context on every call; missing values fail closed. Do not accept caller-supplied tenant or user IDs as proof of identity. The client does not transmit local `server_args` to remote tools.
+
+Dependency annotations apply to requested calls in the agent's executor. They are scheduling hints, not a security boundary. Validate access inside each tool even when another tool declares an authorization dependency.
+
+Synchronous functions execute in worker threads. `format_tool_response()` and `format_error_response()` remain available for applications that need explicit response envelopes; ordinary tools can return normal Python values.

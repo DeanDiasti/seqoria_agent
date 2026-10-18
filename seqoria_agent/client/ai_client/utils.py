@@ -16,12 +16,14 @@ _json_impl: str = "json"  # Track which implementation is active
 
 try:
     import orjson as _orjson  # type: ignore
+
     _json_impl = "orjson"
 except ModuleNotFoundError:
     _orjson = None
 
 try:
     import ujson as _ujson  # type: ignore
+
     if _orjson is None:
         _json_impl = "ujson"
 except ModuleNotFoundError:
@@ -39,7 +41,7 @@ except ModuleNotFoundError:
 
 def json_dumps(obj: Any, *, sort_keys: bool = False, indent: int | None = None) -> str:
     """Serialize object to JSON string using fastest available library.
-    
+
     Parameters
     ----------
     obj : Any
@@ -48,7 +50,7 @@ def json_dumps(obj: Any, *, sort_keys: bool = False, indent: int | None = None) 
         Whether to sort dictionary keys (for deterministic output).
     indent : int | None
         Indentation level for pretty printing. None for compact output.
-        
+
     Returns
     -------
     str
@@ -68,12 +70,12 @@ def json_dumps(obj: Any, *, sort_keys: bool = False, indent: int | None = None) 
 
 def json_loads(s: str | bytes) -> Any:
     """Deserialize JSON string using fastest available library.
-    
+
     Parameters
     ----------
     s : str | bytes
         JSON string or bytes to deserialize.
-        
+
     Returns
     -------
     Any
@@ -94,14 +96,14 @@ def json_impl_name() -> str:
 
 def fast_hash(data: str | bytes) -> str:
     """Compute fast non-cryptographic hash of data.
-    
+
     Uses xxhash if available, falls back to SHA-1 truncated.
-    
+
     Parameters
     ----------
     data : str | bytes
         Data to hash.
-        
+
     Returns
     -------
     str
@@ -109,7 +111,7 @@ def fast_hash(data: str | bytes) -> str:
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
-    
+
     if _xxhash is not None:
         return _xxhash.xxh3_64_hexdigest(data)
     else:
@@ -147,6 +149,7 @@ def extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D
     try:
         # Lazy import: XML parsing is relatively rare compared to JSON handling.
         import xml.etree.ElementTree as ET
+
         root = ET.fromstring(text=xml_str.strip())
         error_el = root.find(path=XML_ERROR_TAG)
         if error_el is None:
@@ -164,17 +167,16 @@ def extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D
             except Exception:
                 meta = meta_node.text.strip()
 
-        return {"code": code,
-                "retryable": retryable,
-                "detail": detail_text,
-                "meta": meta}
+        return {"code": code, "retryable": retryable, "detail": detail_text, "meta": meta}
     except Exception:
         return None
 
 
-def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str | None = None) -> str:  # noqa: D401
+def build_cache_key(
+    tool_name: str, arguments: Dict[str, Any], *, tenant_id: str | None = None
+) -> str:  # noqa: D401
     """Return a deterministic cache key for *tool_name* + *arguments*.
-    
+
     Parameters
     ----------
     tool_name:
@@ -186,7 +188,7 @@ def build_cache_key(tool_name: str, arguments: Dict[str, Any], *, tenant_id: str
         resulting key is ``tenant:{tenant_id}:tool:{tool_name}:{hash}``.
     """
     canonical_json = json_dumps(arguments, sort_keys=True)
-    args_hash = fast_hash(canonical_json)
+    args_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
     prefix = f"tenant:{tenant_id}:" if tenant_id else ""
-    return f"{prefix}tool:{tool_name}:{args_hash}" 
+    return f"{prefix}tool:{tool_name}:{args_hash}"

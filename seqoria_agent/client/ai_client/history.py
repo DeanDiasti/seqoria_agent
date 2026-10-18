@@ -1,25 +1,7 @@
-"""Conversation history utilities for *seqoria_agent*'s AIClient stack.
-
-This module centralises helpers that operate on the *history* list shared
-between the high-level :class:`seqoria_agent.client.AIClient`,
-:class:`seqoria_agent.client.ai_client.Executor` and their collaborators.
-
-Currently the helpers are intentionally *simple* - sophistication can be added
-in later phases without touching the surrounding code.
-"""
+"""Default system prompt for application-owned conversation histories."""
 
 from __future__ import annotations
 
-import logging
-
-# Prefer structlog where available to keep logging style consistent across the
-# codebase.  Fallback to stdlib `logging` otherwise so we never break.
-try:
-    import structlog  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover – optional dependency
-    structlog = None
-
-_logger = structlog.get_logger(name="seqoria_agent.history") if structlog else logging.getLogger(name="seqoria_agent.history")
 
 def build_system_prompt(extra_instructions: str | None = None) -> str:  # noqa: D401
     """Return the default system prompt used by *AIClient*.

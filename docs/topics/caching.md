@@ -1,43 +1,18 @@
-# Caching
+# Tool-result caching
 
-Avoid redundant tool execution by injecting a cache backend that fulfils the lightweight `CacheProtocol`.
-
-```python
-from xmcp.client.cache import RedisCache, build_cache_key
-
-ai = AIClient(
-    urls=["http://localhost:3333"],
-    providers=[OpenAIProvider(model_id="gpt-4o")],
-    cache=RedisCache(ttl=300),   # 5-min window
-)
-```
-
-### Deterministic Keys
-
-Order of arguments does **not** matter:
+Caching is disabled unless a cache is supplied to the client. Cache only tool collections whose successful results are safe to reuse. A cache must not be enabled for side-effecting tools that need to execute on every request.
 
 ```python
-args1 = {"b": 2, "a": 1}
-args2 = {"a": 1, "b": 2}
-assert build_cache_key("tool", args1) == build_cache_key("tool", args2)
+from seqoria_agent.client.cache import DictCache
+
+cache = DictCache(max_entries=1024)
+# Pass cache=cache and cache_ttl=60 when constructing AsyncAIClient.
 ```
 
-### DictCache (Testing)
+`DictCache` uses bounded LRU eviction and a monotonic clock for expiration. It is local to one process. The optional `RedisCache` requires the `redis` extra; close its connections with `await cache.aclose()` after client shutdown.
 
-```python
-from xmcp.client.cache import DictCache
-ai = AIClient(urls=[...], providers=[...], cache=DictCache())
-```
+Executor cache keys include the tool arguments, injected parameters, full trusted request context, and a random namespace belonging to the client instance. Users and permissions within one tenant therefore have separate entries. Unserializable context disables caching for that call. A Redis backend does not share entries between independently constructed clients or workers under this policy.
 
-### NullCache (Disable)
+Supply all identity and permission fields relevant to the result in `context`, derived from authenticated application state. The library cannot infer authorization from a remote server's response. Changed source data can still make a cached response stale; choose a suitable TTL or leave caching disabled.
 
-```python
-from xmcp.client.cache import NullCache
-ai = AIClient(urls=[...], providers=[...], cache=NullCache())
-```
-
-### When it Works
-
-1. Client computes the cache key.
-2. If present, tool call is **skipped**.
-3. Result is re-injected into the conversation history so the LLM behaves identically. 
+Low-level `build_cache_key()` only hashes the values its caller supplies. The executor adds its isolation inputs around that helper. Cache backend errors do not prevent tool execution, and tool failures are not written as successful cache entries.

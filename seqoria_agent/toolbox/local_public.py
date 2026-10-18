@@ -19,13 +19,16 @@ Example
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, get_type_hints
+
+from pydantic import BaseModel, ConfigDict, create_model
 
 __all__ = ["LocalToolbox", "ToolInfo"]
 
@@ -53,6 +56,7 @@ class ToolInfo:
     server_params: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     input_schema: dict[str, Any] = field(default_factory=dict)
+    argument_model: type[BaseModel] | None = None
 
 
 class LocalToolbox:
@@ -131,12 +135,16 @@ class LocalToolbox:
             tool_desc = description or (fn.__doc__ or "").strip().split("\n")[0]
 
             # Generate input schema
-            input_schema = self._generate_schema(fn, server_populated_list)
+            argument_model = self._create_argument_model(fn, server_populated_list)
+            input_schema = argument_model.model_json_schema()
 
             # Wrap function for async execution
             @functools.wraps(fn)
             async def wrapped(*args: Any, **kwargs: Any) -> Any:
-                result = fn(*args, **kwargs)
+                if inspect.iscoroutinefunction(fn):
+                    result = fn(*args, **kwargs)
+                else:
+                    result = await asyncio.to_thread(fn, *args, **kwargs)
                 if inspect.isawaitable(result):
                     result = await result
                 return result
@@ -148,78 +156,33 @@ class LocalToolbox:
                 server_params=server_populated_list,
                 depends_on=depends_on_list,
                 input_schema=input_schema,
+                argument_model=argument_model,
             )
 
             return fn
 
         return decorator
 
-    def _generate_schema(
+    def _create_argument_model(
         self,
         fn: Callable[..., Any],
         server_populated: list[str],
-    ) -> dict[str, Any]:
-        """Generate JSON Schema for function parameters."""
+    ) -> type[BaseModel]:
+        """Build the public argument schema and validator once at registration."""
         sig = inspect.signature(fn)
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-
-        for param_name, param in sig.parameters.items():
-            # Skip server-populated params (hidden from LLM)
-            if param_name in server_populated:
+        hints = get_type_hints(fn, include_extras=True)
+        fields = {}
+        for name, param in sig.parameters.items():
+            if name in server_populated or name == "self":
                 continue
-            # Skip 'self' and context-like params
-            if param_name in ("self", "ctx", "context"):
-                continue
-
-            # Get type annotation
-            ann = param.annotation
-            if ann is inspect.Parameter.empty:
-                ann = str
-
-            # Map to JSON Schema type
-            prop_schema = self._type_to_schema(ann)
-            properties[param_name] = prop_schema
-
-            # Track required params
-            if param.default is inspect.Parameter.empty:
-                required.append(param_name)
-
-        schema: dict[str, Any] = {"type": "object", "properties": properties}
-        if required:
-            schema["required"] = required
-
-        return schema
-
-    def _type_to_schema(self, tp: Any) -> dict[str, Any]:
-        """Convert Python type to JSON Schema type."""
-        # Handle string annotations
-        if isinstance(tp, str):
-            tp_lower = tp.lower()
-            if tp_lower in ("int", "integer"):
-                return {"type": "integer"}
-            if tp_lower in ("bool", "boolean"):
-                return {"type": "boolean"}
-            if tp_lower in ("float", "number"):
-                return {"type": "number"}
-            return {"type": "string"}
-
-        # Handle actual types
-        if tp is bool:
-            return {"type": "boolean"}
-        if tp is int:
-            return {"type": "integer"}
-        if tp is float:
-            return {"type": "number"}
-        if tp is str:
-            return {"type": "string"}
-        if tp is list:
-            return {"type": "array"}
-        if tp is dict:
-            return {"type": "object"}
-
-        # Default to string
-        return {"type": "string"}
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                raise TypeError("Tool parameters must be explicitly named")
+            annotation = hints.get(name, str)
+            default = ... if param.default is inspect.Parameter.empty else param.default
+            fields[name] = (annotation, default)
+        return create_model(
+            f"{fn.__name__}Arguments", __config__=ConfigDict(extra="forbid"), **fields
+        )
 
     async def call_tool(
         self,
@@ -267,9 +230,7 @@ class LocalToolbox:
         if self._strict_server_params:
             for param in info.server_params:
                 if param in arguments:
-                    raise ValueError(
-                        f"Cannot override server-populated param: {param}"
-                    )
+                    raise ValueError(f"Cannot override server-populated param: {param}")
 
         # Merge server_args into arguments
         arguments.update(server_args)
@@ -288,7 +249,16 @@ class LocalToolbox:
                 f"Missing server-populated parameters for '{name}': {', '.join(missing)}"
             )
 
-        # Execute tool - let exceptions propagate so executor can handle them
+        # Validate public arguments with the same model used for discovery.
+        # Attribute access preserves nested Pydantic instances for typed tools.
+        if info.argument_model is not None:
+            hidden = {key: value for key, value in arguments.items() if key in info.server_params}
+            public = {
+                key: value for key, value in arguments.items() if key not in info.server_params
+            }
+            validated = info.argument_model.model_validate(public)
+            arguments = {key: getattr(validated, key) for key in type(validated).model_fields}
+            arguments.update(hidden)
         result = await info.func(**arguments)
         text = self._format_result(name, result)
 

@@ -13,7 +13,6 @@ OpenAIProvider / AnthropicProvider (and provide keys) to see live numbers.
 import asyncio
 from seqoria_agent import AsyncAIClient
 from seqoria_agent.providers import AsyncOpenAIProvider
-from seqoria_agent.providers.schemas import LLMResponse, LLMUsage
 import os
 from dotenv import load_dotenv
 from seqoria_agent.models.chunk import AssistantMessage, ToolMessages, ChatChunk

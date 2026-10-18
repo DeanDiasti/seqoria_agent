@@ -1,25 +1,27 @@
 [project]
 name = "seqoria-agent"
-version = "0.6.3"
+version = "0.7.0"
 description = "Seqoria Agentic Assistant Framework - MCP-native tool orchestration for AI applications"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
 authors = [
     { name = "Dean Diasti"},
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 # Core dependencies - minimal footprint
 dependencies = [
-    "httpx[http2]>=0.28.1",
-    "mcp[cli]>=1.25.0",
-    "mlx-vlm>=0.4.4",
-    "pydantic>=2.12.5",
-    "structlog>=25.5.0",
+    "httpx[http2]>=0.28.1,<1",
+    "mcp>=1.25.0,<2",
+    "pydantic>=2.12.5,<3",
 ]
 
 [project.urls]
@@ -28,8 +30,6 @@ Documentation = "https://deandiasti.github.io/seqoria_agent/"
 Repository = "https://github.com/deandiasti/seqoria_agent"
 
 [project.optional-dependencies]
-# LLM Provider extras - install only what you need
-
 # Caching backends
 redis = ["redis>=7.1.0"]
 
@@ -42,44 +42,26 @@ performance = [
 # FastAPI server support
 server = ["fastapi>=0.128.0"]
 
-# Memory store adapters (canonical + vector)
-memory-mongo = ["pymongo"]
-memory-postgres = ["psycopg[binary]"]
-memory-pgvector = [
-    "psycopg[binary]",
-    "pgvector",
-]
-memory-qdrant = ["qdrant-client"]
-memory = [
-    "pymongo",
-    "psycopg[binary]",
-    "pgvector",
-    "qdrant-client",
-]
-
 # Local Apple Silicon inference (MLX)
-mlx-lm = ["mlx-lm"]
-mlx-vlm = ["mlx-vlm"]
+mlx-lm = ["mlx-lm; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+mlx-vlm = ["mlx-vlm>=0.4.4; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
-# Full installation with all features
+# All portable optional features (MLX remains a separate platform-specific extra)
 all = [
     "redis>=7.1.0",
     "orjson>=3.9.0",
     "xxhash>=3.6.0",
     "fastapi>=0.128.0",
-    "pymongo",
-    "psycopg[binary]",
-    "pgvector",
-    "qdrant-client",
 ]
 
 # Development dependencies
 dev = [
     "build>=1.3.0",
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
-    "ruff>=0.4.1",
+    "ruff>=0.9.0",
+    "twine>=6.0.0",
     "redis>=7.1.0",
     "orjson>=3.9.0",
     "xxhash>=3.6.0",
@@ -87,28 +69,35 @@ dev = [
 ]
 
 docs = [
-    "mkdocs>=1.6.0",
+    "mkdocs>=1.6.0,<2",
     "mkdocs-material>=9.5.18",
     "mkdocstrings[python]>=0.25.1",
     "pymdown-extensions>=10.8",
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "D", "B"]
 ignore = [
-    "D401", "ANN101", "ANN001", "D205", "D212",  
+    "D401", "D205", "D212",
     "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D202", "D407", "D406", "D204",
     "E501", "I001",
     "B904", "N814", "F541", "E402", "N806"
 ]
 
-[tool.ruff.pydocstyle]
+[tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["seqoria_agent"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["seqoria_agent"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/seqoria_agent", "/tests", "/README.md", "/CHANGELOG.md", "/LICENSE.txt", "/pyproject.toml", "/pytest.ini", "/RELEASING.md"]

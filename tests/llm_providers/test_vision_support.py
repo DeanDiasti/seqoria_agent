@@ -1,8 +1,6 @@
 """Tests for vision/image support in providers."""
 
-import pytest
 import base64
-from unittest.mock import patch, MagicMock
 
 
 class TestOpenAIImageConversion:

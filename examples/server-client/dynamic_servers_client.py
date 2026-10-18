@@ -1,4 +1,4 @@
-"""examples/server-client/dynamic_servers_client.py
+"""examples/server-client/dynamic_servers_client.py.
 
 Demonstrates dynamically adding/removing MCP servers after client initialization.
 

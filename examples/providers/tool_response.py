@@ -1,4 +1,4 @@
-"""examples/providers/tool_response.py
+"""examples/providers/tool_response.py.
 
 Demonstration of using `OpenAIProvider.async_stream` with a tool declaration.
 
