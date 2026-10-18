@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2 — 2026-10-18
+
+- Publish the updated README on PyPI, covering supported providers, streaming and tool failures, multi-user integration, caching, MCP servers, and migration from 0.6.
+- No runtime code changes from 0.7.1.
+
 ## 0.7.1 — 2026-10-18
 
 - Keep failed tool calls in chat history as `ToolCallError` events, isolate missing identity parameters to their own tool call, and check dependency cycles for single calls.
