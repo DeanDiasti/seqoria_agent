@@ -14,16 +14,17 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 
 import httpx
 
+from seqoria_agent._redaction import safe_exception_cause
 from seqoria_agent.client.ai_client.utils import json_loads
 from seqoria_agent.models.chunk import (
     AssistantMessage,
     SystemMessage,
+    ToolCallError,
     ToolCallRequest,
     ToolCallResult,
-    ToolCallError,
     UserMessage,
 )
-from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider, ChatHistory
 from seqoria_agent.providers.errors import (
     ConnectionError,
     ContextLengthExceededError,
@@ -36,31 +37,38 @@ from seqoria_agent.providers.errors import (
 )
 from seqoria_agent.providers.schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
 
+from ._validation import parse_tool_arguments, validate_max_retries
+
 _EMPTY_JSON: str = "{}"
 
 
 class _OllamaProviderMixin:
     """Shared functionality between sync and async Ollama providers."""
 
+    default_params: Dict[str, Any]
+    model_id: Optional[str]
+
     def _init_common(
         self,
-        model_id: str,
+        model_id: Optional[str],
         host: Optional[str] = None,
         api_key: Optional[str] = None,
         **kwargs,
-    ) -> tuple:
+    ) -> tuple[str, Dict[str, str], str, Dict[str, Any], int, bool]:
         """Common initialization logic shared between sync and async providers."""
         if not model_id:
             raise InvalidRequestError(message="model_id is required for Ollama provider")
 
-        effective_host = (host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
+        effective_host = (host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")).rstrip(
+            "/"
+        )
         effective_api_key = api_key or os.environ.get("OLLAMA_API_KEY")
 
         headers: Dict[str, str] = {}
         if effective_api_key:
             headers["Authorization"] = f"Bearer {effective_api_key}"
 
-        max_retries = kwargs.get("max_retries", 3)
+        max_retries = validate_max_retries(kwargs.get("max_retries", 3))
         auto_pull = kwargs.get("auto_pull", True)
 
         # Valid parameter keys accepted by Ollama /api/chat payload.
@@ -103,7 +111,16 @@ class _OllamaProviderMixin:
     def _build_options(self, params: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """Split params into Ollama top-level keys and nested options keys."""
         top_level_keys = {"format", "keep_alive", "think", "logprobs", "top_logprobs"}
-        options_keys = {"temperature", "top_p", "top_k", "min_p", "seed", "stop", "num_ctx", "num_predict"}
+        options_keys = {
+            "temperature",
+            "top_p",
+            "top_k",
+            "min_p",
+            "seed",
+            "stop",
+            "num_ctx",
+            "num_predict",
+        }
 
         top_level: Dict[str, Any] = {}
         options: Dict[str, Any] = {}
@@ -191,15 +208,21 @@ class _OllamaProviderMixin:
                 return QuotaExceededError(provider="Ollama", limit_type="rate")
             if status_code == 400:
                 if "context length" in message_l or "too long" in message_l:
-                    return ContextLengthExceededError(model_id=self.model_id, tokens=None, max_tokens=None)
+                    return ContextLengthExceededError(
+                        model_id=self.model_id, tokens=None, max_tokens=None
+                    )
                 return InvalidRequestError(message=message, param=param)
             if status_code == 403:
-                return InvalidRequestError(message=f"Ollama permission denied: {message}", param=param)
+                return InvalidRequestError(
+                    message=f"Ollama permission denied: {message}", param=param
+                )
             if 500 <= status_code < 600:
                 return ServerError(provider="Ollama", status_code=status_code)
             return LLMError(message=f"Ollama API Error {status_code}: {message}")
 
-        if isinstance(error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        if isinstance(
+            error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)
+        ):
             return ConnectionError(provider="Ollama", message="Request timed out")
         if isinstance(error, asyncio.TimeoutError) or "timed out" in str(error).lower():
             return ConnectionError(provider="Ollama", message="Request timed out")
@@ -220,7 +243,9 @@ class _OllamaProviderMixin:
 
         return LLMError(message=f"An unexpected Ollama error occurred: {error}")
 
-    def _convert_image_content_ollama(self, content: Union[str, List[Dict[str, Any]]]) -> tuple[str, List[str]]:
+    def _convert_image_content_ollama(
+        self, content: Union[str, List[Dict[str, Any]]]
+    ) -> tuple[str, List[str]]:
         """Convert common multimodal blocks to Ollama's text + images format."""
         if isinstance(content, str):
             return content, []
@@ -265,9 +290,7 @@ class _OllamaProviderMixin:
 
     def _prepare_chat_history_sync(
         self,
-        chat_history: List[
-            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, ToolCallError, AssistantMessage, UserMessage, SystemMessage]
-        ],
+        chat_history: ChatHistory,
     ) -> List[Dict[str, Any]]:
         """Prepare chat history for Ollama API."""
         prepared_messages: List[Dict[str, Any]] = []
@@ -291,16 +314,20 @@ class _OllamaProviderMixin:
                 continue
 
             if isinstance(raw_msg, (ToolCallResult, ToolCallError)):
-                prepared_messages.append({
-                    "role": "tool",
-                    "content": str(raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result),
-                    "tool_call_id": str(raw_msg.tool_call_id),
-                    "tool_name": raw_msg.name or "",
-                })
+                prepared_messages.append(
+                    {
+                        "role": "tool",
+                        "content": str(
+                            raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result
+                        ),
+                        "tool_call_id": str(raw_msg.tool_call_id),
+                        "tool_name": raw_msg.name or "",
+                    }
+                )
                 continue
 
             if isinstance(raw_msg, (AssistantMessage, UserMessage, SystemMessage)):
-                text_content, images = self._convert_image_content_ollama(raw_msg.content)
+                text_content, images = self._convert_image_content_ollama(raw_msg.content or "")
                 msg: Dict[str, Any] = {"role": raw_msg.role, "content": text_content}
                 if images:
                     msg["images"] = images
@@ -328,12 +355,18 @@ class _OllamaProviderMixin:
                 continue
 
             if role in {"tool_result", "tool_error", "tool"}:
-                prepared_messages.append({
-                    "role": "tool",
-                    "content": str(raw_msg.get("error", "") if role == "tool_error" else raw_msg.get("result", content)),
-                    "tool_call_id": str(raw_msg.get("tool_call_id", raw_msg.get("id", ""))),
-                    "tool_name": raw_msg.get("name", raw_msg.get("tool_name", "")) or "",
-                })
+                prepared_messages.append(
+                    {
+                        "role": "tool",
+                        "content": str(
+                            raw_msg.get("error", "")
+                            if role == "tool_error"
+                            else raw_msg.get("result", content)
+                        ),
+                        "tool_call_id": str(raw_msg.get("tool_call_id", raw_msg.get("id", ""))),
+                        "tool_name": raw_msg.get("name", raw_msg.get("tool_name", "")) or "",
+                    }
+                )
                 continue
 
             if role in {"assistant", "system", "user"}:
@@ -352,14 +385,14 @@ class _OllamaProviderMixin:
 
     async def _prepare_chat_history_async(
         self,
-        chat_history: List[
-            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, ToolCallError, AssistantMessage, UserMessage, SystemMessage]
-        ],
+        chat_history: ChatHistory,
     ) -> List[Dict[str, Any]]:
         """Async wrapper around sync chat-history preparation."""
         return self._prepare_chat_history_sync(chat_history)
 
-    def _convert_tools_for_ollama(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    def _convert_tools_for_ollama(
+        self, tools: Optional[List[Dict[str, Any]]]
+    ) -> Optional[List[Dict[str, Any]]]:
         """Convert tool definitions to Ollama's function-tool schema."""
         if not tools:
             return None
@@ -403,14 +436,7 @@ class _OllamaProviderMixin:
         for i, tc in enumerate(tool_calls):
             function_info = tc.get("function", {}) if isinstance(tc, dict) else {}
             args = function_info.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    decoded = json_loads(args)
-                    args = decoded if isinstance(decoded, dict) else {}
-                except Exception:
-                    args = {}
-            if not isinstance(args, dict):
-                args = {}
+            args = parse_tool_arguments(args)
 
             parsed.append(
                 ToolCall(
@@ -423,7 +449,9 @@ class _OllamaProviderMixin:
 
         return parsed
 
-    def _iter_ndjson_events(self, response: httpx.Response) -> Generator[Dict[str, Any], None, None]:
+    def _iter_ndjson_events(
+        self, response: httpx.Response
+    ) -> Generator[Dict[str, Any], None, None]:
         """Yield parsed NDJSON events from sync streaming response."""
         for line in response.iter_lines():
             if line is None:
@@ -433,12 +461,15 @@ class _OllamaProviderMixin:
                 continue
             try:
                 payload = json_loads(stripped)
-            except Exception:
-                continue
-            if isinstance(payload, dict):
-                yield payload
+            except (ValueError, TypeError) as exc:
+                raise LLMError("Provider returned malformed stream event JSON") from exc
+            if not isinstance(payload, dict):
+                raise LLMError("Provider stream event must be a JSON object")
+            yield payload
 
-    async def _aiter_ndjson_events(self, response: httpx.Response) -> AsyncGenerator[Dict[str, Any], None]:
+    async def _aiter_ndjson_events(
+        self, response: httpx.Response
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """Yield parsed NDJSON events from async streaming response."""
         async for line in response.aiter_lines():
             if line is None:
@@ -448,10 +479,11 @@ class _OllamaProviderMixin:
                 continue
             try:
                 payload = json_loads(stripped)
-            except Exception:
-                continue
-            if isinstance(payload, dict):
-                yield payload
+            except (ValueError, TypeError) as exc:
+                raise LLMError("Provider returned malformed stream event JSON") from exc
+            if not isinstance(payload, dict):
+                raise LLMError("Provider stream event must be a JSON object")
+            yield payload
 
     @staticmethod
     def _extract_model_names_from_tags_payload(payload: Dict[str, Any]) -> List[str]:
@@ -472,7 +504,9 @@ class _OllamaProviderMixin:
                         names.append(name)
         return names
 
-    def _validate_model_sync(self, client: httpx.Client, model_id: str, auto_pull: bool = True) -> None:
+    def _validate_model_sync(
+        self, client: httpx.Client, model_id: str, auto_pull: bool = True
+    ) -> None:
         """Validate that model is available, with optional auto-pull."""
         try:
             tags_resp = client.get("/api/tags")
@@ -489,7 +523,9 @@ class _OllamaProviderMixin:
                 return
 
             if auto_pull:
-                stream_ctx = client.stream("POST", "/api/pull", json={"model": model_id, "stream": True})
+                stream_ctx = client.stream(
+                    "POST", "/api/pull", json={"model": model_id, "stream": True}
+                )
                 response = stream_ctx.__enter__()
                 try:
                     if response.status_code >= 400:
@@ -517,9 +553,12 @@ class _OllamaProviderMixin:
         except ModelNotFoundError:
             raise
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
-    async def _validate_model_async(self, client: httpx.AsyncClient, model_id: str, auto_pull: bool = True) -> None:
+    async def _validate_model_async(
+        self, client: httpx.AsyncClient, model_id: str, auto_pull: bool = True
+    ) -> None:
         """Async model validation with optional auto-pull."""
         try:
             tags_resp = await client.get("/api/tags")
@@ -536,7 +575,9 @@ class _OllamaProviderMixin:
                 return
 
             if auto_pull:
-                stream_ctx = client.stream("POST", "/api/pull", json={"model": model_id, "stream": True})
+                stream_ctx = client.stream(
+                    "POST", "/api/pull", json={"model": model_id, "stream": True}
+                )
                 response = await stream_ctx.__aenter__()
                 try:
                     if response.status_code >= 400:
@@ -564,15 +605,18 @@ class _OllamaProviderMixin:
         except ModelNotFoundError:
             raise
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
 
 class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
     """Asynchronous provider implementation for Ollama HTTP API."""
 
+    model_id: str
+
     def __init__(
         self,
-        model_id: str,
+        model_id: Optional[str],
         host: Optional[str] = "http://localhost:11434",
         api_key: Optional[str] = None,
         keep_alive: Optional[str] = None,
@@ -598,7 +642,7 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
                 http2=True,
             )
         except Exception as e:
-            raise ConnectionError(provider="Ollama", message=str(e)) from e
+            raise ConnectionError(provider="Ollama", message=str(e)) from safe_exception_cause(e)
 
     async def validate_model(self) -> None:
         """Validate that configured model is available."""
@@ -606,9 +650,9 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
 
     async def async_generate(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> Union[LLMResponse, ToolCallList]:
@@ -636,16 +680,15 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
             response = await self.async_client.post("/api/chat", json=payload)
             response.raise_for_status()
             data = response.json()
-            if not isinstance(data, dict):
-                raise LLMError(message="Ollama API returned an unexpected response payload.")
+            if not isinstance(data, dict) or not isinstance(data.get("message"), dict):
+                raise LLMError("Provider returned a malformed response: expected a message object")
             return data
 
         try:
             response = await self._execute_with_retry(_call)
         except Exception as e:
-            if not isinstance(e, LLMError):
-                raise self._handle_error(e)
-            raise
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
         message = response.get("message", {}) if isinstance(response.get("message"), dict) else {}
         content = message.get("content", "")
@@ -663,6 +706,8 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
             )
 
         if tool_calls:
+            if response.get("done") is False or response.get("done_reason") == "length":
+                raise LLMError("Provider response ended before tool calls completed")
             return ToolCallList(
                 model_id=response.get("model", effective_model),
                 tool_calls=self._parse_tool_calls(tool_calls),
@@ -680,9 +725,9 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
 
     async def async_stream(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> AsyncGenerator[Union[LLMResponse, ToolCallList], None]:
@@ -727,12 +772,25 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
         final_usage = None
         stop_reason = None
         tool_calls_accumulated: List[Dict[str, Any]] = []
+        stream_completed = False
 
         try:
             stream_ctx, response = await self._execute_with_retry(_open_stream)
             try:
                 async for chunk in self._aiter_ndjson_events(response):
-                    message = chunk.get("message", {}) if isinstance(chunk.get("message"), dict) else {}
+                    if chunk.get("error"):
+                        raise LLMError("Provider returned a streaming error")
+                    if not isinstance(chunk.get("done"), bool):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected a done flag"
+                        )
+                    if not chunk["done"] and not isinstance(chunk.get("message"), dict):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected a message object"
+                        )
+                    message = (
+                        chunk.get("message", {}) if isinstance(chunk.get("message"), dict) else {}
+                    )
                     content_delta = message.get("content", "")
                     thinking_delta = message.get("thinking", "")
 
@@ -764,6 +822,7 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
                         )
 
                     if chunk.get("done"):
+                        stream_completed = True
                         final_model = chunk.get("model", effective_model)
                         stop_reason = chunk.get("done_reason")
                         prompt_eval_count = chunk.get("prompt_eval_count")
@@ -777,11 +836,14 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
             finally:
                 await stream_ctx.__aexit__(None, None, None)
         except Exception as e:
-            if not isinstance(e, LLMError):
-                raise self._handle_error(e)
-            raise
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
+        if not stream_completed:
+            raise LLMError("Provider stream ended without a completion event")
         if tool_calls_accumulated:
+            if stop_reason == "length":
+                raise LLMError("Provider response ended before tool calls completed")
             yield ToolCallList(
                 model_id=final_model,
                 tool_calls=self._parse_tool_calls(tool_calls_accumulated),
@@ -801,9 +863,11 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
 class OllamaProvider(BaseProvider, _OllamaProviderMixin):
     """Synchronous provider implementation for Ollama HTTP API."""
 
+    model_id: str
+
     def __init__(
         self,
-        model_id: str,
+        model_id: Optional[str],
         host: Optional[str] = None,
         api_key: Optional[str] = None,
         validate_on_init: bool = False,
@@ -830,7 +894,7 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
                 http2=True,
             )
         except Exception as e:
-            raise ConnectionError(provider="Ollama", message=str(e)) from e
+            raise ConnectionError(provider="Ollama", message=str(e)) from safe_exception_cause(e)
 
         if validate_on_init:
             try:
@@ -846,9 +910,9 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
 
     def generate(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> Union[LLMResponse, ToolCallList]:
@@ -876,16 +940,15 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
             response = self.client.post("/api/chat", json=payload)
             response.raise_for_status()
             data = response.json()
-            if not isinstance(data, dict):
-                raise LLMError(message="Ollama API returned an unexpected response payload.")
+            if not isinstance(data, dict) or not isinstance(data.get("message"), dict):
+                raise LLMError("Provider returned a malformed response: expected a message object")
             return data
 
         try:
             response = self._execute_with_retry(_call)
         except Exception as e:
-            if not isinstance(e, LLMError):
-                raise self._handle_error(e)
-            raise
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
         message = response.get("message", {}) if isinstance(response.get("message"), dict) else {}
         content = message.get("content", "")
@@ -903,6 +966,8 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
             )
 
         if tool_calls:
+            if response.get("done") is False or response.get("done_reason") == "length":
+                raise LLMError("Provider response ended before tool calls completed")
             return ToolCallList(
                 model_id=response.get("model", effective_model),
                 tool_calls=self._parse_tool_calls(tool_calls),
@@ -920,9 +985,9 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
 
     def stream(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> Generator[Union[LLMResponse, ToolCallList], None, None]:
@@ -967,12 +1032,25 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
         final_usage = None
         stop_reason = None
         tool_calls_accumulated: List[Dict[str, Any]] = []
+        stream_completed = False
 
         try:
             stream_ctx, response = self._execute_with_retry(_open_stream)
             try:
                 for chunk in self._iter_ndjson_events(response):
-                    message = chunk.get("message", {}) if isinstance(chunk.get("message"), dict) else {}
+                    if chunk.get("error"):
+                        raise LLMError("Provider returned a streaming error")
+                    if not isinstance(chunk.get("done"), bool):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected a done flag"
+                        )
+                    if not chunk["done"] and not isinstance(chunk.get("message"), dict):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected a message object"
+                        )
+                    message = (
+                        chunk.get("message", {}) if isinstance(chunk.get("message"), dict) else {}
+                    )
                     content_delta = message.get("content", "")
                     thinking_delta = message.get("thinking", "")
 
@@ -1004,6 +1082,7 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
                         )
 
                     if chunk.get("done"):
+                        stream_completed = True
                         final_model = chunk.get("model", effective_model)
                         stop_reason = chunk.get("done_reason")
                         prompt_eval_count = chunk.get("prompt_eval_count")
@@ -1017,11 +1096,14 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
             finally:
                 stream_ctx.__exit__(None, None, None)
         except Exception as e:
-            if not isinstance(e, LLMError):
-                raise self._handle_error(e)
-            raise
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
+        if not stream_completed:
+            raise LLMError("Provider stream ended without a completion event")
         if tool_calls_accumulated:
+            if stop_reason == "length":
+                raise LLMError("Provider response ended before tool calls completed")
             yield ToolCallList(
                 model_id=final_model,
                 tool_calls=self._parse_tool_calls(tool_calls_accumulated),
@@ -1036,4 +1118,3 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
                 usage=final_usage,
                 stop_reason=stop_reason,
             )
-

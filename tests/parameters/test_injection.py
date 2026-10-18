@@ -1,0 +1,88 @@
+"""Trusted constant and callable sources populate hidden tool arguments."""
+
+from types import SimpleNamespace
+from typing import Mapping
+
+import pytest
+
+from seqoria_agent.client.ai_client.executor import Executor
+from seqoria_agent.client.parameters import ParamContext, ParameterSource
+from seqoria_agent.models.chunk import ToolCallError, ToolCallRequest
+
+
+class _DummyPool:
+    async def call_tool(self, *_, **__):
+        return [SimpleNamespace(text="OK")]
+
+    @property
+    def connections(self):
+        return []
+
+
+class _DummyRegistry:
+    def __init__(self, spp_fields):
+        self._spp_fields = spp_fields
+
+    def server_params(self, name: str):
+        return self._spp_fields.get(name, [])
+
+    def depends_on(self, name: str):
+        return set()
+
+
+@pytest.mark.asyncio
+async def test_constant_param_injection():
+    tool_name = "demo"
+    tc = ToolCallRequest(
+        role="tool_call", id="1", type="function_call", name=tool_name, arguments={}
+    )
+    reg_map: Mapping[str, ParameterSource] = {"user_id": "u-42"}
+    exec_ = Executor(
+        pool=_DummyPool(),
+        registry=_DummyRegistry({tool_name: ["user_id"]}),
+        param_registry=reg_map,
+        allow_override=False,
+    )
+    context: ParamContext = {"history": []}
+    results = await exec_.run_calls([tc], context=context)
+    assert results[0].role == "tool_result"
+
+
+@pytest.mark.asyncio
+async def test_callable_param_injection():
+
+    async def user_callable(history):
+        return "async-user"
+
+    tool_name = "demo2"
+    tc = ToolCallRequest(
+        role="tool_call", id="1", type="function_call", name=tool_name, arguments={}
+    )
+    reg_map = {"user_id": user_callable}
+    exec_ = Executor(
+        pool=_DummyPool(),
+        registry=_DummyRegistry({tool_name: ["user_id"]}),
+        param_registry=reg_map,
+        allow_override=False,
+    )
+    context: ParamContext = {"history": []}
+    results = await exec_.run_calls([tc], context=context)
+    assert results[0].role == "tool_result"
+
+
+@pytest.mark.asyncio
+async def test_missing_param_returns_tool_error():
+    tool_name = "demo3"
+    tc = ToolCallRequest(
+        role="tool_call", id="1", type="function_call", name=tool_name, arguments={}
+    )
+    exec_ = Executor(
+        pool=_DummyPool(),
+        registry=_DummyRegistry({tool_name: ["tenant_id"]}),
+        param_registry={},
+        allow_override=False,
+    )
+    context: ParamContext = {"history": []}
+    results = await exec_.run_calls([tc], context=context)
+    assert isinstance(results[0], ToolCallError)
+    assert "Missing server-populated parameters" in results[0].error

@@ -171,7 +171,7 @@ class LocalToolbox:
         unknown = set(server_populated) - set(sig.parameters)
         if unknown:
             raise ValueError(f"Unknown server-populated parameters: {', '.join(sorted(unknown))}")
-        fields = {}
+        fields: dict[str, Any] = {}
         for name, param in sig.parameters.items():
             if param.kind == inspect.Parameter.POSITIONAL_ONLY:
                 raise TypeError("Tool parameters must accept keyword arguments")

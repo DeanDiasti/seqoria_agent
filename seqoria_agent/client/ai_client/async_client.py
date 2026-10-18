@@ -33,8 +33,8 @@ from seqoria_agent.models.chunk import (
     AssistantMessage,
     ChatChunk,
     LLMUsage,
-    ToolCallRequest,
     ToolCallError,
+    ToolCallRequest,
     ToolCallRequestList,
     ToolCallResult,
     ToolMessages,
@@ -130,7 +130,7 @@ class AsyncAIClient:
             settings = ClientSettings()
 
         # Resolve settings with explicit overrides
-        providers = settings.providers if providers is None else providers
+        configured_providers = settings.providers if providers is None else providers
 
         configured_servers = mcp_servers if mcp_servers is not None else settings.mcp_servers
         _servers = list(configured_servers) if configured_servers is not None else []
@@ -151,21 +151,15 @@ class AsyncAIClient:
         breaker_reset_after = (
             breaker_reset_after if breaker_reset_after is not None else settings.breaker_reset_after
         )
-        param_registry = (
-            param_registry
-            if param_registry is not None
-            else settings.param_registry
-        )
-        blocked_tools = (
-            blocked_tools if blocked_tools is not None else settings.blocked_tools
-        )
+        param_registry = param_registry if param_registry is not None else settings.param_registry
+        blocked_tools = blocked_tools if blocked_tools is not None else settings.blocked_tools
 
         allow_override = settings.allow_override if allow_override is None else allow_override
         if unknown_options:
             raise TypeError("Unknown client options; configure transports with MCPServerConfig")
 
         # Validate
-        if not providers:
+        if not configured_providers:
             raise ValueError("'providers' may not be empty")
 
         if max_concurrency is not None and (
@@ -189,11 +183,16 @@ class AsyncAIClient:
         ):
             raise ValueError("refresh_interval must be nonnegative and finite")
 
-        if any(not isinstance(provider, AsyncBaseProvider) for provider in providers):
-            raise TypeError("AsyncAIClient requires async providers; use an Async*Provider class")
+        resolved_providers: list[AsyncBaseProvider] = []
+        for provider in configured_providers:
+            if not isinstance(provider, AsyncBaseProvider):
+                raise TypeError(
+                    "AsyncAIClient requires async providers; use an Async*Provider class"
+                )
+            resolved_providers.append(provider)
 
         # Store configuration
-        self._providers = list(providers)
+        self._providers = resolved_providers
         self._servers = list(_servers)
         self._boxes = (
             []
@@ -472,7 +471,7 @@ class AsyncAIClient:
         use_tools: bool = True,
         tool_choice: str = "auto",
         model: str | None = None,
-    ) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None]:
+    ) -> AsyncGenerator[Union[ChatChunk, AssistantMessage, ToolCallRequestList], None]:
         """Stream a single LLM generation step."""
         if history is None:
             raise ValueError("history required")
@@ -597,7 +596,7 @@ class AsyncAIClient:
         model: str | None = None,
         context: ParamContext | None = None,
         user_message_content: Union[UserContentInput, None] = None,
-    ) -> AsyncGenerator[Union[str, ChatChunk, AssistantMessage, ToolMessages], None]:
+    ) -> AsyncGenerator[Union[ChatChunk, AssistantMessage, ToolMessages], None]:
         """Stream a chat session with the LLM."""
         if history is None:
             raise ValueError("history required")
@@ -646,7 +645,7 @@ class AsyncAIClient:
                         history.append(message)
                         yield message
                         return
-                    yield chunk
+                    raise ValueError(f"Unexpected tool call without tools: {type(chunk)}")
             return
 
         for _ in range(max_turns):

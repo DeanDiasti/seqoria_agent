@@ -23,14 +23,19 @@ markdown_extensions:
   - toc:
       permalink: true
 nav:
-  - Home: index.md
+  - Overview: index.md
   - Quickstart: quickstart.md
-  - Web applications: topics/multi_tenancy.md
-  - Tool execution: guides/ai_client.md
-  - MCP connections: servers.md
-  - Release review: release-review.md
+  - Guides:
+      - Tool execution: guides/tool-execution.md
+      - Web applications: guides/web-applications.md
+      - MCP connections: guides/mcp.md
+      - Migration: migration.md
   - API reference:
-      - Client: reference/client.md
+      - Client and parameters: reference/client.md
       - Local tools: reference/toolbox.md
-      - Models: reference/models.md
+      - MCP transports: reference/mcp.md
+      - Message models: reference/models.md
       - Providers: reference/providers.md
+  - Maintainers:
+      - Release review: maintainers/release-review.md
+      - Public alpha review: maintainers/public-alpha.md

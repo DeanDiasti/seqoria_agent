@@ -16,12 +16,13 @@ import asyncio
 import copy
 import logging
 from collections.abc import Iterable
-from typing import Any, Dict, List, Optional, Set, FrozenSet
+from typing import Any, Dict, FrozenSet, List, Optional, Set
 
 from mcp import ClientSession
 
+from seqoria_agent._redaction import redact_text, redact_url
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
-from seqoria_agent.client.ai_client.utils import json_dumps, fast_hash
+from seqoria_agent.client.ai_client.utils import fast_hash, json_dumps
 from seqoria_agent.toolbox import LocalToolbox
 
 __all__ = ["ToolRegistry"]
@@ -206,8 +207,14 @@ class ToolRegistry:
         for idx, result in enumerate(results):
             conn = connections[idx]
 
-            if isinstance(result, Exception):
-                self._logger.warning("Could not list tools from server (%s): %s", conn.url, result)
+            if isinstance(result, BaseException):
+                if not isinstance(result, Exception):
+                    raise result
+                self._logger.warning(
+                    "Could not list tools from server (%s): %s",
+                    redact_url(conn.url),
+                    redact_text(result),
+                )
                 continue
 
             if not result:
@@ -227,7 +234,9 @@ class ToolRegistry:
             result = await session.list_tools()
             return list(result.tools) if hasattr(result, "tools") else []
         except Exception as exc:
-            self._logger.warning("Failed to list tools from %s: %s", url, exc)
+            self._logger.warning(
+                "Failed to list tools from %s: %s", redact_url(url), redact_text(exc)
+            )
             return []
 
     async def _refresh_local_tools(
@@ -387,7 +396,7 @@ class ToolRegistry:
                 try:
                     await self.refresh()
                 except Exception as exc:
-                    self._logger.warning("Background refresh failed: %s", exc)
+                    self._logger.warning("Background refresh failed: %s", redact_text(exc))
         except asyncio.CancelledError:
             return
 

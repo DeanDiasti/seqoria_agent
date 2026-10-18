@@ -11,9 +11,43 @@ Two variants are provided:
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Sequence,
+    Union,
+)
 
+from seqoria_agent._redaction import safe_exception_cause
+from seqoria_agent.models.chunk import (
+    AssistantMessage,
+    SystemMessage,
+    ToolCallError,
+    ToolCallRequest,
+    ToolCallResult,
+    UserMessage,
+)
+
+from ._validation import validate_max_retries
 from .schemas import LLMResponse, ToolCallList
+
+ChatHistory = Sequence[
+    Union[
+        Dict[str, Any],
+        AssistantMessage,
+        UserMessage,
+        SystemMessage,
+        ToolCallRequest,
+        ToolCallResult,
+        ToolCallError,
+    ]
+]
 
 
 class AsyncBaseProvider(ABC):
@@ -51,9 +85,9 @@ class AsyncBaseProvider(ABC):
     @abstractmethod
     async def async_generate(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> Union[LLMResponse, ToolCallList]:
@@ -80,20 +114,19 @@ class AsyncBaseProvider(ABC):
         pass
 
     @abstractmethod
-    async def async_stream(
+    def async_stream(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> AsyncGenerator[Union[LLMResponse, ToolCallList], None]:
         """
         Asynchronously stream a completion for the provided chat history.
 
-        Yields content chunks (str) as they arrive, and finally yields a
-        single LLMResponse object containing the full concatenated text,
-        tool calls, and token usage.
+        Yields LLMResponse deltas as they arrive, and finally yields a
+        single LLMResponse or ToolCallList containing the complete result and token usage.
 
         Args:
             chat_history: List of message dictionaries.
@@ -104,7 +137,7 @@ class AsyncBaseProvider(ABC):
 
         Yields
         ------
-            str: Text chunks of the generated completion.
+            LLMResponse: Incremental text or thinking chunks.
             LLMResponse: The final, complete response object.
 
         Raises
@@ -117,7 +150,7 @@ class AsyncBaseProvider(ABC):
     # Shared helper – retry wrapper with jittered exponential back-off
     # ------------------------------------------------------------------
 
-    async def _execute_with_retry(self, operation: callable) -> Any:  # noqa: ANN401
+    async def _execute_with_retry(self, operation: Callable[[], Awaitable[Any]]) -> Any:  # noqa: ANN401
         """Execute *operation* with retry/back-off using instance settings.
 
         Sub-classes must set ``self.max_retries`` **and** implement
@@ -128,12 +161,12 @@ class AsyncBaseProvider(ABC):
         last_error: Exception | None = None
 
         # Fallback if child forgot to set attribute
-        max_retries: int = int(getattr(self, "max_retries", 3))
+        max_retries = validate_max_retries(getattr(self, "max_retries", 3))
 
         while retries <= max_retries:
             try:
                 return await operation()
-            except Exception as exc:  # pragma: no cover – provider-specific
+            except Exception as exc:
                 # Map to our error taxonomy first
                 mapped_error = self._handle_error(exc) if hasattr(self, "_handle_error") else exc
                 last_error = mapped_error
@@ -144,7 +177,7 @@ class AsyncBaseProvider(ABC):
                 is_retryable = isinstance(mapped_error, (ConnectionError, ServerError))
 
                 if not is_retryable:
-                    raise mapped_error
+                    raise mapped_error from safe_exception_cause(exc, raised=mapped_error)
 
                 retries += 1
                 if retries > max_retries:
@@ -201,9 +234,9 @@ class BaseProvider(ABC):
     @abstractmethod
     def generate(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> Union[LLMResponse, ToolCallList]:
@@ -232,18 +265,17 @@ class BaseProvider(ABC):
     @abstractmethod
     def stream(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
         **kwargs,
     ) -> Generator[Union[LLMResponse, ToolCallList], None, None]:
         """
         Synchronously stream a completion for the provided chat history.
 
-        Yields content chunks (str) as they arrive, and finally yields a
-        single LLMResponse object containing the full concatenated text,
-        tool calls, and token usage.
+        Yields LLMResponse deltas as they arrive, and finally yields a
+        single LLMResponse or ToolCallList containing the complete result and token usage.
 
         Args:
             chat_history: List of message dictionaries.
@@ -254,7 +286,7 @@ class BaseProvider(ABC):
 
         Yields
         ------
-            str: Text chunks of the generated completion.
+            LLMResponse: Incremental text or thinking chunks.
             LLMResponse: The final, complete response object.
 
         Raises
@@ -267,26 +299,26 @@ class BaseProvider(ABC):
     # Shared helper – retry wrapper with jittered exponential back-off
     # ------------------------------------------------------------------
 
-    def _execute_with_retry(self, operation: callable) -> Any:  # noqa: ANN401
+    def _execute_with_retry(self, operation: Callable[[], Any]) -> Any:  # noqa: ANN401
         """Execute *operation* with retry/back-off using instance settings.
 
         Sub-classes must set ``self.max_retries`` **and** implement
         ``self._handle_error(error: Exception) -> Exception`` that converts
         provider-specific exceptions into the canonical :class:`LLMError` tree.
         """
-        import time
         import random
+        import time
 
         retries = 0
         last_error: Exception | None = None
 
         # Fallback if child forgot to set attribute
-        max_retries: int = int(getattr(self, "max_retries", 3))
+        max_retries = validate_max_retries(getattr(self, "max_retries", 3))
 
         while retries <= max_retries:
             try:
                 return operation()
-            except Exception as exc:  # pragma: no cover – provider-specific
+            except Exception as exc:
                 # Map to our error taxonomy first
                 mapped_error = self._handle_error(exc) if hasattr(self, "_handle_error") else exc
                 last_error = mapped_error
@@ -297,7 +329,7 @@ class BaseProvider(ABC):
                 is_retryable = isinstance(mapped_error, (ConnectionError, ServerError))
 
                 if not is_retryable:
-                    raise mapped_error
+                    raise mapped_error from safe_exception_cause(exc, raised=mapped_error)
 
                 retries += 1
                 if retries > max_retries:

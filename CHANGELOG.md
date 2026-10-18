@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+## 0.9.1 — 2026-10-18
+
+- Preserve compatible streamed tool arguments and parallel Responses calls; reject malformed arguments, malformed success payloads, and incomplete streams; support multiline compatible SSE frames across sync/async adapters.
+- Reject negative, fractional, and boolean provider retry budgets before opening HTTP clients.
+- Redact endpoint credentials in library diagnostics, error events, direct provider exceptions, and unsafe exception chains while preserving safe causes and error subclasses.
+- Raise the MCP minimum to 1.30.0, which includes the audited security fixes; retain the supported v1 API range.
+- Remove obsolete planning artifacts from source archives; enforce formatting, import ordering, package-wide type checks, a 75% branch-coverage floor, archive checks, and installed-wheel regression tests. Ship the PEP 561 marker for consumers.
+- Pin CI actions, add dependency and secret scans with dependency-update configuration, and retain documentation previews for review.
+- Add a synthetic multi-user benchmark, contributor/support/security policies, issue templates, and concrete provider/parameter/MCP API references.
+- Keep documentation deployment and repository visibility as separate reviewed launch steps.
+- Organize guides and migration notes around the supported API, replace repetitive examples with a documented offline-first catalog, and group regression tests by behavior while preserving all existing cases. Exercise the self-contained examples in automated smoke tests.
+
 ## 0.9.0 — 2026-10-18
 
 - Keep remote identity resolution on the server instead of injecting client context from remote annotations.
@@ -83,5 +97,5 @@ Earlier entries below describe historical releases and may refer to removed APIs
 * Executor and AIClient fully integrated with the registry; server-populated parameters are injected via async resolution.
 * Version bumped to `0.4.0`.
 
-[Unreleased]: https://github.com/deandiasti/xmcp/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/deandiasti/xmcp/releases/tag/v0.1.0 
+[Unreleased]: https://github.com/DeanDiasti/seqoria_agent/compare/v0.9.1...HEAD
+[0.1.0]: https://github.com/DeanDiasti/seqoria_agent/releases/tag/v0.1.0

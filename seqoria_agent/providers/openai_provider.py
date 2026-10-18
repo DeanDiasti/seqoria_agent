@@ -9,16 +9,17 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 
 import httpx
 
+from seqoria_agent._redaction import safe_exception_cause
 from seqoria_agent.client.ai_client.utils import json_dumps, json_loads
 from seqoria_agent.models.chunk import (
     AssistantMessage,
     SystemMessage,
+    ToolCallError,
     ToolCallRequest,
     ToolCallResult,
-    ToolCallError,
     UserMessage,
 )
-from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider, ChatHistory
 from seqoria_agent.providers.errors import (
     ConnectionError,
     ContentFilterError,
@@ -32,26 +33,88 @@ from seqoria_agent.providers.errors import (
 )
 from seqoria_agent.providers.schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
 
+from ._validation import parse_tool_arguments, validate_max_retries
+
 _EMPTY_JSON: str = "{}"
+
+
+class _ResponseToolCalls:
+    """Assemble parallel Responses calls by item ID, preserving addition order."""
+
+    def __init__(self) -> None:
+        self._calls: Dict[str, Dict[str, Any]] = {}
+        self._indices: Dict[int, str] = {}
+        self._done: set[str] = set()
+
+    def consume(self, event: Dict[str, Any]) -> bool:
+        event_type = event.get("type")
+        if event_type in {"response.output_item.added", "response.output_item.done"}:
+            item = event.get("item", {})
+            if not isinstance(item, dict) or item.get("type") != "function_call":
+                return False
+            key = item.get("id") or item.get("call_id")
+            if not isinstance(key, str) or not key:
+                raise LLMError("Provider tool call is missing an item identifier")
+            if "output_index" in event:
+                self._indices[event["output_index"]] = key
+            call = self._calls.setdefault(key, {})
+            call.update(item)
+            call["function_name"] = item.get("name", call.get("function_name", ""))
+            if event_type == "response.output_item.done":
+                self._done.add(key)
+            return True
+        if event_type not in {
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+        }:
+            return False
+        key = event.get("item_id") or self._indices.get(event.get("output_index", -1))
+        if key not in self._calls:
+            raise LLMError("Provider emitted tool arguments without a matching call")
+        call = self._calls[key]
+        if event_type == "response.function_call_arguments.delta":
+            delta = event.get("delta", "")
+            if not isinstance(delta, str):
+                raise LLMError("Provider returned malformed tool arguments")
+            call["arguments"] = call.get("arguments", "") + delta
+        else:
+            if "arguments" in event:
+                call["arguments"] = event["arguments"]
+            self._done.add(key)
+        return True
+
+    def calls(self) -> List[Dict[str, Any]]:
+        if set(self._calls) != self._done:
+            raise LLMError("Provider stream ended before tool calls completed")
+        return list(self._calls.values())
 
 
 class _OpenAIProviderMixin:
     """Shared functionality between sync and async OpenAI providers."""
 
-    def _init_common(self, model_id: str, api_key: Optional[str], base_url: Optional[str], **kwargs) -> tuple:
+    default_params: Dict[str, Any]
+    model_id: Optional[str]
+
+    def _init_common(
+        self, model_id: Optional[str], api_key: Optional[str], base_url: Optional[str], **kwargs
+    ) -> tuple[str, Any, str, Dict[str, Any], int, Dict[str, str]]:
         """Common initialization logic shared between sync and async providers."""
         if api_key is None:
             api_key = os.environ.get("OPENAI_API_KEY")
 
         if not api_key:
-            raise EnvironmentError(message="OpenAI API key not provided", missing_vars=["OPENAI_API_KEY"])
+            raise EnvironmentError(
+                message="OpenAI API key not provided", missing_vars=["OPENAI_API_KEY"]
+            )
 
         if not model_id:
             raise InvalidRequestError(message="model_id is required for OpenAI provider")
 
-        max_retries = kwargs.get("max_retries", 3)
+        max_retries = validate_max_retries(kwargs.get("max_retries", 3))
         timeout = kwargs.get("timeout", 30.0)
-        effective_base_url = (base_url or kwargs.get("base_url") or "https://api.openai.com/v1").rstrip("/")
+        effective_base_url = (
+            base_url or kwargs.get("base_url") or "https://api.openai.com/v1"
+        ).rstrip("/")
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -113,7 +176,9 @@ class _OpenAIProviderMixin:
             return params
         return {k: v for k, v in params.items() if k not in disallowed}
 
-    def _safe_response_text(self, response: httpx.Response, *, max_chars: int = 1200) -> Optional[str]:
+    def _safe_response_text(
+        self, response: httpx.Response, *, max_chars: int = 1200
+    ) -> Optional[str]:
         """Best-effort extraction of response body text for error transparency."""
         try:
             text = response.text
@@ -196,18 +261,25 @@ class _OpenAIProviderMixin:
                     return ContextLengthExceededError(
                         model_id=self.model_id, tokens=tokens, max_tokens=max_tokens
                     )
-                if "content_policy_violation" in code_l or "image_content_policy_violation" in code_l:
+                if (
+                    "content_policy_violation" in code_l
+                    or "image_content_policy_violation" in code_l
+                ):
                     return ContentFilterError(provider="OpenAI", filter_reason=message)
                 return InvalidRequestError(message=message, param=param)
             if status_code == 403:
-                return InvalidRequestError(message=f"OpenAI permission denied: {message}", param=param)
+                return InvalidRequestError(
+                    message=f"OpenAI permission denied: {message}", param=param
+                )
             if status_code == 422:
                 return ContentFilterError(provider="OpenAI", filter_reason=message)
             if 500 <= status_code < 600:
                 return ServerError(provider="OpenAI", status_code=status_code)
             return LLMError(message=f"OpenAI API Error {status_code}: {message}")
 
-        if isinstance(error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        if isinstance(
+            error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)
+        ):
             return ConnectionError(provider="OpenAI", message="Request timed out")
         if isinstance(error, asyncio.TimeoutError) or "timed out" in str(error).lower():
             return ConnectionError(provider="OpenAI", message="Request timed out")
@@ -218,7 +290,9 @@ class _OpenAIProviderMixin:
 
         return LLMError(message=f"An unexpected OpenAI error occurred: {error}")
 
-    def _convert_image_content_responses(self, content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_image_content_responses(
+        self, content: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Convert image content blocks to OpenAI Responses API format."""
         converted: List[Dict[str, Any]] = []
 
@@ -287,7 +361,9 @@ class _OpenAIProviderMixin:
         if not isinstance(schema, dict):
             return schema
 
-        out: Dict[str, Any] = {k: _OpenAIProviderMixin._make_strict_json_schema(v) for k, v in schema.items()}
+        out: Dict[str, Any] = {
+            k: _OpenAIProviderMixin._make_strict_json_schema(v) for k, v in schema.items()
+        }
         if out.get("type") == "object":
             props = out.get("properties")
             if isinstance(props, dict) and props:
@@ -296,17 +372,7 @@ class _OpenAIProviderMixin:
 
     def _prepare_input_responses(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
     ) -> tuple[Optional[str], List[Dict[str, Any]]]:
         """Prepare request input for the OpenAI Responses API."""
         instructions_parts: List[str] = []
@@ -322,15 +388,15 @@ class _OpenAIProviderMixin:
                     "type": "function_call",
                     "call_id": call_id,
                     "name": raw_msg.name,
-                    "arguments": json_dumps(raw_msg.arguments) if raw_msg.arguments else _EMPTY_JSON,
+                    "arguments": json_dumps(raw_msg.arguments)
+                    if raw_msg.arguments
+                    else _EMPTY_JSON,
                 }
                 # Responses API item IDs use the "fc_" prefix. Internal tool-call IDs
                 # are typically "call_*" and should not be sent as item IDs.
                 if _is_responses_function_id(raw_msg.id):
                     item["id"] = str(raw_msg.id)
-                input_items.append(
-                    item
-                )
+                input_items.append(item)
                 continue
 
             if isinstance(raw_msg, (ToolCallResult, ToolCallError)):
@@ -338,7 +404,9 @@ class _OpenAIProviderMixin:
                     {
                         "type": "function_call_output",
                         "call_id": str(raw_msg.tool_call_id),
-                        "output": str(raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result),
+                        "output": str(
+                            raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result
+                        ),
                     }
                 )
                 continue
@@ -349,7 +417,7 @@ class _OpenAIProviderMixin:
 
             if isinstance(raw_msg, (AssistantMessage, UserMessage)):
                 content = raw_msg.content
-                role = raw_msg.role
+                role: Optional[str] = raw_msg.role
                 api_role = "assistant" if role == "assistant" else "user"
 
                 if isinstance(content, list):
@@ -365,10 +433,12 @@ class _OpenAIProviderMixin:
             elif role == "tool_call":
                 raw_id = raw_msg.get("id")
                 raw_call_id = raw_msg.get("call_id")
-                call_id = raw_call_id if raw_call_id is not None else raw_id
+                raw_function_call_id = raw_call_id if raw_call_id is not None else raw_id
                 item = {
                     "type": "function_call",
-                    "call_id": str(call_id) if call_id is not None else "",
+                    "call_id": str(raw_function_call_id)
+                    if raw_function_call_id is not None
+                    else "",
                     "name": raw_msg.get("name"),
                     "arguments": json_dumps(raw_msg.get("arguments", {}))
                     if raw_msg.get("arguments")
@@ -376,16 +446,18 @@ class _OpenAIProviderMixin:
                 }
                 if _is_responses_function_id(raw_id):
                     item["id"] = str(raw_id)
-                input_items.append(
-                    item
-                )
+                input_items.append(item)
 
             elif role in {"tool_result", "tool_error", "tool"}:
                 input_items.append(
                     {
                         "type": "function_call_output",
                         "call_id": str(raw_msg.get("tool_call_id")),
-                        "output": str(raw_msg.get("error", "") if role == "tool_error" else raw_msg.get("result", raw_msg.get("content", ""))),
+                        "output": str(
+                            raw_msg.get("error", "")
+                            if role == "tool_error"
+                            else raw_msg.get("result", raw_msg.get("content", ""))
+                        ),
                     }
                 )
 
@@ -438,10 +510,7 @@ class _OpenAIProviderMixin:
 
         for tc in tool_call:
             args = tc.get("arguments", {})
-            try:
-                args = json_loads(args) if isinstance(args, str) else args
-            except Exception:
-                args = {}
+            args = parse_tool_arguments(args)
 
             processed_tool_calls.append(
                 ToolCall(
@@ -458,6 +527,10 @@ class _OpenAIProviderMixin:
         self, response: Dict[str, Any]
     ) -> tuple[Optional[str], Optional[str], List[Dict[str, Any]], Optional[str]]:
         """Extract text/thinking/tool calls from a Responses API JSON payload."""
+        if not isinstance(response, dict) or not isinstance(response.get("output"), list):
+            raise LLMError("Provider returned a malformed response: expected an output list")
+        if response.get("status") not in {None, "completed"}:
+            raise LLMError("Provider response did not complete successfully")
         text_parts: List[str] = []
         thinking_parts: List[str] = []
         tool_calls: List[Dict[str, Any]] = []
@@ -561,7 +634,8 @@ class _OpenAIProviderMixin:
         except ModelNotFoundError:
             raise
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
     async def _validate_model_async(self, async_client: httpx.AsyncClient, model_id: str) -> None:
         """Asynchronously validate that requested model is available via `/models`."""
@@ -586,9 +660,12 @@ class _OpenAIProviderMixin:
         except ModelNotFoundError:
             raise
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
-    def _parse_sse_line_payload(self, event_name: Optional[str], data_lines: List[str]) -> Optional[Dict[str, Any]]:
+    def _parse_sse_line_payload(
+        self, event_name: Optional[str], data_lines: List[str]
+    ) -> Optional[Dict[str, Any]]:
         """Parse buffered SSE data payload into a dict event."""
         if not data_lines:
             return None
@@ -601,12 +678,14 @@ class _OpenAIProviderMixin:
 
         try:
             payload = json_loads(data_str)
-        except Exception:
-            return None
+        except (ValueError, TypeError) as exc:
+            raise LLMError("Provider returned malformed stream event JSON") from exc
         if not isinstance(payload, dict):
-            return None
+            raise LLMError("Provider stream event must be a JSON object")
         if "type" not in payload and event_name:
             payload["type"] = event_name
+        if not isinstance(payload.get("type"), str) or not payload["type"]:
+            raise LLMError("Provider returned a malformed stream event: expected an event type")
         return payload
 
     def _iter_sse_events(self, response: httpx.Response) -> Generator[Dict[str, Any], None, None]:
@@ -637,7 +716,9 @@ class _OpenAIProviderMixin:
         if payload is not None:
             yield payload
 
-    async def _aiter_sse_events(self, response: httpx.Response) -> AsyncGenerator[Dict[str, Any], None]:
+    async def _aiter_sse_events(
+        self, response: httpx.Response
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """Yield parsed SSE events from an async HTTPX streaming response."""
         event_name: Optional[str] = None
         data_lines: List[str] = []
@@ -669,6 +750,8 @@ class _OpenAIProviderMixin:
 class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
     """Asynchronous provider implementation for OpenAI Responses API via HTTPX."""
 
+    model_id: str
+
     def __init__(
         self,
         model_id: Optional[str] = None,
@@ -693,31 +776,18 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
                 http2=True,
             )
         except Exception as e:
-            raise ConnectionError(provider="OpenAI") from e
+            raise ConnectionError(provider="OpenAI") from safe_exception_cause(e)
 
     async def validate_model(self) -> None:
         """Validate that configured model is available via API."""
         await self._validate_model_async(async_client=self.async_client, model_id=self.model_id)
-
-    async def _execute_with_retry(self, operation: callable) -> Any:  # type: ignore[override]
-        return await super()._execute_with_retry(operation=operation)
 
     async def _parse_tool_call(self, tool_call: List[Dict[str, Any]]) -> List[ToolCall]:
         return self._parse_tool_call_sync(tool_call)
 
     async def async_generate(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -745,13 +815,17 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
             response.raise_for_status()
             data = response.json()
 
-            text_content, thinking_content, tool_calls, stop_reason = self._extract_response_content(data)
+            text_content, thinking_content, tool_calls, stop_reason = (
+                self._extract_response_content(data)
+            )
             usage_obj = self._extract_usage(data)
             model_used = data.get("model", effective_model)
 
             if tool_calls:
                 tool_calls_parsed = await self._parse_tool_call(tool_calls)
-                return ToolCallList(model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj)
+                return ToolCallList(
+                    model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj
+                )
 
             return LLMResponse(
                 model_id=model_used,
@@ -766,17 +840,7 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
 
     async def async_stream(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -816,25 +880,11 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
 
         completion_parts: List[str] = []
         thinking_parts: List[str] = []
-        final_usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         stop_reason: Optional[str] = None
         final_model = effective_model
         completed_response: Optional[Dict[str, Any]] = None
 
-        tool_calls_by_id: Dict[str, Dict[str, Any]] = {}
-        tool_call_order: List[str] = []
-        tool_calls_no_id: List[Dict[str, Any]] = []
-        current_tool_call: Optional[Dict[str, Any]] = None
-        current_tool_args_parts: List[str] = []
-
-        def _track_tool_call(call: Dict[str, Any]) -> None:
-            cid = str(call.get("call_id") or call.get("id") or "")
-            if cid:
-                if cid not in tool_calls_by_id:
-                    tool_call_order.append(cid)
-                tool_calls_by_id[cid] = call
-            else:
-                tool_calls_no_id.append(call)
+        streamed_tools = _ResponseToolCalls()
 
         try:
             stream_ctx, response = await self._execute_with_retry(operation=_open_stream)
@@ -844,6 +894,8 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
 
                     if event_type == "[DONE]":
                         break
+                    if event_type in {"error", "response.failed", "response.incomplete"}:
+                        raise LLMError("Provider response did not complete successfully")
 
                     if event_type == "response.output_text.delta":
                         delta_text = event.get("delta", "")
@@ -859,7 +911,10 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
                             )
                         continue
 
-                    if event_type in {"response.reasoning.delta", "response.reasoning_summary_text.delta"}:
+                    if event_type in {
+                        "response.reasoning.delta",
+                        "response.reasoning_summary_text.delta",
+                    }:
                         delta_thinking = event.get("delta", "")
                         if delta_thinking:
                             thinking_parts.append(delta_thinking)
@@ -873,70 +928,7 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
                             )
                         continue
 
-                    if event_type == "response.function_call_arguments.start":
-                        call_id = event.get("call_id", event.get("id", ""))
-                        name = event.get("name", "")
-                        current_tool_call = {
-                            "id": call_id,
-                            "call_id": call_id,
-                            "name": name,
-                            "function_name": name,
-                            "arguments": "",
-                        }
-                        current_tool_args_parts = []
-                        continue
-
-                    if event_type == "response.function_call_arguments.delta":
-                        if current_tool_call:
-                            delta_args = event.get("delta", "")
-                            if delta_args:
-                                current_tool_args_parts.append(delta_args)
-                        continue
-
-                    if event_type == "response.function_call_arguments.done":
-                        if current_tool_call:
-                            if current_tool_args_parts:
-                                current_tool_call["arguments"] = "".join(current_tool_args_parts)
-                            elif event.get("arguments"):
-                                current_tool_call["arguments"] = event.get("arguments")
-                            _track_tool_call(current_tool_call)
-                            current_tool_call = None
-                            current_tool_args_parts = []
-                        continue
-
-                    if event_type == "response.output_item.added":
-                        item = event.get("item", {})
-                        if isinstance(item, dict) and item.get("type") == "function_call":
-                            call_id = item.get("call_id", item.get("id", ""))
-                            name = item.get("name", "")
-                            initial_args = item.get("arguments", "") or ""
-                            current_tool_call = {
-                                "id": call_id,
-                                "call_id": call_id,
-                                "name": name,
-                                "function_name": name,
-                                "arguments": initial_args,
-                            }
-                            current_tool_args_parts = [initial_args] if initial_args else []
-                        continue
-
-                    if event_type == "response.output_item.done":
-                        item = event.get("item", {})
-                        if isinstance(item, dict) and item.get("type") == "function_call":
-                            call_id = item.get("call_id", item.get("id", ""))
-                            name = item.get("name", "")
-                            arguments = item.get("arguments", _EMPTY_JSON)
-                            _track_tool_call(
-                                {
-                                    "id": call_id,
-                                    "call_id": call_id,
-                                    "name": name,
-                                    "function_name": name,
-                                    "arguments": arguments,
-                                }
-                            )
-                            current_tool_call = None
-                            current_tool_args_parts = []
+                    if streamed_tools.consume(event):
                         continue
 
                     if event_type == "response.completed":
@@ -945,62 +937,47 @@ class AsyncOpenAIProvider(AsyncBaseProvider, _OpenAIProviderMixin):
                             completed_response = response_payload
                             final_model = response_payload.get("model", final_model)
                             stop_reason = response_payload.get("status", stop_reason)
-                            usage_obj = self._extract_usage(response_payload)
-                            final_usage_data = {
-                                "prompt_tokens": usage_obj.prompt_tokens,
-                                "completion_tokens": usage_obj.completion_tokens,
-                                "total_tokens": usage_obj.total_tokens,
-                            }
                         continue
             finally:
                 await stream_ctx.__aexit__(None, None, None)
 
-            # Prefer final completed payload if present; otherwise use tracked deltas.
-            if completed_response is not None:
-                text_content, thinking_content, completed_tool_calls, stop_reason = self._extract_response_content(
-                    completed_response
-                )
-                usage_obj = self._extract_usage(completed_response)
-                final_model = completed_response.get("model", final_model)
-                tool_calls: List[Dict[str, Any]] = completed_tool_calls
-                if not tool_calls:
-                    tool_calls = [tool_calls_by_id[cid] for cid in tool_call_order] + tool_calls_no_id
+            # Prefer the final completed payload; tracked deltas fill omitted output.
+            if completed_response is None:
+                raise LLMError("Provider stream ended without a completion event")
+            text_content, thinking_content, completed_tool_calls, stop_reason = (
+                self._extract_response_content(completed_response)
+            )
+            usage_obj = self._extract_usage(completed_response)
+            final_model = completed_response.get("model", final_model)
+            tool_calls: List[Dict[str, Any]] = completed_tool_calls
+            if not tool_calls:
+                tool_calls = streamed_tools.calls()
 
-                if tool_calls:
-                    tool_calls_obj = await self._parse_tool_call(tool_calls)
-                    yield ToolCallList(model_id=final_model, tool_calls=tool_calls_obj, usage=usage_obj)
-                else:
-                    yield LLMResponse(
-                        model_id=final_model,
-                        type="llm_response",
-                        text=text_content if text_content is not None else ("".join(completion_parts) or None),
-                        thinking=thinking_content
-                        if thinking_content is not None
-                        else ("".join(thinking_parts) or None),
-                        usage=usage_obj,
-                        stop_reason=stop_reason,
-                    )
+            if tool_calls:
+                tool_calls_obj = await self._parse_tool_call(tool_calls)
+                yield ToolCallList(model_id=final_model, tool_calls=tool_calls_obj, usage=usage_obj)
             else:
-                usage_obj = LLMUsage(**final_usage_data)
-                tool_calls = [tool_calls_by_id[cid] for cid in tool_call_order] + tool_calls_no_id
-                if tool_calls:
-                    tool_calls_obj = await self._parse_tool_call(tool_calls)
-                    yield ToolCallList(model_id=final_model, tool_calls=tool_calls_obj, usage=usage_obj)
-                else:
-                    yield LLMResponse(
-                        model_id=final_model,
-                        type="llm_response",
-                        text="".join(completion_parts) if completion_parts else None,
-                        thinking="".join(thinking_parts) if thinking_parts else None,
-                        usage=usage_obj,
-                        stop_reason=stop_reason,
-                    )
+                yield LLMResponse(
+                    model_id=final_model,
+                    type="llm_response",
+                    text=text_content
+                    if text_content is not None
+                    else ("".join(completion_parts) or None),
+                    thinking=thinking_content
+                    if thinking_content is not None
+                    else ("".join(thinking_parts) or None),
+                    usage=usage_obj,
+                    stop_reason=stop_reason,
+                )
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
 
 class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
     """Synchronous provider implementation for OpenAI Responses API via HTTPX."""
+
+    model_id: str
 
     def __init__(
         self,
@@ -1026,7 +1003,7 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
                 http2=True,
             )
         except Exception as e:
-            raise ConnectionError(provider="OpenAI") from e
+            raise ConnectionError(provider="OpenAI") from safe_exception_cause(e)
 
         try:
             self._validate_model_sync(client=self.client, model_id=self.model_id)
@@ -1041,17 +1018,7 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
 
     def generate(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -1079,13 +1046,17 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
             response.raise_for_status()
             data = response.json()
 
-            text_content, thinking_content, tool_calls, stop_reason = self._extract_response_content(data)
+            text_content, thinking_content, tool_calls, stop_reason = (
+                self._extract_response_content(data)
+            )
             usage_obj = self._extract_usage(data)
             model_used = data.get("model", effective_model)
 
             if tool_calls:
                 tool_calls_parsed = self._parse_tool_call_sync(tool_calls)
-                return ToolCallList(model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj)
+                return ToolCallList(
+                    model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj
+                )
 
             return LLMResponse(
                 model_id=model_used,
@@ -1100,17 +1071,7 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
 
     def stream(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -1150,25 +1111,11 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
 
         completion_parts: List[str] = []
         thinking_parts: List[str] = []
-        final_usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         stop_reason: Optional[str] = None
         final_model = effective_model
         completed_response: Optional[Dict[str, Any]] = None
 
-        tool_calls_by_id: Dict[str, Dict[str, Any]] = {}
-        tool_call_order: List[str] = []
-        tool_calls_no_id: List[Dict[str, Any]] = []
-        current_tool_call: Optional[Dict[str, Any]] = None
-        current_tool_args_parts: List[str] = []
-
-        def _track_tool_call(call: Dict[str, Any]) -> None:
-            cid = str(call.get("call_id") or call.get("id") or "")
-            if cid:
-                if cid not in tool_calls_by_id:
-                    tool_call_order.append(cid)
-                tool_calls_by_id[cid] = call
-            else:
-                tool_calls_no_id.append(call)
+        streamed_tools = _ResponseToolCalls()
 
         try:
             stream_ctx, response = self._execute_with_retry(operation=_open_stream)
@@ -1178,6 +1125,8 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
 
                     if event_type == "[DONE]":
                         break
+                    if event_type in {"error", "response.failed", "response.incomplete"}:
+                        raise LLMError("Provider response did not complete successfully")
 
                     if event_type == "response.output_text.delta":
                         delta_text = event.get("delta", "")
@@ -1193,7 +1142,10 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
                             )
                         continue
 
-                    if event_type in {"response.reasoning.delta", "response.reasoning_summary_text.delta"}:
+                    if event_type in {
+                        "response.reasoning.delta",
+                        "response.reasoning_summary_text.delta",
+                    }:
                         delta_thinking = event.get("delta", "")
                         if delta_thinking:
                             thinking_parts.append(delta_thinking)
@@ -1207,70 +1159,7 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
                             )
                         continue
 
-                    if event_type == "response.function_call_arguments.start":
-                        call_id = event.get("call_id", event.get("id", ""))
-                        name = event.get("name", "")
-                        current_tool_call = {
-                            "id": call_id,
-                            "call_id": call_id,
-                            "name": name,
-                            "function_name": name,
-                            "arguments": "",
-                        }
-                        current_tool_args_parts = []
-                        continue
-
-                    if event_type == "response.function_call_arguments.delta":
-                        if current_tool_call:
-                            delta_args = event.get("delta", "")
-                            if delta_args:
-                                current_tool_args_parts.append(delta_args)
-                        continue
-
-                    if event_type == "response.function_call_arguments.done":
-                        if current_tool_call:
-                            if current_tool_args_parts:
-                                current_tool_call["arguments"] = "".join(current_tool_args_parts)
-                            elif event.get("arguments"):
-                                current_tool_call["arguments"] = event.get("arguments")
-                            _track_tool_call(current_tool_call)
-                            current_tool_call = None
-                            current_tool_args_parts = []
-                        continue
-
-                    if event_type == "response.output_item.added":
-                        item = event.get("item", {})
-                        if isinstance(item, dict) and item.get("type") == "function_call":
-                            call_id = item.get("call_id", item.get("id", ""))
-                            name = item.get("name", "")
-                            initial_args = item.get("arguments", "") or ""
-                            current_tool_call = {
-                                "id": call_id,
-                                "call_id": call_id,
-                                "name": name,
-                                "function_name": name,
-                                "arguments": initial_args,
-                            }
-                            current_tool_args_parts = [initial_args] if initial_args else []
-                        continue
-
-                    if event_type == "response.output_item.done":
-                        item = event.get("item", {})
-                        if isinstance(item, dict) and item.get("type") == "function_call":
-                            call_id = item.get("call_id", item.get("id", ""))
-                            name = item.get("name", "")
-                            arguments = item.get("arguments", _EMPTY_JSON)
-                            _track_tool_call(
-                                {
-                                    "id": call_id,
-                                    "call_id": call_id,
-                                    "name": name,
-                                    "function_name": name,
-                                    "arguments": arguments,
-                                }
-                            )
-                            current_tool_call = None
-                            current_tool_args_parts = []
+                    if streamed_tools.consume(event):
                         continue
 
                     if event_type == "response.completed":
@@ -1279,55 +1168,37 @@ class OpenAIProvider(BaseProvider, _OpenAIProviderMixin):
                             completed_response = response_payload
                             final_model = response_payload.get("model", final_model)
                             stop_reason = response_payload.get("status", stop_reason)
-                            usage_obj = self._extract_usage(response_payload)
-                            final_usage_data = {
-                                "prompt_tokens": usage_obj.prompt_tokens,
-                                "completion_tokens": usage_obj.completion_tokens,
-                                "total_tokens": usage_obj.total_tokens,
-                            }
                         continue
             finally:
                 stream_ctx.__exit__(None, None, None)
 
-            if completed_response is not None:
-                text_content, thinking_content, completed_tool_calls, stop_reason = self._extract_response_content(
-                    completed_response
-                )
-                usage_obj = self._extract_usage(completed_response)
-                final_model = completed_response.get("model", final_model)
-                tool_calls: List[Dict[str, Any]] = completed_tool_calls
-                if not tool_calls:
-                    tool_calls = [tool_calls_by_id[cid] for cid in tool_call_order] + tool_calls_no_id
+            if completed_response is None:
+                raise LLMError("Provider stream ended without a completion event")
+            text_content, thinking_content, completed_tool_calls, stop_reason = (
+                self._extract_response_content(completed_response)
+            )
+            usage_obj = self._extract_usage(completed_response)
+            final_model = completed_response.get("model", final_model)
+            tool_calls: List[Dict[str, Any]] = completed_tool_calls
+            if not tool_calls:
+                tool_calls = streamed_tools.calls()
 
-                if tool_calls:
-                    tool_calls_obj = self._parse_tool_call_sync(tool_call=tool_calls)
-                    yield ToolCallList(model_id=final_model, tool_calls=tool_calls_obj, usage=usage_obj)
-                else:
-                    yield LLMResponse(
-                        model_id=final_model,
-                        type="llm_response",
-                        text=text_content if text_content is not None else ("".join(completion_parts) or None),
-                        thinking=thinking_content
-                        if thinking_content is not None
-                        else ("".join(thinking_parts) or None),
-                        usage=usage_obj,
-                        stop_reason=stop_reason,
-                    )
+            if tool_calls:
+                tool_calls_obj = self._parse_tool_call_sync(tool_call=tool_calls)
+                yield ToolCallList(model_id=final_model, tool_calls=tool_calls_obj, usage=usage_obj)
             else:
-                usage_obj = LLMUsage(**final_usage_data)
-                tool_calls = [tool_calls_by_id[cid] for cid in tool_call_order] + tool_calls_no_id
-                if tool_calls:
-                    tool_calls_obj = self._parse_tool_call_sync(tool_call=tool_calls)
-                    yield ToolCallList(model_id=final_model, tool_calls=tool_calls_obj, usage=usage_obj)
-                else:
-                    yield LLMResponse(
-                        model_id=final_model,
-                        type="llm_response",
-                        text="".join(completion_parts) if completion_parts else None,
-                        thinking="".join(thinking_parts) if thinking_parts else None,
-                        usage=usage_obj,
-                        stop_reason=stop_reason,
-                    )
+                yield LLMResponse(
+                    model_id=final_model,
+                    type="llm_response",
+                    text=text_content
+                    if text_content is not None
+                    else ("".join(completion_parts) or None),
+                    thinking=thinking_content
+                    if thinking_content is not None
+                    else ("".join(thinking_parts) or None),
+                    usage=usage_obj,
+                    stop_reason=stop_reason,
+                )
         except Exception as e:
-            raise self._handle_error(e)
-
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)

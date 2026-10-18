@@ -1,25 +1,26 @@
-from __future__ import annotations
-
 """Dependency-aware concurrent tool execution, cancellation, and parameter injection."""
+
+from __future__ import annotations
 
 import asyncio
 import copy
 import logging
 import math
 from collections import defaultdict, deque
-from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple, Mapping
+from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Set, Tuple, Union
 
+from seqoria_agent._redaction import redact_text
+from seqoria_agent.client.ai_client.callbacks import on_error as _on_error_cb
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
-from seqoria_agent.client.ai_client.callbacks import on_error as _on_error_cb
-from seqoria_agent.client.parameters import ParameterRegistry, ParameterSource, ParamContext
-from seqoria_agent.models.errors import DependencyError
+from seqoria_agent.client.parameters import ParamContext, ParameterRegistry, ParameterSource
 from seqoria_agent.models.chunk import (
-    ToolCallResult,
     ToolCallError,
     ToolCallRequest,
     ToolCallRequestList,
+    ToolCallResult,
 )
+from seqoria_agent.models.errors import DependencyError
 
 __all__: list[str] = ["Executor"]
 
@@ -70,7 +71,7 @@ class Executor:
         tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
         *,
         context: ParamContext | None = None,
-    ) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult | ToolCallError]]:
+    ) -> AsyncGenerator[Tuple[ToolCallRequest, ToolCallResult | ToolCallError], None]:
         """Yield :class:`ToolCallResult` objects as soon as they are ready.
 
         The generator respects *dependency layers* computed by
@@ -91,9 +92,9 @@ class Executor:
             layers = self.compute_execution_layers(tool_calls=tool_calls)
         except DependencyError as de:
             # Surface dependency errors via logger and abort stream.
-            self._logger.error("Dependency resolution failed: %s", de)
+            self._logger.error("Dependency resolution failed: %s", redact_text(de))
             for tc in tool_calls:
-                yield tc, ToolCallError(tool_call_id=tc.id, name=tc.name, error=str(de))
+                yield tc, ToolCallError(tool_call_id=tc.id, name=tc.name, error=redact_text(de))
             return
 
         # ------------------------------------------------------------------
@@ -158,7 +159,9 @@ class Executor:
             # --------------------------------------------------------------
             if ready_calls:
 
-                async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest, ToolCallResult | ToolCallError]:  # noqa: D401
+                async def _exec_pair(
+                    tc: ToolCallRequest,
+                ) -> Tuple[ToolCallRequest, ToolCallResult | ToolCallError]:  # noqa: D401
                     res = await self._run_tool(tool_call=tc, context=ctx)
                     return tc, res
 
@@ -227,7 +230,7 @@ class Executor:
         err_msg = (
             f"Tool '{tool_call.name}' timed out after {self._tool_timeout}s"
             if isinstance(exc, asyncio.TimeoutError)
-            else f"Tool '{tool_call.name}' failed: {exc}"
+            else f"Tool '{tool_call.name}' failed: {redact_text(exc)}"
         )
         _on_error_cb(
             error_payload={

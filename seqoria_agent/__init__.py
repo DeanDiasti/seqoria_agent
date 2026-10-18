@@ -15,10 +15,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from seqoria_agent.client import AIClient, AsyncAIClient
-from seqoria_agent.toolbox import LocalToolbox
 
 # Always-safe provider base classes (no optional deps)
 from seqoria_agent.providers import AsyncBaseProvider, BaseProvider
+from seqoria_agent.toolbox import LocalToolbox
 
 # Type checking imports (no runtime import cost / no optional deps required)
 if TYPE_CHECKING:

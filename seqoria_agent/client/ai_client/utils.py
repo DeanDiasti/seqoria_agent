@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json as _json_stdlib
+from importlib import import_module
+from types import ModuleType
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -10,29 +13,23 @@ from typing import Any
 
 _json_impl: str = "json"  # Track which implementation is active
 
-try:
-    import orjson as _orjson  # type: ignore
 
+def _optional_module(name: str) -> ModuleType | None:
+    try:
+        return import_module(name)
+    except ModuleNotFoundError as exc:
+        if exc.name != name:
+            raise
+        return None
+
+
+_orjson = _optional_module("orjson")
+_ujson = _optional_module("ujson")
+_xxhash = _optional_module("xxhash")
+if _orjson is not None:
     _json_impl = "orjson"
-except ModuleNotFoundError:
-    _orjson = None
-
-try:
-    import ujson as _ujson  # type: ignore
-
-    if _orjson is None:
-        _json_impl = "ujson"
-except ModuleNotFoundError:
-    _ujson = None
-
-# Always import stdlib json as fallback
-import json as _json_stdlib
-
-# Try to import xxhash for fast hashing
-try:
-    import xxhash as _xxhash
-except ModuleNotFoundError:
-    _xxhash = None
+elif _ujson is not None:
+    _json_impl = "ujson"
 
 
 def json_dumps(obj: Any, *, sort_keys: bool = False, indent: int | None = None) -> str:

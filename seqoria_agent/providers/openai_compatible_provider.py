@@ -9,16 +9,17 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 
 import httpx
 
+from seqoria_agent._redaction import safe_exception_cause
 from seqoria_agent.client.ai_client.utils import json_dumps, json_loads
 from seqoria_agent.models.chunk import (
     AssistantMessage,
     SystemMessage,
+    ToolCallError,
     ToolCallRequest,
     ToolCallResult,
-    ToolCallError,
     UserMessage,
 )
-from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider, ChatHistory
 from seqoria_agent.providers.errors import (
     ConnectionError,
     ContentFilterError,
@@ -32,25 +33,37 @@ from seqoria_agent.providers.errors import (
 )
 from seqoria_agent.providers.schemas import LLMResponse, LLMUsage, ToolCall, ToolCallList
 
+from ._sse import aiter_sse_data, iter_sse_data
+from ._validation import parse_tool_arguments, validate_max_retries
+
 _EMPTY_JSON: str = "{}"
 
 
 class _OpenAICompatibleProviderMixin:
     """Shared logic for sync/async OpenAI-compatible chat completions providers."""
 
-    def _init_common(self, model_id: str, api_key: Optional[str], base_url: Optional[str], **kwargs) -> tuple:
+    default_params: Dict[str, Any]
+    model_id: Optional[str]
+
+    def _init_common(
+        self, model_id: Optional[str], api_key: Optional[str], base_url: Optional[str], **kwargs
+    ) -> tuple[str, Any, str, Dict[str, Any], int, Dict[str, str]]:
         """Initialize common provider fields and validated defaults."""
         if api_key is None:
             api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise EnvironmentError(message="OpenAI API key not provided", missing_vars=["OPENAI_API_KEY"])
+            raise EnvironmentError(
+                message="OpenAI API key not provided", missing_vars=["OPENAI_API_KEY"]
+            )
 
         if not model_id:
             raise InvalidRequestError(message="model_id is required for OpenAI-compatible provider")
 
-        effective_base_url = (base_url or kwargs.get("base_url") or "https://api.openai.com/v1").rstrip("/")
+        effective_base_url = (
+            base_url or kwargs.get("base_url") or "https://api.openai.com/v1"
+        ).rstrip("/")
         timeout = kwargs.get("timeout", 30.0)
-        max_retries = kwargs.get("max_retries", 3)
+        max_retries = validate_max_retries(kwargs.get("max_retries", 3))
 
         # Chat Completions request-body parameters (excluding model/messages/stream).
         valid_query_keys = {
@@ -122,14 +135,24 @@ class _OpenAICompatibleProviderMixin:
                 out["additionalProperties"] = False
         return out
 
-    def _normalize_tool_choice(self, tool_choice: Union[str, Dict[str, Any]]) -> Union[str, Dict[str, Any]]:
+    def _normalize_tool_choice(
+        self, tool_choice: Union[str, Dict[str, Any]]
+    ) -> Union[str, Dict[str, Any]]:
         """Normalize shorthand tool-choice payloads to Chat Completions format."""
         if not isinstance(tool_choice, dict):
             return tool_choice
 
-        if tool_choice.get("type") == "function" and "name" in tool_choice and "function" not in tool_choice:
+        if (
+            tool_choice.get("type") == "function"
+            and "name" in tool_choice
+            and "function" not in tool_choice
+        ):
             return {"type": "function", "function": {"name": tool_choice["name"]}}
-        if tool_choice.get("type") == "custom" and "name" in tool_choice and "custom" not in tool_choice:
+        if (
+            tool_choice.get("type") == "custom"
+            and "name" in tool_choice
+            and "custom" not in tool_choice
+        ):
             return {"type": "custom", "custom": {"name": tool_choice["name"]}}
         return tool_choice
 
@@ -291,17 +314,7 @@ class _OpenAICompatibleProviderMixin:
 
     def _prepare_messages_chat(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
     ) -> List[Dict[str, Any]]:
         """Prepare chat history in Chat Completions message format."""
         prepared: List[Dict[str, Any]] = []
@@ -328,7 +341,9 @@ class _OpenAICompatibleProviderMixin:
                     {
                         "role": "tool",
                         "tool_call_id": str(raw_msg.tool_call_id),
-                        "content": str(raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result),
+                        "content": str(
+                            raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result
+                        ),
                     }
                 )
                 continue
@@ -353,7 +368,9 @@ class _OpenAICompatibleProviderMixin:
                 msg: Dict[str, Any] = {"role": role, "content": content}
 
                 if role == "assistant" and raw_msg.get("tool_calls") is not None:
-                    msg["tool_calls"] = self._normalize_assistant_tool_calls(raw_msg.get("tool_calls"))
+                    msg["tool_calls"] = self._normalize_assistant_tool_calls(
+                        raw_msg.get("tool_calls")
+                    )
                     if "content" not in raw_msg:
                         msg["content"] = None
                 if role == "assistant" and raw_msg.get("refusal") is not None:
@@ -383,7 +400,11 @@ class _OpenAICompatibleProviderMixin:
                     {
                         "role": "tool",
                         "tool_call_id": str(raw_msg.get("tool_call_id", raw_msg.get("id", ""))),
-                        "content": str(raw_msg.get("error", "") if role == "tool_error" else raw_msg.get("result", raw_msg.get("content", ""))),
+                        "content": str(
+                            raw_msg.get("error", "")
+                            if role == "tool_error"
+                            else raw_msg.get("result", raw_msg.get("content", ""))
+                        ),
                     }
                 )
                 continue
@@ -486,10 +507,7 @@ class _OpenAICompatibleProviderMixin:
             function = tc.get("function", {}) if isinstance(tc, dict) else {}
             args_raw = function.get("arguments", _EMPTY_JSON)
 
-            try:
-                arguments = json_loads(args_raw) if isinstance(args_raw, str) else args_raw
-            except Exception:
-                arguments = {}
+            arguments = parse_tool_arguments(args_raw)
 
             parsed.append(
                 ToolCall(
@@ -586,14 +604,18 @@ class _OpenAICompatibleProviderMixin:
                     return ContentFilterError(provider="OpenAI", filter_reason=message)
                 return InvalidRequestError(message=message, param=param)
             if status_code == 403:
-                return InvalidRequestError(message=f"OpenAI permission denied: {message}", param=param)
+                return InvalidRequestError(
+                    message=f"OpenAI permission denied: {message}", param=param
+                )
             if status_code == 422:
                 return ContentFilterError(provider="OpenAI", filter_reason=message)
             if 500 <= status_code < 600:
                 return ServerError(provider="OpenAI", status_code=status_code)
             return LLMError(message=f"OpenAI API Error {status_code}: {message}")
 
-        if isinstance(error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        if isinstance(
+            error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)
+        ):
             return ConnectionError(provider="OpenAI", message="Request timed out")
         if isinstance(error, asyncio.TimeoutError) or "timed out" in str(error).lower():
             return ConnectionError(provider="OpenAI", message="Request timed out")
@@ -621,7 +643,8 @@ class _OpenAICompatibleProviderMixin:
         except ModelNotFoundError:
             raise
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
     async def _validate_model_async(self, client: httpx.AsyncClient, model_id: str) -> None:
         """Asynchronously validate a model ID against `/models` endpoint."""
@@ -641,11 +664,14 @@ class _OpenAICompatibleProviderMixin:
         except ModelNotFoundError:
             raise
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
 
 class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProviderMixin):
     """Async OpenAI-compatible provider using HTTPX + Chat Completions API."""
+
+    model_id: str
 
     def __init__(
         self,
@@ -671,7 +697,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                 http2=True,
             )
         except Exception as e:
-            raise ConnectionError(provider="OpenAI", message=str(e)) from e
+            raise ConnectionError(provider="OpenAI", message=str(e)) from safe_exception_cause(e)
 
     async def validate_model(self) -> None:
         """Validate that configured model exists for this endpoint."""
@@ -682,17 +708,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
 
     async def async_generate(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -716,19 +732,27 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
             response.raise_for_status()
             data = response.json()
 
-            choices = data.get("choices", [])
-            if not choices:
-                raise LLMError(message="OpenAI returned no choices.")
+            if not isinstance(data, dict):
+                raise LLMError("Provider returned a malformed response: expected a JSON object")
+            choices = data.get("choices")
+            if not isinstance(choices, list) or not choices:
+                raise LLMError(message="Provider returned a malformed response: expected choices")
 
             choice = choices[0]
-            message = choice.get("message", {}) if isinstance(choice, dict) else {}
+            if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+                raise LLMError("Provider returned a malformed response: expected a message object")
+            message = choice["message"]
             tool_calls = message.get("tool_calls") or []
             usage_obj = self._extract_usage(data)
             model_used = data.get("model", effective_model)
 
             if tool_calls:
+                if choice.get("finish_reason") in {"length", "content_filter"}:
+                    raise LLMError("Provider response ended before tool calls completed")
                 tool_calls_parsed = await self._parse_tool_call(tool_calls)
-                return ToolCallList(model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj)
+                return ToolCallList(
+                    model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj
+                )
 
             text = self._extract_text_from_message(message)
             thinking = self._extract_reasoning_text(message)
@@ -745,17 +769,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
 
     async def async_stream(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -800,33 +814,48 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
         stop_reason: Optional[str] = None
         usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         tool_calls_by_index: Dict[int, Dict[str, Any]] = {}
+        stream_completed = False
 
         try:
             stream_ctx, response = await self._execute_with_retry(operation=_open_stream)
             try:
-                async for line in response.aiter_lines():
-                    if not line or not line.startswith("data:"):
+                async for data_str in aiter_sse_data(response.aiter_lines()):
+                    data_str = data_str.strip()
+                    if not data_str:
                         continue
-
-                    data_str = line[5:].strip()
                     if data_str == "[DONE]":
+                        stream_completed = True
                         break
 
                     try:
                         chunk = json_loads(data_str)
-                    except Exception:
-                        continue
+                    except (ValueError, TypeError) as exc:
+                        raise LLMError("Provider returned malformed stream event JSON") from exc
+                    if not isinstance(chunk, dict):
+                        raise LLMError("Provider stream event must be a JSON object")
+                    if chunk.get("error"):
+                        raise LLMError("Provider returned a streaming error")
+                    if "choices" in chunk and not isinstance(chunk["choices"], list):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected choices"
+                        )
+                    if "choices" not in chunk and not isinstance(chunk.get("usage"), dict):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected choices or usage"
+                        )
 
                     final_model = chunk.get("model", final_model)
 
                     chunk_usage = chunk.get("usage")
                     if isinstance(chunk_usage, dict):
-                        usage_data["prompt_tokens"] = chunk_usage.get(
-                            "prompt_tokens", usage_data["prompt_tokens"]
-                        ) or usage_data["prompt_tokens"]
-                        usage_data["completion_tokens"] = chunk_usage.get(
-                            "completion_tokens", usage_data["completion_tokens"]
-                        ) or usage_data["completion_tokens"]
+                        usage_data["prompt_tokens"] = (
+                            chunk_usage.get("prompt_tokens", usage_data["prompt_tokens"])
+                            or usage_data["prompt_tokens"]
+                        )
+                        usage_data["completion_tokens"] = (
+                            chunk_usage.get("completion_tokens", usage_data["completion_tokens"])
+                            or usage_data["completion_tokens"]
+                        )
                         usage_data["total_tokens"] = chunk_usage.get("total_tokens") or (
                             usage_data["prompt_tokens"] + usage_data["completion_tokens"]
                         )
@@ -860,7 +889,10 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                         elif isinstance(delta_content, list):
                             text_fragments: List[str] = []
                             for part in delta_content:
-                                if isinstance(part, dict) and part.get("type") in {"text", "output_text"}:
+                                if isinstance(part, dict) and part.get("type") in {
+                                    "text",
+                                    "output_text",
+                                }:
                                     text_value = part.get("text")
                                     if text_value:
                                         text_fragments.append(text_value)
@@ -894,9 +926,14 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
 
                         if choice.get("finish_reason") is not None:
                             stop_reason = choice.get("finish_reason")
+                            stream_completed = True
             finally:
                 await stream_ctx.__aexit__(None, None, None)
 
+            if not stream_completed:
+                raise LLMError("Provider stream ended without a completion event")
+            if tool_calls_by_index and stop_reason in {"length", "content_filter"}:
+                raise LLMError("Provider response ended before tool calls completed")
             usage_obj = LLMUsage(**usage_data)
             aggregated_tool_calls: List[Dict[str, Any]] = []
             for idx in sorted(tool_calls_by_index.keys()):
@@ -904,9 +941,10 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                 aggregated_tool_calls.append(
                     {
                         "id": entry["id"] or str(idx),
-                        "name": entry["function_name"],
-                        "function_name": entry["function_name"],
-                        "arguments": "".join(entry["arguments_parts"]) or _EMPTY_JSON,
+                        "function": {
+                            "name": entry["function_name"],
+                            "arguments": "".join(entry["arguments_parts"]),
+                        },
                     }
                 )
 
@@ -923,11 +961,14 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                     stop_reason=stop_reason,
                 )
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)
 
 
 class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
     """Sync OpenAI-compatible provider using HTTPX + Chat Completions API."""
+
+    model_id: str
 
     def __init__(
         self,
@@ -953,7 +994,7 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                 http2=True,
             )
         except Exception as e:
-            raise ConnectionError(provider="OpenAI", message=str(e)) from e
+            raise ConnectionError(provider="OpenAI", message=str(e)) from safe_exception_cause(e)
 
         try:
             self._validate_model_sync(self.client, self.model_id)
@@ -968,17 +1009,7 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
 
     def generate(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -1002,19 +1033,27 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
             response.raise_for_status()
             data = response.json()
 
-            choices = data.get("choices", [])
-            if not choices:
-                raise LLMError(message="OpenAI returned no choices.")
+            if not isinstance(data, dict):
+                raise LLMError("Provider returned a malformed response: expected a JSON object")
+            choices = data.get("choices")
+            if not isinstance(choices, list) or not choices:
+                raise LLMError(message="Provider returned a malformed response: expected choices")
 
             choice = choices[0]
-            message = choice.get("message", {}) if isinstance(choice, dict) else {}
+            if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+                raise LLMError("Provider returned a malformed response: expected a message object")
+            message = choice["message"]
             tool_calls = message.get("tool_calls") or []
             usage_obj = self._extract_usage(data)
             model_used = data.get("model", effective_model)
 
             if tool_calls:
+                if choice.get("finish_reason") in {"length", "content_filter"}:
+                    raise LLMError("Provider response ended before tool calls completed")
                 tool_calls_parsed = self._parse_tool_call_sync(tool_calls)
-                return ToolCallList(model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj)
+                return ToolCallList(
+                    model_id=model_used, tool_calls=tool_calls_parsed, usage=usage_obj
+                )
 
             text = self._extract_text_from_message(message)
             thinking = self._extract_reasoning_text(message)
@@ -1031,17 +1070,7 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
 
     def stream(
         self,
-        chat_history: List[
-            Union[
-                Dict[str, Any],
-                ToolCallRequest,
-                ToolCallResult,
-                ToolCallError,
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-            ]
-        ],
+        chat_history: ChatHistory,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         model: Optional[str] = None,
@@ -1084,33 +1113,48 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
         stop_reason: Optional[str] = None
         usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         tool_calls_by_index: Dict[int, Dict[str, Any]] = {}
+        stream_completed = False
 
         try:
             stream_ctx, response = self._execute_with_retry(operation=_open_stream)
             try:
-                for line in response.iter_lines():
-                    if not line or not line.startswith("data:"):
+                for data_str in iter_sse_data(response.iter_lines()):
+                    data_str = data_str.strip()
+                    if not data_str:
                         continue
-
-                    data_str = line[5:].strip()
                     if data_str == "[DONE]":
+                        stream_completed = True
                         break
 
                     try:
                         chunk = json_loads(data_str)
-                    except Exception:
-                        continue
+                    except (ValueError, TypeError) as exc:
+                        raise LLMError("Provider returned malformed stream event JSON") from exc
+                    if not isinstance(chunk, dict):
+                        raise LLMError("Provider stream event must be a JSON object")
+                    if chunk.get("error"):
+                        raise LLMError("Provider returned a streaming error")
+                    if "choices" in chunk and not isinstance(chunk["choices"], list):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected choices"
+                        )
+                    if "choices" not in chunk and not isinstance(chunk.get("usage"), dict):
+                        raise LLMError(
+                            "Provider returned a malformed stream event: expected choices or usage"
+                        )
 
                     final_model = chunk.get("model", final_model)
 
                     chunk_usage = chunk.get("usage")
                     if isinstance(chunk_usage, dict):
-                        usage_data["prompt_tokens"] = chunk_usage.get(
-                            "prompt_tokens", usage_data["prompt_tokens"]
-                        ) or usage_data["prompt_tokens"]
-                        usage_data["completion_tokens"] = chunk_usage.get(
-                            "completion_tokens", usage_data["completion_tokens"]
-                        ) or usage_data["completion_tokens"]
+                        usage_data["prompt_tokens"] = (
+                            chunk_usage.get("prompt_tokens", usage_data["prompt_tokens"])
+                            or usage_data["prompt_tokens"]
+                        )
+                        usage_data["completion_tokens"] = (
+                            chunk_usage.get("completion_tokens", usage_data["completion_tokens"])
+                            or usage_data["completion_tokens"]
+                        )
                         usage_data["total_tokens"] = chunk_usage.get("total_tokens") or (
                             usage_data["prompt_tokens"] + usage_data["completion_tokens"]
                         )
@@ -1144,7 +1188,10 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                         elif isinstance(delta_content, list):
                             text_fragments: List[str] = []
                             for part in delta_content:
-                                if isinstance(part, dict) and part.get("type") in {"text", "output_text"}:
+                                if isinstance(part, dict) and part.get("type") in {
+                                    "text",
+                                    "output_text",
+                                }:
                                     text_value = part.get("text")
                                     if text_value:
                                         text_fragments.append(text_value)
@@ -1178,9 +1225,14 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
 
                         if choice.get("finish_reason") is not None:
                             stop_reason = choice.get("finish_reason")
+                            stream_completed = True
             finally:
                 stream_ctx.__exit__(None, None, None)
 
+            if not stream_completed:
+                raise LLMError("Provider stream ended without a completion event")
+            if tool_calls_by_index and stop_reason in {"length", "content_filter"}:
+                raise LLMError("Provider response ended before tool calls completed")
             usage_obj = LLMUsage(**usage_data)
             aggregated_tool_calls: List[Dict[str, Any]] = []
             for idx in sorted(tool_calls_by_index.keys()):
@@ -1188,9 +1240,10 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                 aggregated_tool_calls.append(
                     {
                         "id": entry["id"] or str(idx),
-                        "name": entry["function_name"],
-                        "function_name": entry["function_name"],
-                        "arguments": "".join(entry["arguments_parts"]) or _EMPTY_JSON,
+                        "function": {
+                            "name": entry["function_name"],
+                            "arguments": "".join(entry["arguments_parts"]),
+                        },
                     }
                 )
 
@@ -1207,4 +1260,5 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                     stop_reason=stop_reason,
                 )
         except Exception as e:
-            raise self._handle_error(e)
+            mapped_error = self._handle_error(e)
+            raise mapped_error from safe_exception_cause(e, raised=mapped_error)

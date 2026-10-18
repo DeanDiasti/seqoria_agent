@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Self, Union
 
 from pydantic import BaseModel, Field
 
+
 class LLMUsage(BaseModel):
     """Usage information for an LLM call."""
+
     prompt_tokens: int = Field(default=0, description="The number of tokens in the prompt.")
     completion_tokens: int = Field(default=0, description="The number of tokens in the completion.")
     total_tokens: int = Field(default=0, description="The total number of tokens in the call.")
@@ -15,23 +17,38 @@ class LLMUsage(BaseModel):
 
 class ChatChunk(BaseModel):  # noqa: D101 – simple container
     """Incremental piece of a streamed chat response."""
+
     role: Literal["assistant"] = Field(default="assistant", description="The role of the message.")
     content: str = Field(default="", description="The content of the message.")
-    thinking: Optional[str] = Field(default=None, description="Provider thinking/reasoning delta (if supported).")
-    model: Optional[str] = Field(default=None, description="The model used to generate the message.")
+    thinking: Optional[str] = Field(
+        default=None, description="Provider thinking/reasoning delta (if supported)."
+    )
+    model: Optional[str] = Field(
+        default=None, description="The model used to generate the message."
+    )
     usage: Optional[LLMUsage] = Field(default=None, description="The usage of the message.")
+
 
 class SystemMessage(BaseModel):  # noqa: D101 – simple container
     """System instructions included in conversation history."""
+
     role: Literal["system"] = Field(default="system", description="The role of the message.")
     content: str = Field(default="", description="The content of the message.")
 
+
 class AssistantMessage(BaseModel):  # noqa: D101 – simple container
     """Complete assistant response with optional reasoning and token usage."""
-    role: Literal["user", "assistant", "system"] = Field(default="assistant", description="The role of the message.")
+
+    role: Literal["user", "assistant", "system"] = Field(
+        default="assistant", description="The role of the message."
+    )
     content: str = Field(default="", description="The content of the message.")
-    thinking: Optional[str] = Field(default=None, description="Provider thinking/reasoning (if supported).")
-    model: Optional[str] = Field(default=None, description="The model used to generate the message.")
+    thinking: Optional[str] = Field(
+        default=None, description="Provider thinking/reasoning (if supported)."
+    )
+    model: Optional[str] = Field(
+        default=None, description="The model used to generate the message."
+    )
     usage: Optional[LLMUsage] = Field(default=None, description="The usage of the message.")
 
 
@@ -41,6 +58,7 @@ class UserMessage(BaseModel):  # noqa: D101 – simple container
     Providers that support multimodal input (e.g. Ollama) receive ``content`` as-is
     in chat history; others may only use the text parts.
     """
+
     role: Literal["user"] = Field(default="user", description="The role of the message.")
     content: Union[str, List[Dict[str, Any]], None] = Field(
         default=None,
@@ -64,16 +82,24 @@ class ToolCallRequest(BaseModel):  # noqa: D101 – simple container
     """
 
     id: str = Field(min_length=1, description="The ID of the tool call.")
-    role: Literal["tool_call"] = Field(default="tool_call", description="The role of the tool call.")
-    type: Literal["function_call"] = Field(default="function_call", description="The type of the tool call.")
+    role: Literal["tool_call"] = Field(
+        default="tool_call", description="The role of the tool call."
+    )
+    type: Literal["function_call"] = Field(
+        default="function_call", description="The type of the tool call."
+    )
     name: str = Field(min_length=1, description="The name of the tool call.")
     arguments: dict = Field(default_factory=dict, description="The arguments of the tool call.")
 
 
 class ToolCallRequestList(BaseModel):  # noqa: D101 – simple container
     """A batch of model-requested tool calls with optional usage."""
-    tool_calls: List[ToolCallRequest] = Field(default_factory=list, description="The tool calls of the message.")
+
+    tool_calls: List[ToolCallRequest] = Field(
+        default_factory=list, description="The tool calls of the message."
+    )
     usage: Optional[LLMUsage] = Field(default=None, description="The usage of the message.")
+
 
 class ToolCallResult(BaseModel):  # noqa: D101 – simple container
     """A successful tool execution result, paired with its request by call ID.
@@ -91,7 +117,9 @@ class ToolCallResult(BaseModel):  # noqa: D101 – simple container
     """
 
     tool_call_id: str = Field(min_length=1, description="The ID of the tool call.")
-    role: Literal["tool_result"] = Field(default="tool_result", description="The role of the message.")
+    role: Literal["tool_result"] = Field(
+        default="tool_result", description="The role of the message."
+    )
     name: Optional[str] = Field(default=None, description="The name of the tool.")
     result: str = Field(description="The result of the tool call.")
     type: Literal["tool_use"] = Field(default="tool_use", description="The type of the message.")
@@ -105,12 +133,15 @@ class ToolCallError(BaseModel):  # noqa: D101 – container for failed tool exec
     """
 
     tool_call_id: str = Field(min_length=1, description="The ID of the tool call that failed.")
-    role: Literal["tool_error"] = Field(default="tool_error", description="The role of the message.")
+    role: Literal["tool_error"] = Field(
+        default="tool_error", description="The role of the message."
+    )
     name: Optional[str] = Field(default=None, description="The name of the tool.")
     # Human-readable error description (e.g. timeout, circuit-breaker, …)
     error: str = Field(min_length=1, description="A short error description.")
-    type: Literal["tool_error"] = Field(default="tool_error", description="The type of the message.")
-
+    type: Literal["tool_error"] = Field(
+        default="tool_error", description="The type of the message."
+    )
 
 
 class ToolMessages(list):
@@ -156,7 +187,11 @@ class ToolMessages(list):
             self._validate(value)
         super().__setitem__(index, value)
 
-    def __iadd__(self, iterable):
+    def __add__(self, other: list[Any]) -> list[Any]:
+        """Preserve ordinary list concatenation without mutating this group."""
+        return super().__add__(other)
+
+    def __iadd__(self, iterable: Iterable[Any]) -> Self:
         self.extend(iterable)
         return self
 

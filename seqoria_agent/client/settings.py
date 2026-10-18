@@ -12,14 +12,14 @@ continue to take precedence over the values held in a :class:`ClientSettings`
 instance.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, List, Mapping, Union
-import logging
 
-from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.client.mcp_transport import MCPServerConfig
+from seqoria_agent.client.parameters import ParameterRegistry, ParameterSource
 from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
-from seqoria_agent.client.parameters import ParameterSource, ParameterRegistry
+from seqoria_agent.toolbox import LocalToolbox
 
 __all__: list[str] = ["ClientSettings"]
 

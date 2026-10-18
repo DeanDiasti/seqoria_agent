@@ -17,7 +17,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any, Dict, Generator, Iterable, List, Mapping, Self, Tuple, Union
+from typing import (
+    Any,
+    AsyncGenerator,
+    Coroutine,
+    Dict,
+    Generator,
+    Iterable,
+    List,
+    Mapping,
+    Self,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 from seqoria_agent.client.ai_client.async_client import AsyncAIClient
 from seqoria_agent.client.mcp_transport import MCPServerConfig
@@ -26,12 +39,14 @@ from seqoria_agent.client.settings import ClientSettings
 from seqoria_agent.models.chunk import (
     AssistantMessage,
     ChatChunk,
+    ToolCallError,
     ToolCallRequest,
     ToolCallRequestList,
     ToolCallResult,
     ToolMessages,
 )
-from seqoria_agent.providers.base_provider import BaseProvider, AsyncBaseProvider
+from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider, ChatHistory
+from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
 from seqoria_agent.toolbox import LocalToolbox
 
 __all__ = ["AIClient"]
@@ -60,7 +75,10 @@ def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
     )
 
 
-def _run_sync(coro):
+_Result = TypeVar("_Result")
+
+
+def _run_sync(coro: Coroutine[Any, Any, _Result]) -> _Result:
     """Run a coroutine synchronously."""
     try:
         loop = _get_or_create_event_loop()
@@ -76,19 +94,45 @@ class _SyncProviderAdapter(AsyncBaseProvider):
     def __init__(self, provider: BaseProvider) -> None:
         self._provider = provider
 
-    async def async_generate(self, **kwargs):
-        return await asyncio.to_thread(self._provider.generate, **kwargs)
+    async def async_generate(
+        self,
+        chat_history: ChatHistory,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        model: str | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse | ToolCallList:
+        return await asyncio.to_thread(
+            self._provider.generate,
+            chat_history=chat_history,
+            tools=tools,
+            tool_choice=tool_choice,
+            model=model,
+            **kwargs,
+        )
 
-    async def async_stream(self, **kwargs):
-        stream = self._provider.stream(**kwargs)
-        sentinel = object()
+    async def async_stream(
+        self,
+        chat_history: ChatHistory,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        model: str | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[LLMResponse | ToolCallList, None]:
+        stream = self._provider.stream(
+            chat_history=chat_history,
+            tools=tools,
+            tool_choice=tool_choice,
+            model=model,
+            **kwargs,
+        )
         stream_lock = threading.Lock()
 
-        def advance():
+        def advance() -> LLMResponse | ToolCallList | None:
             with stream_lock:
-                return next(stream, sentinel)
+                return next(stream, None)
 
-        def close():
+        def close() -> None:
             # Cancelling to_thread does not stop its worker. Serialize close
             # with the pending next() so the generator is never closed while
             # it is executing. The provider's I/O timeout bounds this wait.
@@ -98,7 +142,7 @@ class _SyncProviderAdapter(AsyncBaseProvider):
         try:
             while True:
                 item = await asyncio.to_thread(advance)
-                if item is sentinel:
+                if item is None:
                     return
                 yield item
         finally:
@@ -201,7 +245,7 @@ class AIClient:
 
         # Create the underlying async client
         self._async_client = AsyncAIClient(
-            providers=async_providers or None,
+            providers=async_providers,
             mcp_servers=mcp_servers,
             local_toolbox=local_toolbox,
             logger=logger,
@@ -357,7 +401,7 @@ class AIClient:
         tool_calls: List[ToolCallRequest],
         *,
         context: ParamContext | None = None,
-    ) -> List[ToolCallResult]:
+    ) -> List[ToolCallResult | ToolCallError]:
         """Execute tool calls and return results (blocking)."""
         return _run_sync(self._async_client.run_tool_calls(tool_calls=tool_calls, context=context))
 
@@ -366,7 +410,7 @@ class AIClient:
         tool_calls: List[ToolCallRequest],
         *,
         context: ParamContext | None = None,
-    ) -> Generator[Tuple[ToolCallRequest, ToolCallResult], None, None]:
+    ) -> Generator[Tuple[ToolCallRequest, ToolCallResult | ToolCallError], None, None]:
         """Stream tool call results as they complete (blocking generator)."""
         async_gen = self._async_client.run_call_stream(tool_calls=tool_calls, context=context)
 
@@ -437,7 +481,7 @@ class AIClient:
         use_tools: bool = True,
         tool_choice: str = "auto",
         model: str | None = None,
-    ) -> Generator[Union[str, ChatChunk, AssistantMessage, ToolCallRequestList], None, None]:
+    ) -> Generator[Union[ChatChunk, AssistantMessage, ToolCallRequestList], None, None]:
         """Stream a single LLM generation step (blocking generator)."""
         async_gen = self._async_client.llm_stream_once(
             history=history,
@@ -537,7 +581,7 @@ class AIClient:
         model: str | None = None,
         context: ParamContext | None = None,
         user_message_content: Union[UserContentInput, None] = None,
-    ) -> Generator[Union[str, ChatChunk, AssistantMessage, ToolMessages], None, None]:
+    ) -> Generator[Union[ChatChunk, AssistantMessage, ToolMessages], None, None]:
         """Stream a chat session with the LLM (blocking generator).
 
         Yields chunks as they are received, including tool call results.

@@ -31,14 +31,16 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from mcp.client.sse import sse_client
-from mcp.client.stdio import StdioServerParameters, stdio_client
 
 # OAuth support from MCP SDK
 from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.sse import sse_client
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
+
+from seqoria_agent._redaction import redact_text
 
 __all__ = [
     "MCPTransportFactory",
@@ -507,18 +509,26 @@ class MCPTransportFactory:
         if config.oauth and transport_type != "http":
             raise ValueError("OAuth is supported only for Streamable HTTP connections")
 
-        # Create appropriate transport
-        if transport_type == "http":
-            async with MCPTransportFactory._connect_http(config, client_pool=client_pool) as conn:
-                yield conn
-        elif transport_type == "sse":
-            async with MCPTransportFactory._connect_sse(config) as conn:
-                yield conn
-        elif transport_type == "stdio":
-            async with MCPTransportFactory._connect_stdio(config) as conn:
-                yield conn
-        else:
-            raise ValueError(f"Unknown transport type: {transport_type}")
+        # Sanitize transport diagnostics before they escape to application logs.
+        try:
+            if transport_type == "http":
+                async with MCPTransportFactory._connect_http(
+                    config, client_pool=client_pool
+                ) as conn:
+                    yield conn
+            elif transport_type == "sse":
+                async with MCPTransportFactory._connect_sse(config) as conn:
+                    yield conn
+            elif transport_type == "stdio":
+                async with MCPTransportFactory._connect_stdio(config) as conn:
+                    yield conn
+            else:
+                raise ValueError(f"Unknown transport type: {transport_type}")
+        except Exception as exc:
+            safe_message = redact_text(exc)
+            if safe_message != str(exc):
+                raise RuntimeError(safe_message) from None
+            raise
 
     @staticmethod
     @asynccontextmanager
@@ -694,7 +704,7 @@ class MCPTransportFactory:
         # Parse command and arguments
         parts = shlex.split(command_str)
         if not parts:
-            raise ValueError(f"Invalid stdio URL: {config.url}")
+            raise ValueError(f"Invalid stdio URL: {redact_text(config.url)}")
 
         command = parts[0]
         args = parts[1:] if len(parts) > 1 else []

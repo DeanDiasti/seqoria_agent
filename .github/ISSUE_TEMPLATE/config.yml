@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support and usage questions
+    url: https://github.com/DeanDiasti/seqoria_agent/blob/main/SUPPORT.md
+    about: Read the support guide and include a minimal, sanitized example.
+  - name: Security policy
+    url: https://github.com/DeanDiasti/seqoria_agent/blob/main/SECURITY.md
+    about: Request a confidential reporting route; never post vulnerability details publicly.

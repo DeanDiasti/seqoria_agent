@@ -1,20 +1,23 @@
-from __future__ import annotations
-
 """Parameter resolution utilities for *Server-Populated Parameters* (SPP)."""
 
-from typing import Any, Awaitable, Callable, Mapping, Optional, Union, Type
+from __future__ import annotations
+
+import asyncio
 import inspect
 import logging
-import asyncio
+from typing import Any, Awaitable, Callable, Mapping, Optional, TypeVar, Union
+
 from pydantic import BaseModel
 
-__all__: list[str] = ["ParamContext",
-                      "ParameterSource",
-                      "ParameterRegistry"]
+from seqoria_agent._redaction import redact_text
+
+__all__: list[str] = ["ParamContext", "ParameterSource", "ParameterRegistry"]
 
 ParamContext = Mapping[str, Any]
 
 ParameterSource = Union[Any, Callable[..., Awaitable[Any] | Any]]
+ParameterKey = TypeVar("ParameterKey", bound=str | type[BaseModel])
+
 
 class ParameterRegistry:  # noqa: D101 – concise implementation
     """Resolve server-populated parameters from a mapping.
@@ -35,8 +38,7 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
         assert await reg.resolve("missing", context=ctx) is None
     """
 
-    def __init__(self,
-                 mapping: Mapping[Union[str, Type[BaseModel]], ParameterSource]):
+    def __init__(self, mapping: Mapping[ParameterKey, ParameterSource]):
         """Create a new registry from *mapping*.
 
         Each key can be either a string parameter name **or** a subclass of
@@ -54,6 +56,7 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
         self._kw_params: dict[str, set[str] | None] = {}
 
         for key, src in mapping.items():
+            param_name: str
             if isinstance(key, str):
                 param_name = key
             elif isinstance(key, type) and issubclass(key, BaseModel):
@@ -68,7 +71,7 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
             # Precompute signature-derived kw filtering once (avoid per-call inspect.signature).
             if callable(src):
                 try:
-                    sig = inspect.signature(obj=src)  # type: ignore[arg-type]
+                    sig = inspect.signature(obj=src)
                     params = sig.parameters.values()
                     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params):
                         self._kw_params[param_name] = None
@@ -76,7 +79,11 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
                         self._kw_params[param_name] = {
                             p.name
                             for p in params
-                            if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+                            if p.kind
+                            in (
+                                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                inspect.Parameter.KEYWORD_ONLY,
+                            )
                         }
                 except Exception:
                     # If we can't introspect the callable, fall back to calling it without kwargs.
@@ -86,10 +93,7 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
 
         self._log = logging.getLogger(name="seqoria_agent.param_registry")
 
-    async def resolve(self,
-                      name: str,
-                      *,
-                      context: ParamContext) -> Optional[Any]:  # noqa: D401
+    async def resolve(self, name: str, *, context: ParamContext) -> Optional[Any]:  # noqa: D401
         """Return the resolved value for *name* or *None* when unresolved.
 
         Resolution order:
@@ -127,14 +131,15 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
                 # Pass only the subset of context keys the callable declares.
                 kwargs = {k: context[k] for k in kw_params if k in context}
 
+            result: Any
             if inspect.iscoroutinefunction(source):
                 result = source(**kwargs)
             else:
                 result = await asyncio.to_thread(source, **kwargs)
 
             if inspect.isawaitable(object=result):  # covers coroutine & awaitable objects
-                return await result  # type: ignore[misc]
+                return await result
             return result
         except Exception as exc:  # noqa: BLE001 – user code must not crash core
-            self._log.warning("Parameter '%s' failed to resolve: %s", name, exc)
+            self._log.warning("Parameter '%s' failed to resolve: %s", name, redact_text(exc))
             return None

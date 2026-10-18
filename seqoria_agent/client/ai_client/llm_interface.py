@@ -1,22 +1,22 @@
-from __future__ import annotations
-
 """Provider fallback and conversion to the client message protocol."""
 
-from typing import Any, AsyncGenerator, List, Optional, Union
+from __future__ import annotations
 
 import logging
 from contextlib import suppress
+from typing import Any, AsyncGenerator, List, Optional, Union
 
+from seqoria_agent._redaction import redact_text
+from seqoria_agent.models.chunk import (
+    AssistantMessage,
+    ChatChunk,
+    LLMUsage,
+    ToolCallRequest,
+    ToolCallRequestList,
+)
 from seqoria_agent.providers.base_provider import AsyncBaseProvider
 from seqoria_agent.providers.errors import LLMError
 from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
-from seqoria_agent.models.chunk import (
-    AssistantMessage,
-    ToolCallRequest,
-    ChatChunk,
-    ToolCallRequestList,
-    LLMUsage,
-)
 
 __all__: list[str] = ["LLMInterface"]
 
@@ -92,18 +92,25 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
             except LLMError as e:
                 last_err = e
                 self._logger.warning(
-                    "Provider %s failed to generate: %s", provider.__class__.__name__, e
+                    "Provider %s failed to generate: %s",
+                    provider.__class__.__name__,
+                    redact_text(e),
                 )
                 continue
             except Exception as e:
                 # Non-LLM errors are not considered retryable – re-raise.
                 self._logger.warning(
-                    "Provider %s failed to generate: %s", provider.__class__.__name__, e
+                    "Provider %s failed to generate: %s",
+                    provider.__class__.__name__,
+                    redact_text(e),
                 )
+                safe_message = redact_text(e)
+                if safe_message != str(e):
+                    raise RuntimeError(safe_message) from None
                 raise
 
         if raw_resp is None:
-            raise RuntimeError(f"All LLM providers failed. Last error: {last_err}")
+            raise RuntimeError(f"All LLM providers failed. Last error: {redact_text(last_err)}")
 
         # Update fast-path cache on success
         if successful_idx is not None:
@@ -254,13 +261,25 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                 return
             except LLMError as exc:
                 if emitted:
+                    safe_message = redact_text(exc)
+                    if safe_message != str(exc):
+                        raise LLMError(safe_message, provider=exc.provider) from None
                     raise
                 last_err = exc
                 self._logger.warning(
-                    "Provider %s failed to start stream: %s", provider.__class__.__name__, exc
+                    "Provider %s failed to start stream: %s",
+                    provider.__class__.__name__,
+                    redact_text(exc),
                 )
+            except Exception as exc:
+                safe_message = redact_text(exc)
+                if safe_message != str(exc):
+                    raise RuntimeError(safe_message) from None
+                raise
             finally:
                 if stream_gen is not None:
                     with suppress(Exception):
                         await stream_gen.aclose()
-        raise RuntimeError(f"All LLM providers failed to stream. Last error: {last_err}")
+        raise RuntimeError(
+            f"All LLM providers failed to stream. Last error: {redact_text(last_err)}"
+        )

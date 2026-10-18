@@ -10,6 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install '.[dev,docs]'
+      - run: ruff format --check .
+      - run: ruff check .
+      - run: python -m mypy
+      - run: mkdocs build --strict
+      - name: Tests with branch coverage (75% minimum)
+        run: python -m pytest --cov=seqoria_agent --cov-config=pyproject.toml --cov-report=term-missing --cov-report=xml --cov-fail-under=75
+      - name: Synthetic multi-user smoke benchmark
+        run: python benchmarks/multi_user.py --users 8 --rounds 2 --max-concurrency 2 > benchmark-results.json
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: quality-reports
+          path: |
+            coverage.xml
+            benchmark-results.json
+          retention-days: 14
+
   test:
     strategy:
       fail-fast: false
@@ -18,27 +42,42 @@ jobs:
         python: ['3.12', '3.13']
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install '.[dev]'
-      - run: ruff check .
       - run: python -m pytest
 
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
       - run: python -m pip install build twine
       - run: python -m build
       - run: python -m twine check --strict dist/*
-      - name: Install only the built core wheel
-        run: python -m pip install dist/*.whl
-      - name: Import outside the source checkout
+      - run: python scripts/check_distribution.py dist
+      - name: Create isolated core wheel environment
+        run: |
+          python -m venv "${{ runner.temp }}/wheel-check"
+          "${{ runner.temp }}/wheel-check/bin/python" -m pip install dist/*.whl pytest pytest-asyncio
+      - name: Verify installation and run full suite outside checkout
         working-directory: ${{ runner.temp }}
         run: |
-          python -c "from seqoria_agent import AsyncAIClient, LocalToolbox; from seqoria_agent.providers import AsyncOpenAIProvider, AsyncAnthropicProvider, AsyncOllamaProvider; import importlib.util; assert importlib.util.find_spec('mlx_vlm') is None; assert importlib.util.find_spec('seqoria_agent.providers.mlx_lm_provider') is None; assert importlib.util.find_spec('seqoria_agent.providers.mlx_vlm_provider') is None; assert importlib.util.find_spec('seqoria_agent.memory') is None; assert importlib.util.find_spec('seqoria_agent.server') is None; assert importlib.util.find_spec('seqoria_agent.client.cache') is None"
+          "${{ runner.temp }}/wheel-check/bin/python" "$GITHUB_WORKSPACE/scripts/check_install.py"
+          "${{ runner.temp }}/wheel-check/bin/python" -m pytest --import-mode=importlib "$GITHUB_WORKSPACE/tests"
+
+      - name: Verify minimum direct dependencies against installed wheel
+        working-directory: ${{ runner.temp }}
+        run: |
+          "${{ runner.temp }}/wheel-check/bin/python" -m pip install 'httpx[http2]==0.28.1' 'mcp==1.30.0' 'pydantic==2.12.5'
+          "${{ runner.temp }}/wheel-check/bin/python" -m pytest --import-mode=importlib "$GITHUB_WORKSPACE/tests"
+
+  security:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/security.yml

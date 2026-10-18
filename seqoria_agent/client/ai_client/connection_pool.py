@@ -27,15 +27,16 @@ from typing import Any, Dict, Iterable, List, Optional, Self
 from mcp import ClientSession
 from mcp.types import TextContent
 
+from seqoria_agent._redaction import redact_text, redact_url
+from seqoria_agent.client.ai_client.utils import json_dumps
 from seqoria_agent.client.mcp_transport import (
+    HTTPClientPool,
     MCPServerConfig,
     MCPTransportFactory,
     TransportType,
-    HTTPClientPool,
 )
-from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError
-from seqoria_agent.client.ai_client.utils import json_dumps
+from seqoria_agent.toolbox import LocalToolbox
 
 __all__ = ["MCPConnectionPool"]
 
@@ -215,7 +216,7 @@ class MCPConnectionPool:
                     self._connections.append(result)
                     self._session_to_url[result.session] = result.url
                 elif isinstance(result, Exception):
-                    self._logger.warning("Connection failed: %s", result)
+                    self._logger.warning("Connection failed: %s", redact_text(result))
 
             if not self._connections and self._server_configs:
                 self._logger.warning("MCPConnectionPool initialized without any reachable servers")
@@ -387,7 +388,9 @@ class MCPConnectionPool:
         # Circuit breaker check
         now = time.monotonic()
         if self._breaker_until.get(server_url, 0) > now:
-            raise CircuitOpenError(f"Circuit open for server {server_url} - retry later.")
+            raise CircuitOpenError(
+                f"Circuit open for server {redact_url(server_url)} - retry later."
+            )
 
         # Retry policy
         max_attempts = int(self._retry_policy.get("max_attempts", 1))
@@ -407,7 +410,7 @@ class MCPConnectionPool:
                     details = "\n".join(
                         item.text for item in result.content if hasattr(item, "text")
                     )
-                    raise ToolRemoteError(details or f"Tool '{name}' failed")
+                    raise ToolRemoteError(redact_text(details or f"Tool '{name}' failed"))
 
                 # Success - reset failure counter
                 self._fail_log.pop(server_url, None)
@@ -429,16 +432,25 @@ class MCPConnectionPool:
                         self._breaker_until[server_url] = (
                             time.monotonic() + self._breaker_reset_after
                         )
-                        self._logger.warning("Circuit breaker tripped for %s", server_url)
-                    raise exc
+                        self._logger.warning(
+                            "Circuit breaker tripped for %s", redact_url(server_url)
+                        )
+                    safe_message = redact_text(exc)
+                    if safe_message != str(exc):
+                        raise ToolRemoteError(safe_message) from None
+                    raise
 
                 # Exponential backoff before retry
                 delay = backoff_base * (2 ** (attempt - 1))
-                self._logger.debug("Tool call failed, retrying in %.2fs: %s", delay, exc)
+                self._logger.debug(
+                    "Tool call failed, retrying in %.2fs: %s", delay, redact_text(exc)
+                )
                 await asyncio.sleep(delay)
 
         # Should never reach here
-        raise ToolRemoteError(f"Tool call failed after {max_attempts} attempts: {last_error}")
+        raise ToolRemoteError(
+            f"Tool call failed after {max_attempts} attempts: {redact_text(last_error)}"
+        )
 
     def _convert_tool_result(self, result: Any) -> List[Any]:
         """Convert MCP CallToolResult to our internal format."""
@@ -484,7 +496,9 @@ class MCPConnectionPool:
                     ready.set_exception(exc)
                 elif not isinstance(exc, asyncio.CancelledError):
                     self._logger.warning(
-                        "MCP connection closed with error (%s): %s", config.url, exc
+                        "MCP connection closed with error (%s): %s",
+                        redact_url(config.url),
+                        redact_text(exc),
                     )
 
         owner = asyncio.create_task(own_connection())
@@ -494,7 +508,7 @@ class MCPConnectionPool:
             owner.cancel()
             await asyncio.gather(owner, return_exceptions=True)
             raise
-        self._logger.info("Connected to MCP server: %s", config.url)
+        self._logger.info("Connected to MCP server: %s", redact_url(config.url))
         return _ActiveConnection(
             session=conn.session,
             url=config.url,

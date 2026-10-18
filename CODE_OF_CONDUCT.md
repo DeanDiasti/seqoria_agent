@@ -49,16 +49,22 @@ an individual is officially representing the community in public spaces.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-**your@email.com**.
+Report abusive, harassing, or otherwise unacceptable behavior through
+[GitHub issues](https://github.com/DeanDiasti/seqoria_agent/issues). Describe the
+concern briefly and link relevant repository activity where appropriate. Issues
+become public after launch; omit personal names, private messages, personal data,
+and sensitive evidence. For a sensitive matter, start with a minimal request for
+maintainer review and wait for guidance before sharing details. No email contact
+or dedicated confidential conduct-reporting channel is provided.
 
-All complaints will be reviewed and investigated promptly and fairly.
+Reports will be reviewed fairly. Do not publish personal details or evidence of
+harassment in an issue or pull request. Maintainers may remove harmful content,
+restrict participation, or ban participants according to the severity of the
+behavior.
 
 ## Attribution
 
 This Code of Conduct is adapted from the [Contributor Covenant][homepage],
-version 2.1, available at <https://www.contributor-covenant.org/version/2/1/
-code_of_conduct.html>.
+version 2.1, available at <https://www.contributor-covenant.org/version/2/1/code_of_conduct.html>.
 
-[homepage]: https://www.contributor-covenant.org 
+[homepage]: https://www.contributor-covenant.org

@@ -24,6 +24,7 @@ Providers use HTTPX to communicate with remote APIs or a local Ollama server.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 from typing import TYPE_CHECKING, Any
 
 # Always import base classes and errors (lightweight, no external deps)
@@ -43,13 +44,13 @@ from seqoria_agent.providers.errors import (
 
 # Type checking imports (no runtime cost)
 if TYPE_CHECKING:
-    from seqoria_agent.providers.openai_provider import AsyncOpenAIProvider, OpenAIProvider
+    from seqoria_agent.providers.anthropic_provider import AnthropicProvider, AsyncAnthropicProvider
+    from seqoria_agent.providers.ollama_provider import AsyncOllamaProvider, OllamaProvider
     from seqoria_agent.providers.openai_compatible_provider import (
         AsyncOpenAICompatibleProvider,
         OpenAICompatibleProvider,
     )
-    from seqoria_agent.providers.anthropic_provider import AsyncAnthropicProvider, AnthropicProvider
-    from seqoria_agent.providers.ollama_provider import AsyncOllamaProvider, OllamaProvider
+    from seqoria_agent.providers.openai_provider import AsyncOpenAIProvider, OpenAIProvider
 
 
 __all__ = [
@@ -102,7 +103,10 @@ _PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
         "seqoria_agent.providers.openai_compatible_provider",
         "OpenAICompatibleProvider",
     ),
-    "AsyncAnthropicProvider": ("seqoria_agent.providers.anthropic_provider", "AsyncAnthropicProvider"),
+    "AsyncAnthropicProvider": (
+        "seqoria_agent.providers.anthropic_provider",
+        "AsyncAnthropicProvider",
+    ),
     "AnthropicProvider": ("seqoria_agent.providers.anthropic_provider", "AnthropicProvider"),
     "AsyncOllamaProvider": ("seqoria_agent.providers.ollama_provider", "AsyncOllamaProvider"),
     "OllamaProvider": ("seqoria_agent.providers.ollama_provider", "OllamaProvider"),
@@ -124,16 +128,16 @@ def _load_provider(name: str) -> type:
     """Lazy load a provider class by name."""
     if name in _loaded_providers:
         return _loaded_providers[name]
-    
+
     if name not in _PROVIDER_REGISTRY:
         raise AttributeError(f"Provider '{name}' not found in seqoria_agent.providers")
-    
+
     module_path, class_name = _PROVIDER_REGISTRY[name]
-    
+
     # Import the module and get the class
     module = importlib.import_module(module_path)
     provider_class = getattr(module, class_name)
-    
+
     # Cache for future use
     _loaded_providers[name] = provider_class
     return provider_class
@@ -150,58 +154,59 @@ def __getattr__(name: str) -> Any:
 # Utility functions
 # ---------------------------------------------------------------------------
 
+
 def get_provider(name: str, async_variant: bool = True) -> type:
     """Get a provider class by name.
-    
+
     Parameters
     ----------
     name : str
         Provider name (e.g., "openai", "anthropic", "ollama").
     async_variant : bool
         If True, return the async variant (default). If False, return sync.
-        
+
     Returns
     -------
     type
         The provider class.
-        
+
     Raises
     ------
     ValueError
         If the provider name is not recognized.
-        
+
     Example
     -------
     >>> provider_cls = get_provider("openai")
     >>> provider = provider_cls(model_id="gpt-4o")
     """
     name_lower = name.lower()
-    
+
     provider_map = {
         "openai": ("AsyncOpenAIProvider", "OpenAIProvider"),
         "openai_compatible": ("AsyncOpenAICompatibleProvider", "OpenAICompatibleProvider"),
         "anthropic": ("AsyncAnthropicProvider", "AnthropicProvider"),
         "ollama": ("AsyncOllamaProvider", "OllamaProvider"),
     }
-    
+
     if name_lower not in provider_map:
         available = ", ".join(provider_map.keys())
         raise ValueError(f"Unknown provider '{name}'. Available: {available}")
-    
+
     async_name, sync_name = provider_map[name_lower]
     target_name = async_name if async_variant else sync_name
-    
+
     return _load_provider(target_name)
 
 
 def list_available_providers() -> dict[str, bool]:
     """List all providers and their availability status.
-    
+
     Returns
     -------
     dict[str, bool]
         Mapping of provider names to whether they're available (package installed).
-        
+
     Example
     -------
     >>> list_available_providers()
