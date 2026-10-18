@@ -1,6 +1,6 @@
 # Public alpha review
 
-The repository stays private until the maintainer approves a separate public launch. Version 0.9.1 contains the reviewed hardening and cleanup on top of the published 0.9.0 baseline. The maintainer authorized committing, pushing, tagging, and publishing 0.9.1 on 2026-10-18 while keeping GitHub private. Package publication does not deploy documentation or change repository visibility.
+The maintainer approved making the repository public on 2026-10-18 after the 0.9.1 release review. Version 0.9.1 contains the reviewed hardening and cleanup on top of the published 0.9.0 baseline. Package publication, repository visibility, security settings, and documentation deployment are verified separately.
 
 ## Review the code and package
 
@@ -20,7 +20,7 @@ Review the [benchmark guide](https://github.com/DeanDiasti/seqoria_agent/blob/ma
 
 Review tracked files, full Git history, release artifacts, and existing Actions logs before changing visibility. A history scanner can find credential patterns; it cannot prove that business data, endpoint names, or all secret formats are absent. Rotate any discovered credential before rewriting or publishing history, and assess existing downloadable artifacts and logs separately.
 
-Use GitHub issues for ordinary support and conduct reports, minimizing personal or sensitive details because issues become public after launch. Sensitive security reports should use GitHub private vulnerability reporting when available; otherwise reporters can open a minimal issue requesting a private advisory or reporting route, without exploit details. The [security policy](https://github.com/DeanDiasti/seqoria_agent/blob/main/SECURITY.md) does not claim that private reporting is currently enabled. No email contact or separate confidential conduct-reporting channel is required for this alpha.
+Use GitHub issues for ordinary support and conduct reports, minimizing personal or sensitive details because issues are public. Sensitive security reports should use GitHub private vulnerability reporting; if unavailable, reporters can open a minimal issue requesting a private advisory or reporting route, without exploit details. Follow the [security policy](https://github.com/DeanDiasti/seqoria_agent/blob/main/SECURITY.md). No email contact or separate confidential conduct-reporting channel is required for this alpha.
 
 Review issue and pull-request templates, repository description/topics, license, PyPI metadata, and provider reference pages. Keep examples free of real tokens, user histories, and private endpoints.
 
@@ -60,7 +60,7 @@ Fourteen older completed Actions runs (December 2025–April 2026) had no downlo
 
 Documentation is grouped into quickstart, practical guides, API references, migration, and maintainer evidence. Nine example programs have explicit prerequisites and ownership rules; five smoke cases execute the four offline demonstrations and the local MCP stdio roundtrip. Tests are grouped by behavior in eleven directories. Collection comparison preserved every original class, function, and parameter case; the five example cases are the only additions during reorganization.
 
-The dependency audit covers the resolved supported runtime environment, not unrelated legacy packages remaining in a developer's virtual environment. The minimum direct MCP dependency was raised to 1.30.0 to include the audited security fixes. CI audits all runtime extras and schedules fresh dependency/secret checks; push and pull-request secret checks scan event commits, while scheduled/manual runs inspect history. A new hosted CI run is still required after the reviewed changes are pushed.
+The dependency audit covers the resolved supported runtime environment, not unrelated legacy packages remaining in a developer's virtual environment. The minimum direct MCP dependency was raised to 1.30.0 to include the audited security fixes. CI audits all runtime extras and schedules fresh dependency/secret checks; push and pull-request secret checks scan event commits, while scheduled/manual runs inspect history. Hosted CI, documentation, and the tagged publishing workflow all passed for release commit `3cb1751088c4eb1397b2f899181b28fc1888f35f`. A fresh installation of 0.9.1 from PyPI passed all 623 tests outside the checkout; its README and both release archive digests were verified.
 
 ### Synthetic benchmark evidence
 
@@ -76,4 +76,29 @@ All three scenarios passed identity isolation, concurrency-cap enforcement, canc
 
 ### Review and launch decisions
 
-The maintainer authorized the 0.9.1 release after review. Push the fixes and require the fresh CI matrix to pass before tagging; the tag workflow repeats validation before publication. Keep the repository private. A separate approved launch step can change repository visibility, enable GitHub private vulnerability reporting, configure branch protection/required checks as available, and deploy the reviewed Pages site. No email address or separate private conduct channel is required by the maintainer's reporting preference.
+The maintainer authorized the 0.9.1 release after review, then approved the public alpha launch. Launch setup includes a repository description and topics, GitHub private vulnerability reporting, required checks on `main`, and the reviewed Pages documentation. No email address or separate private conduct channel is required by the maintainer's reporting preference.
+
+### Live provider checks — 2026-10-18
+
+`scripts/check_live_provider.py` performs one ordinary and one streaming model/tool/result/assistant roundtrip. Each mode checks trusted identity injection, exactly one local tool invocation, paired call IDs, the returned proof string, and the final response; streaming also checks text deltas. It uses synthetic data, disables retries, bounds output and time, closes owned resources, and never pulls models.
+
+| Adapter and service | Model | Result |
+| --- | --- | --- |
+| Anthropic Messages API | `claude-haiku-4-5-20251001` | Ordinary and streaming roundtrips passed |
+| Ollama native API, installed local model | `qwen3.8-27b-abliterated:latest` | Ordinary and streaming roundtrips passed |
+| Compatible Chat Completions API, local Ollama endpoint | `qwen3.8-27b-abliterated:latest` | Ordinary and streaming roundtrips passed with `reasoning_effort=none` |
+| OpenAI Responses API | `gpt-4.1-nano` | Generation blocked by account HTTP 429, `insufficient_quota` / `credit_balance_exhausted` |
+| Compatible Chat Completions API, OpenRouter | `openai/gpt-4.1-nano` | Configured credential rejected; no successful generation |
+
+Account quota and credential failures are not successful live validations. OpenAI's Responses adapter remains covered by deterministic HTTP contract tests; it needs a live rerun once the account has credit. OpenRouter needs a valid credential before it can be certified for the chosen model. The compatible adapter's successful local check does not certify other compatible services. These limits are recorded for the public alpha rather than presented as universal provider validation.
+
+To repeat a check with an accessible model and credentials supplied through the environment:
+
+```bash
+python scripts/check_live_provider.py --provider openai --model YOUR_MODEL_ID
+python scripts/check_live_provider.py --provider anthropic --model YOUR_MODEL_ID
+python scripts/check_live_provider.py --provider compatible --model YOUR_MODEL_ID
+python scripts/check_live_provider.py --provider ollama --model YOUR_INSTALLED_MODEL
+```
+
+For `compatible`, set `SEQORIA_BASE_URL` and `SEQORIA_API_KEY`; `--reasoning-effort` is optional and endpoint-specific. OpenAI and Anthropic use their standard API-key environment variables. The script does not load local dotenv files or run in default CI. It makes up to four bounded generation requests and may incur provider charges.

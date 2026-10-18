@@ -52,7 +52,7 @@ an individual is officially representing the community in public spaces.
 Report abusive, harassing, or otherwise unacceptable behavior through
 [GitHub issues](https://github.com/DeanDiasti/seqoria_agent/issues). Describe the
 concern briefly and link relevant repository activity where appropriate. Issues
-become public after launch; omit personal names, private messages, personal data,
+are public; omit personal names, private messages, personal data,
 and sensitive evidence. For a sensitive matter, start with a minimal request for
 maintainer review and wait for guidance before sharing details. No email contact
 or dedicated confidential conduct-reporting channel is provided.

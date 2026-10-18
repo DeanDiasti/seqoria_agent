@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prepare the public alpha launch, refresh release/security evidence, and add an opt-in live provider check for ordinary and streaming tool roundtrips.
+
 ## 0.9.1 — 2026-10-18
 
 - Preserve compatible streamed tool arguments and parallel Responses calls; reject malformed arguments, malformed success payloads, and incomplete streams; support multiline compatible SSE frames across sync/async adapters.

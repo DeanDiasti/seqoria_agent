@@ -2,7 +2,7 @@
 
 Seqoria Agent is an alpha library for explicit conversation history, local Python tools, MCP clients, and HTTP model providers. Keep changes focused on that core. Discuss new public APIs, dependencies, and substantial behavior changes in an issue before implementing them.
 
-The repository remains private while the public alpha is reviewed. Links to issues and pull requests require repository access until launch. Participation follows the [code of conduct](CODE_OF_CONDUCT.md).
+Participation follows the [code of conduct](CODE_OF_CONDUCT.md). Use issues for ordinary reports and the [security policy](SECURITY.md) for vulnerabilities.
 
 ## Set up a checkout
 

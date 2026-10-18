@@ -1,7 +1,7 @@
 # Publishing Seqoria Agent
 
 The package name is `seqoria-agent`; consumers import `seqoria_agent`.
-Version 0.9.1 is the release target for the reviewed hardening and documentation cleanup. Nothing is published by editing the repository or building artifacts locally; the tagged release workflow must succeed. Keep GitHub private until a separate public launch is approved through the [public alpha review](docs/maintainers/public-alpha.md).
+Version 0.9.1 is published on PyPI. Nothing is published by editing the repository or building artifacts locally; the tagged release workflow must succeed. The maintainer approved the public alpha launch separately from package publication; see the [public alpha review](docs/maintainers/public-alpha.md).
 
 ## Existing PyPI project setup
 

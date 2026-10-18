@@ -100,9 +100,9 @@ Documentation is available from source and with `mkdocs serve` after installing 
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the organized test suite, formatting, type checks, package validation, and pull requests. Tests use deterministic HTTP transports, in-memory MCP sessions, and a local subprocess; the default suite needs no hosted model or model downloads. CI covers Python 3.12/3.13 on Linux, macOS, and Windows.
 
-Use [GitHub issues](https://github.com/DeanDiasti/seqoria_agent/issues) for ordinary reports and follow [SECURITY.md](SECURITY.md) for vulnerabilities. See [SUPPORT.md](SUPPORT.md) and the [code of conduct](CODE_OF_CONDUCT.md). Issues require access while this repository remains private during launch review.
+Use [GitHub issues](https://github.com/DeanDiasti/seqoria_agent/issues) for ordinary reports and follow [SECURITY.md](SECURITY.md) for vulnerabilities. See [SUPPORT.md](SUPPORT.md) and the [code of conduct](CODE_OF_CONDUCT.md). Keep sensitive reports out of public issues.
 
-Maintainer evidence is grouped under [release review](docs/maintainers/release-review.md) and [public alpha review](docs/maintainers/public-alpha.md). Review these before making the repository public or publishing the next release. See [RELEASING.md](RELEASING.md) and [CHANGELOG.md](CHANGELOG.md) for release operations and history.
+Maintainer evidence is grouped under [release review](docs/maintainers/release-review.md) and [public alpha review](docs/maintainers/public-alpha.md), including the live integration checks and their limits. See [RELEASING.md](RELEASING.md) and [CHANGELOG.md](CHANGELOG.md) for release operations and history.
 
 ## License
 

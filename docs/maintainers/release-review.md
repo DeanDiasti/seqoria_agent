@@ -42,4 +42,4 @@ Separate remote MCP sessions when end-user authentication differs. Apply authori
 
 Hosted provider credentials, model-specific capabilities, real network failures, and production HTTP/OAuth deployments need environment-specific integration testing. Synthetic concurrency measurements isolate orchestration overhead; they are not a production capacity claim.
 
-Repository visibility, private vulnerability reporting, Pages activation, and release publication are separate operator actions. Building or reviewing this branch changes none of them. Keep the repository private until the launch review is approved.
+Repository visibility, private vulnerability reporting, Pages activation, and release publication are separate operator actions. The maintainer approved the public alpha launch after the 0.9.1 release; the [launch record](public-alpha.md) includes verification evidence and live integration limits.
