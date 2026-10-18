@@ -5,4 +5,4 @@ contact_links:
     about: Read the support guide and include a minimal, sanitized example.
   - name: Security policy
     url: https://github.com/DeanDiasti/seqoria_agent/blob/main/SECURITY.md
-    about: Request a confidential reporting route; never post vulnerability details publicly.
+    about: Use private vulnerability reporting; never post vulnerability details publicly.

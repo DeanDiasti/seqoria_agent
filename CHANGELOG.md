@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Prepare the public alpha launch, refresh release/security evidence, and add an opt-in live provider check for ordinary and streaming tool roundtrips.
+- Launch the public alpha with hosted documentation, protected main, private vulnerability reporting, refreshed release/security evidence, and an opt-in live provider check for ordinary and streaming tool roundtrips.
 
 ## 0.9.1 — 2026-10-18
 

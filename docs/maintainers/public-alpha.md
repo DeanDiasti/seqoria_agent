@@ -2,6 +2,16 @@
 
 The maintainer approved making the repository public on 2026-10-18 after the 0.9.1 release review. Version 0.9.1 contains the reviewed hardening and cleanup on top of the published 0.9.0 baseline. Package publication, repository visibility, security settings, and documentation deployment are verified separately.
 
+## Verified public launch — 2026-10-18
+
+The repository is public, and anonymous access to its API metadata and source README was verified. The [documentation site](https://deandiasti.github.io/seqoria_agent/) deployed successfully; the homepage, quickstart, web application guide, client/provider references, launch record, and search index returned HTTP 200 without authentication.
+
+GitHub private vulnerability reporting, secret scanning, push protection, dependency vulnerability alerts, and Dependabot security-fix pull requests are enabled. At verification there were no open secret-scanning alerts; this supplements the scans below without certifying the absence of every possible secret.
+
+`main` requires a pull request, up-to-date branches, eleven successful GitHub Actions checks, resolved conversations, and linear history. The checks cover quality, package installation, dependency and secret scans, documentation, and Python 3.12/3.13 on Linux/macOS/Windows. Protection applies to administrators; force pushes and branch deletion are blocked. The solo-maintainer workflow requires zero additional review approvals, so it does not claim independent reviewer sign-off.
+
+The launch commit `ec152ab002e5d1cdf3f273906ab3db1cdee8ce67` passed hosted CI and documentation checks before visibility changed. A local rerun passed all 623 tests, and a fresh archive scan plus history scan through the 0.9.1 release (56 commits) found no leaks. The live-check limitations below remain part of the alpha's published evidence.
+
 ## Review the code and package
 
 Before approving launch, review provider regressions covering complete model-to-tool arguments, sync/async streaming, fragmented and malformed responses, errors before and after output, and cancellation. Check endpoint diagnostic redaction, independent user contexts, history pairing, bounded concurrency, and resource cleanup after success, failure, or stream abandonment.

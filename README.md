@@ -2,7 +2,7 @@
 
 An async Python library for assistants that call Python tools and remote MCP servers. Run model/tool loops, stream responses, and keep conversation state under your application's control.
 
-[PyPI](https://pypi.org/project/seqoria-agent/) · **Alpha API** · **Python 3.12+** · **Apache-2.0**
+[PyPI](https://pypi.org/project/seqoria-agent/) · [Documentation](https://deandiasti.github.io/seqoria_agent/) · **Alpha API** · **Python 3.12+** · **Apache-2.0**
 
 ## What it does
 
@@ -13,7 +13,7 @@ An async Python library for assistants that call Python tools and remote MCP ser
 - OpenAI, OpenAI-compatible HTTP, Anthropic, and Ollama providers.
 - Explicit conversation histories and provider fallback before streamed output begins.
 
-The API is alpha and may change between releases. Pin a version and read the [migration guide](docs/migration.md) before upgrading.
+The API is alpha and may change between releases. Pin a version and read the [migration guide](https://deandiasti.github.io/seqoria_agent/migration/) before upgrading.
 
 ## Install
 
@@ -72,7 +72,7 @@ Import from `seqoria_agent.providers`:
 | Anthropic | `AsyncAnthropicProvider` | Anthropic API and model access |
 | Ollama | `AsyncOllamaProvider` | Running Ollama service and model |
 
-Use async providers with `AsyncAIClient`. Blocking scripts use `AIClient` as a regular context manager and `chat_sync()` for the final answer; provider classes without the `Async` prefix are synchronous variants. Endpoint capabilities depend on the backend. See the [provider API](docs/reference/providers.md) for constructors and methods.
+Use async providers with `AsyncAIClient`. Blocking scripts use `AIClient` as a regular context manager and `chat_sync()` for the final answer; provider classes without the `Async` prefix are synchronous variants. Endpoint capabilities depend on the backend. See the [provider API](https://deandiasti.github.io/seqoria_agent/reference/providers/) for constructors and methods.
 
 ## Use it in a web application
 
@@ -82,19 +82,19 @@ Pass authenticated identity in per-request `context`. Declare hidden local argum
 
 The default tool concurrency cap is 16 per client. `tool_timeout` covers parameter resolution and tool execution after a slot is acquired; add application limits for total request time and queue depth. Synchronous tools run in worker threads and cannot be stopped once running. Close abandoned async streams explicitly.
 
-Applications own authentication, authorization, history persistence, context limits, retention, rate limits, and side-effect safety. The library executes each requested call without caching results; retries can repeat operations after ambiguous failures. See the [web application guide](docs/guides/web-applications.md) for a lifespan example and request ownership rules.
+Applications own authentication, authorization, history persistence, context limits, retention, rate limits, and side-effect safety. The library executes each requested call without caching results; retries can repeat operations after ambiguous failures. See the [web application guide](https://deandiasti.github.io/seqoria_agent/guides/web-applications/) for a lifespan example and request ownership rules.
 
 ## Read the guides
 
-- [Quickstart](docs/quickstart.md): first assistant and streaming events.
-- [Tool execution](docs/guides/tool-execution.md): manual loops, trusted parameters, failures, and cancellation.
-- [MCP connections](docs/guides/mcp.md): transports, authentication, and session ownership.
-- [API reference](docs/reference/client.md): clients, parameters, local tools, messages, providers, and transport helpers.
-- [Migration](docs/migration.md): upgrade steps for removed memory, caches, server wrappers, and compatibility APIs.
+- [Quickstart](https://deandiasti.github.io/seqoria_agent/quickstart/): first assistant and streaming events.
+- [Tool execution](https://deandiasti.github.io/seqoria_agent/guides/tool-execution/): manual loops, trusted parameters, failures, and cancellation.
+- [MCP connections](https://deandiasti.github.io/seqoria_agent/guides/mcp/): transports, authentication, and session ownership.
+- [API reference](https://deandiasti.github.io/seqoria_agent/reference/client/): clients, parameters, local tools, messages, providers, and transport helpers.
+- [Migration](https://deandiasti.github.io/seqoria_agent/migration/): upgrade steps for removed memory, caches, server wrappers, and compatibility APIs.
 
 Tool output stays intact as text/JSON, including fields named `ai_message` or `metadata`. Failures produce `ToolCallError` events. Streaming additionally yields `ChatChunk` deltas; the final `AssistantMessage` contains the complete response and usage. See the execution guide before building a stream renderer or retry policy.
 
-Documentation is available from source and with `mkdocs serve` after installing `.[docs]`. Hosted documentation deployment is a separate launch step; a successful build does not imply a live site.
+Read the [documentation site](https://deandiasti.github.io/seqoria_agent/), or build from source with `mkdocs serve` after installing `.[docs]`.
 
 ## Contribute and get help
 

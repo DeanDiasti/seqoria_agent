@@ -2,7 +2,7 @@
 
 Seqoria Agent is alpha software. API changes and integration defects are possible; there is no support SLA or production certification.
 
-Start with the [README](README.md), [quickstart](docs/quickstart.md), and [web application guide](docs/guides/web-applications.md). The documentation source is available in this repository. A hosted documentation site is not yet part of the reviewed launch; build it locally with `mkdocs serve` after installing `.[docs]`.
+Start with the [README](README.md), [quickstart](https://deandiasti.github.io/seqoria_agent/quickstart/), and [web application guide](https://deandiasti.github.io/seqoria_agent/guides/web-applications/). The [documentation site](https://deandiasti.github.io/seqoria_agent/) is hosted on GitHub Pages. Build it locally with `mkdocs serve` after installing `.[docs]`.
 
 For bugs and small usage questions, use [GitHub issues](https://github.com/DeanDiasti/seqoria_agent/issues). Issues are public. Include the package version, Python and operating-system versions, provider/transport type, a minimal reproduction, expected behavior, and a sanitized traceback. Do not include API keys, credential-bearing URLs, personal data, or real conversation histories.
 
