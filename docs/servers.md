@@ -1,41 +1,23 @@
-# MCP servers
+# MCP client connections
 
-`SeqoriaMCP` extends the official MCP Python SDK's `FastMCP` server. Its transport, authentication, and deployment settings come from that SDK.
+Seqoria Agent connects to independently hosted MCP servers. It supports Streamable HTTP, SSE, and stdio; authoring and deploying those servers belongs to their server implementation.
 
-```python
-from seqoria_agent import SeqoriaMCP
-
-server = SeqoriaMCP("Example", host="127.0.0.1", port=8000)
-
-@server.tool()
-async def add(a: int, b: int) -> int:
-    """Add two integers."""
-    return a + b
-
-if __name__ == "__main__":
-    server.run(transport="streamable-http")
-```
-
-Connect a client with `mcp_servers=["http://127.0.0.1:8000/mcp"]`. A bare HTTP origin is expanded to `/mcp`; explicit endpoint paths are preserved. Use `MCPServerConfig` for headers, timeout, transport type, subprocess environment, or OAuth. OAuth's default interactive browser/loopback flow is intended for local scripts; a web service must provide its own user authorization flow and handlers.
-
-## Hidden server parameters
+Configure remote servers before entering the client lifespan:
 
 ```python
-@server.register_param_provider
-async def resolve_identity(ctx, tool_name, param_name):
-    # Authenticate the transport and verify authorization in your application.
-    if param_name == "tenant_id":
-        return await authenticated_tenant_for_request(ctx)
-    return None
+from seqoria_agent.client import MCPServerConfig
 
-@server.tool(server_populated=["tenant_id"])
-async def report(region: str, tenant_id: str) -> dict:
-    """Read a regional report for the authenticated tenant."""
-    return await reports.read(tenant_id=tenant_id, region=region)
+server = MCPServerConfig(
+    url="http://127.0.0.1:8000/mcp",
+    timeout=30,
+)
+# Pass mcp_servers=[server] to AsyncAIClient along with your providers.
 ```
 
-Hidden parameters are omitted from the public tool schema. Their values come from server-side providers or authenticated request context on every call; missing values fail closed. Do not accept caller-supplied tenant or user IDs as proof of identity. The client does not transmit local `server_args` to remote tools.
+A bare HTTP origin is expanded to `/mcp`; explicit endpoint paths are preserved. `MCPServerConfig` also accepts headers, transport selection, subprocess environment, and OAuth configuration. Enter `async with client:` before listing or calling remote tools. The client owns its sessions and closes them on exit.
 
-Dependency annotations apply to requested calls in the agent's executor. They are scheduling hints, not a security boundary. Validate access inside each tool even when another tool declares an authorization dependency.
+The default interactive OAuth browser/loopback flow is for local scripts. A web service must supply its own user authorization flow and handlers. Remote MCP servers must authenticate callers, enforce authorization, and resolve any hidden identity parameters themselves. Local `server_args` are not transmitted to remote tools. Use separate client/session lifespans for remote connections authenticated as different end users.
 
-Synchronous functions execute in worker threads. `format_tool_response()` and `format_error_response()` remain available for applications that need explicit response envelopes; ordinary tools can return normal Python values.
+The library no longer ships `SeqoriaMCP`, `seqoria_agent.server`, or `XMCPError`. For local Python functions, use `LocalToolbox` and pass trusted per-request context to the executor. For remote hosting, use the official MCP SDK or another compatible server implementation. The standalone example servers in `examples/server-client/server1.py` and `server2.py` use the official SDK directly.
+
+Dependency annotations apply to requested calls in the client's executor. They schedule calls rather than enforce authorization. Each remote tool must validate access to its own data and operations.

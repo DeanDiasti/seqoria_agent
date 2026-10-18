@@ -9,15 +9,13 @@ from typing import Literal
 from unittest.mock import AsyncMock
 
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
 import seqoria_agent
-from seqoria_agent import AIClient, AsyncAIClient, LocalToolbox, SeqoriaMCP
+from seqoria_agent import AIClient, AsyncAIClient, LocalToolbox
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.ai_client.llm_interface import LLMInterface
-from seqoria_agent.client.cache import DictCache
 from seqoria_agent.client.mcp_transport import MCPServerConfig
 from seqoria_agent.models.chunk import AssistantMessage, ToolCallRequest, ToolMessages
 from seqoria_agent.models.errors import ToolRemoteError
@@ -162,59 +160,6 @@ async def test_injection_does_not_rewrite_the_original_tool_request():
         assert call.arguments == {"user_id": "forged"}
 
 
-@pytest.mark.asyncio
-async def test_cache_isolates_users_permissions_and_client_instances():
-    box = LocalToolbox()
-    counter = 0
-
-    @box.tool()
-    async def value():
-        nonlocal counter
-        counter += 1
-        return str(counter)
-
-    cache = DictCache()
-    async with AsyncAIClient(providers=[EchoProvider()], local_toolbox=box, cache=cache) as client:
-
-        async def invoke(user, permission="reader"):
-            return (
-                await client.run_tool_calls(
-                    [request("value")],
-                    context={
-                        "tenant_id": "same",
-                        "user_id": user,
-                        "permission": permission,
-                    },
-                )
-            )[0].result
-
-        assert await invoke("alice") == "1"
-        assert await invoke("bob") == "2"
-        assert await invoke("alice") == "1"
-        assert await invoke("alice", "admin") == "3"
-    async with AsyncAIClient(providers=[EchoProvider()], local_toolbox=box, cache=cache) as other:
-        result = await other.run_tool_calls(
-            [request("value")],
-            context={
-                "tenant_id": "same",
-                "user_id": "alice",
-                "permission": "reader",
-            },
-        )
-        assert result[0].result == "4"
-
-
-@pytest.mark.asyncio
-async def test_dict_cache_is_bounded_and_evicts_least_recently_used():
-    cache = DictCache(max_entries=2)
-    await cache.set("a", 1)
-    await cache.set("b", 2)
-    assert await cache.get("a") == 1
-    await cache.set("c", 3)
-    assert await cache.get("b") is None
-    assert await cache.get("a") == 1
-
-
 def test_local_schema_supports_nested_and_optional_types():
     class Item(BaseModel):
         label: str
@@ -284,7 +229,7 @@ async def test_schema_alias_routes_to_original_tool_name():
 
 
 @pytest.mark.asyncio
-async def test_remote_tool_error_is_not_successfully_cached_or_retried():
+async def test_remote_tool_error_is_not_retried():
     result = CallToolResult(isError=True, content=[TextContent(type="text", text="denied")])
     session = AsyncMock()
     session.call_tool.return_value = result
@@ -296,36 +241,10 @@ async def test_remote_tool_error_is_not_successfully_cached_or_retried():
 
 
 @pytest.mark.asyncio
-async def test_remote_server_resolves_hidden_parameters_with_real_mcp_context():
-    server = SeqoriaMCP("injection")
-    seen = []
-
-    @server.register_param_provider
-    def identity(ctx, tool, parameter):
-        seen.append(ctx.request_context.request_id)
-        return "authenticated-user"
-
-    @server.tool(server_populated=["user_id"], depends_on=["authorize"])
-    async def greet(name: str, user_id: str):
-        return f"{name}:{user_id}"
-
-    async with create_connected_server_and_client_session(server) as session:
-        listed = await session.list_tools()
-        tool = listed.tools[0]
-        assert "user_id" not in tool.inputSchema["properties"]
-        assert "ctx" not in tool.inputSchema["properties"]
-        assert tool.annotations.model_dump()["depends_on"] == ["authorize"]
-        result = await session.call_tool("greet", {"name": "alice", "user_id": "forged"})
-        assert not result.isError
-        assert result.content[0].text == "alice:authenticated-user"
-        assert seen
-
-
-@pytest.mark.asyncio
 async def test_real_stdio_transport_can_close_from_a_different_request_task(tmp_path):
     script = tmp_path / "server.py"
-    script.write_text("""from seqoria_agent import SeqoriaMCP
-server = SeqoriaMCP("stdio")
+    script.write_text("""from mcp.server.fastmcp import FastMCP
+server = FastMCP("stdio")
 @server.tool()
 async def ping() -> str:
     return "pong"
@@ -417,34 +336,16 @@ async def test_local_arguments_are_validated_and_nested_models_reach_the_tool():
         await box.call_tool("typed", {"payload": {"label": "a"}, "undeclared": True})
 
 
-@pytest.mark.asyncio
-async def test_remote_missing_identity_fails_without_running_the_tool():
-    server = SeqoriaMCP("missing-identity")
-    called = False
-
-    @server.tool(server_populated=["tenant_id"])
-    async def protected(tenant_id: str = "unsafe-default"):
-        nonlocal called
-        called = True
-        return tenant_id
-
-    async with create_connected_server_and_client_session(server) as session:
-        result = await session.call_tool("protected", {"tenant_id": "forged"})
-        assert result.isError
-        assert not called
-
-
 def test_settings_copy_and_explicit_overrides():
     from seqoria_agent.client.settings import ClientSettings
 
-    settings = ClientSettings(providers=[EchoProvider()], refresh_interval=30, cache_ttl=42)
+    settings = ClientSettings(providers=[EchoProvider()], refresh_interval=30)
     copied = settings.with_provider(EchoProvider())
     assert len(settings.providers) == 1
     assert len(copied.providers) == 2
     client = AsyncAIClient(settings=settings, refresh_interval=0)
     assert client.registry._refresh_interval == 0
     assert client.registry._refresher_task is None
-    assert client.executor._cache_ttl == 42
 
 
 @pytest.mark.asyncio
@@ -472,3 +373,38 @@ async def test_provider_lifecycle_releases_owned_http_resources():
             pass
         provider.async_client.aclose.assert_not_awaited()
     provider.async_client.aclose.assert_awaited_once()
+
+
+@pytest.mark.parametrize("option", ["cache", "cache_ttl"])
+@pytest.mark.parametrize("constructor", [AsyncAIClient, AIClient])
+def test_removed_cache_options_are_rejected(constructor, option):
+    with pytest.raises(TypeError, match="Unknown client options"):
+        constructor(providers=[EchoProvider()], **{option: None})
+
+
+@pytest.mark.parametrize("option", ["cache", "cache_ttl"])
+def test_removed_cache_settings_are_rejected(option):
+    from seqoria_agent.client.settings import ClientSettings
+
+    with pytest.raises(TypeError, match=option):
+        ClientSettings(**{option: None})
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_calls_execute_with_current_request_identity():
+    box = LocalToolbox()
+    invoked = []
+
+    @box.tool(server_populated=["user_id"])
+    async def counter(user_id: str) -> str:
+        invoked.append(user_id)
+        return f"{user_id}:{len(invoked)}"
+
+    async with AsyncAIClient(providers=[EchoProvider()], local_toolbox=box) as client:
+        call = request("counter")
+        results = []
+        for identity in ["alice", "alice", "bob", "alice"]:
+            result = await client.run_tool_calls([call], context={"user_id": identity})
+            results.append(result[0].result)
+    assert results == ["alice:1", "alice:2", "bob:3", "alice:4"]
+    assert invoked == ["alice", "alice", "bob", "alice"]

@@ -20,7 +20,6 @@ import threading
 from typing import Any, Dict, Generator, Iterable, List, Mapping, Self, Tuple, Union
 
 from seqoria_agent.client.ai_client.async_client import AsyncAIClient
-from seqoria_agent.client.cache import CacheProtocol
 from seqoria_agent.client.mcp_transport import MCPServerConfig
 from seqoria_agent.client.parameters import ParamContext, ParameterRegistry, ParameterSource
 from seqoria_agent.client.settings import ClientSettings
@@ -126,10 +125,6 @@ class AIClient:
         Logger for client events.
     refresh_interval : float
         Interval for automatic tool registry refresh (0 = disabled).
-    cache : CacheProtocol | None
-        Cache for tool results.
-    cache_ttl : int | None
-        Cache TTL in seconds.
     max_concurrency : int | None
         Maximum concurrent tool executions.
     tool_timeout : float | None
@@ -174,9 +169,6 @@ class AIClient:
         logger: logging.Logger | None = None,
         # Tool registry
         refresh_interval: float | None = None,
-        # Caching
-        cache: CacheProtocol | None = None,
-        cache_ttl: int | None = None,
         # Execution
         max_concurrency: int | None = None,
         tool_timeout: float | None = None,
@@ -217,8 +209,6 @@ class AIClient:
             local_toolbox=local_toolbox,
             logger=logger,
             refresh_interval=refresh_interval,
-            cache=cache,
-            cache_ttl=cache_ttl,
             max_concurrency=max_concurrency,
             tool_timeout=tool_timeout,
             retry_policy=retry_policy,

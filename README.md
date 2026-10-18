@@ -8,10 +8,10 @@ An async Python library for building assistants that call Python tools and remot
 
 - Automatic model/tool loops, streaming responses, and single-step helpers for application-controlled loops.
 - In-process tools with Pydantic argument validation, nested schemas, and hidden parameters supplied from trusted request context.
-- MCP connections over Streamable HTTP, SSE, and stdio, plus a `SeqoriaMCP` server wrapper.
+- MCP client connections over Streamable HTTP, SSE, and stdio.
 - Parallel tool execution with shared concurrency limits, timeouts, dependency scheduling, and structured failure events.
 - OpenAI, Anthropic, Ollama, and OpenAI-compatible HTTP providers; optional MLX inference on Apple Silicon.
-- Explicit conversation histories, provider fallback, and opt-in tool-result caching.
+- Explicit conversation histories and provider fallback.
 
 ## Installation
 
@@ -25,7 +25,6 @@ Optional extras:
 
 | Extra | Purpose |
 | --- | --- |
-| `redis` | Redis tool-result cache |
 | `performance` | Optional JSON serialization and hashing accelerators |
 | `server` | FastAPI dependency for application integration |
 | `mlx-lm` | Local text inference on Apple Silicon |
@@ -33,7 +32,7 @@ Optional extras:
 | `all` | All portable extras; MLX is installed separately |
 | `dev,docs` | Contributor and documentation tools |
 
-For example: `pip install 'seqoria-agent[redis,server]'`.
+For example: `pip install 'seqoria-agent[server]'`.
 
 ## Quickstart
 
@@ -165,52 +164,48 @@ Configure providers, credentials, remote servers, and tool blocklists for the cl
 
 ### Execution limits
 
-The default tool concurrency limit is 16 per client. `max_concurrency` and `tool_timeout` cover parameter resolution, cache I/O, and tool invocation. The timeout starts after acquiring a slot, so time spent waiting in the queue is excluded. Use `max_turns` to bound model/tool rounds and application-level limits for total request time and queue depth.
+The default tool concurrency limit is 16 per client. `max_concurrency` and `tool_timeout` cover parameter resolution and tool invocation. The timeout starts after acquiring a slot, so time spent waiting in the queue is excluded. Use `max_turns` to bound model/tool rounds and application-level limits for total request time and queue depth.
 
 Synchronous tools and parameter callbacks run in worker threads. Cancellation cannot stop an already-running Python thread; bound underlying I/O and use async tools for cancellable work. CPU-intensive tasks belong in a process pool or job queue. Close abandoned async streams explicitly, for example with `contextlib.aclosing`.
 
-### Caching and retries
+### Tool execution and retries
 
-Caching is disabled by default. Enable it only for tool collections whose successful results are safe to reuse:
-
-```python
-from seqoria_agent.client.cache import DictCache
-
-cache = DictCache(max_entries=1024)
-# Supply cache=cache and cache_ttl=60 when constructing the client.
-```
-
-Keys include arguments, injected values, trusted request context, and a per-client namespace. Include every authorization scope that affects a result in trusted context. `DictCache` copies mutable values and uses bounded LRU eviction with TTLs. `RedisCache` provides an external backend; close it with `await cache.aclose()`. Independently constructed clients do not share entries under the current namespace policy.
+Every requested tool call executes; the library does not cache or replay tool results. If your application needs caching, implement it within the operation or data service that owns the result, with explicit authorization scope, invalidation, and side-effect rules.
 
 Transport retries default to one attempt. Additional attempts can repeat side effects after an ambiguous failure; enable retries only where replay is safe. Dependency declarations schedule calls requested in the same batch; authorize operations inside the tools themselves.
 
 ## Remote MCP tools
 
-Expose tools with `SeqoriaMCP`, which extends the official MCP Python SDK's `FastMCP`:
+Connect to an existing MCP server during the client lifespan:
 
 ```python
-from seqoria_agent import SeqoriaMCP
+from seqoria_agent.client import MCPServerConfig
 
-server = SeqoriaMCP("Example", host="127.0.0.1", port=8000)
-
-
-@server.tool()
-async def add(a: int, b: int) -> int:
-    """Add two integers."""
-    return a + b
-
-
-if __name__ == "__main__":
-    server.run(transport="streamable-http")
+server = MCPServerConfig(
+    url="http://127.0.0.1:8000/mcp",
+    timeout=30,
+)
+# Add mcp_servers=[server] when constructing AsyncAIClient.
+# Enter the client context before discovering or calling its remote tools.
 ```
 
-Connect using `AsyncAIClient(providers=[provider], mcp_servers=["http://127.0.0.1:8000/mcp"])`. Use `MCPServerConfig` from `seqoria_agent.client` for headers, timeouts, transport selection, stdio configuration, or OAuth. The default interactive OAuth flow is for local scripts; web applications supply their own authorization flow. Remote servers remain responsible for authentication and authorization.
+Use `MCPServerConfig` for headers, timeouts, transport selection, stdio configuration, or OAuth. The default interactive OAuth flow is for local scripts; web applications supply their own authorization flow. Remote servers remain responsible for authentication, authorization, and identity injection.
 
-## Upgrading from 0.6
+Seqoria Agent provides MCP client orchestration and `LocalToolbox` for in-process tools. Build and deploy remote servers separately with the official MCP SDK or another compatible implementation. The example servers under `examples/server-client/` use the official SDK directly.
+
+## Migration
+
+### From 0.7 to 0.8
+
+Version 0.8.0 removes `SeqoriaMCP`, `seqoria_agent.server`, and the server-only `XMCPError` exception. Migrate server code to an independent MCP server implementation. The client-side `mcp_servers` option and `LocalToolbox` remain supported.
+
+Built-in tool-result caching is also removed. Drop `cache` and `cache_ttl` client/settings options, cache backend imports, and the `redis` extra. Implement any required caching within application-owned tools or data services.
+
+### From 0.6
 
 Version 0.7 removed automatic memory and planning, background capture, embeddings, graph/vector/database adapters, and their extras. Replace memory objects with application-owned history lists and remove `retrieval_query` arguments. The library does not migrate or delete existing memory data.
 
-`SeqoriaMCP` is the current server entry point; older FastXMCP examples are retired. Version 0.7.1 repairs failed-tool continuation, execution limits, cancellation, resource lifetimes, and examples. The API remains alpha; hosted integrations and production throughput require validation with your application's workload.
+The API remains alpha; hosted integrations and production throughput require validation with your application's workload.
 
 ## Development and documentation
 
@@ -225,14 +220,13 @@ python -m twine check --strict dist/*
 mkdocs build --strict
 ```
 
-CI runs Python 3.12/3.13 on Linux, macOS, and Windows, including package build and core-import checks. Tests use mocked providers, in-memory MCP sessions, and a local MCP subprocess. Hosted models, model downloads, and external Redis are not required for the default suite.
+CI runs Python 3.12/3.13 on Linux, macOS, and Windows, including package build and core-import checks. Tests use mocked providers, in-memory MCP sessions, and a local MCP subprocess. Hosted models and model downloads are not required for the default suite.
 
 The source distribution includes these guides and examples:
 
 - [Web application lifespans and conversation ownership](docs/topics/multi_tenancy.md)
 - [Tool execution and manual loops](docs/guides/ai_client.md)
-- [MCP server configuration](docs/servers.md)
-- [Caching](docs/topics/caching.md)
+- [MCP client connections](docs/servers.md)
 - [Release review and integration boundaries](docs/release-review.md)
 - [Changelog](CHANGELOG.md) and [publishing guide](RELEASING.md)
 

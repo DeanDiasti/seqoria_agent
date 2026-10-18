@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Dict
+from typing import Any, Optional
 
 # Phase 9 constant extraction
 from seqoria_agent.client.ai_client.consts_runtime import XML_ERROR_TAG  # noqa: F401
@@ -121,7 +121,6 @@ def fast_hash(data: str | bytes) -> str:
 __all__: list[str] = [
     "null_async_cm",
     "extract_error_from_xml",
-    "build_cache_key",
     "json_dumps",
     "json_loads",
     "json_impl_name",
@@ -170,25 +169,3 @@ def extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D
         return {"code": code, "retryable": retryable, "detail": detail_text, "meta": meta}
     except Exception:
         return None
-
-
-def build_cache_key(
-    tool_name: str, arguments: Dict[str, Any], *, tenant_id: str | None = None
-) -> str:  # noqa: D401
-    """Return a deterministic cache key for *tool_name* + *arguments*.
-
-    Parameters
-    ----------
-    tool_name:
-        Name of the tool.
-    arguments:
-        Input arguments dict (order independent).
-    tenant_id:
-        Optional namespace prefix for multi-tenant deployments. When given, the
-        resulting key is ``tenant:{tenant_id}:tool:{tool_name}:{hash}``.
-    """
-    canonical_json = json_dumps(arguments, sort_keys=True)
-    args_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
-
-    prefix = f"tenant:{tenant_id}:" if tenant_id else ""
-    return f"{prefix}tool:{tool_name}:{args_hash}"

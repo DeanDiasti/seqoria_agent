@@ -5,5 +5,3 @@
 ::: seqoria_agent.client.ai_client.sync_client.AIClient
 
 ::: seqoria_agent.client.settings.ClientSettings
-
-::: seqoria_agent.client.cache

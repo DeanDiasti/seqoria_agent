@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 ```
 
-The client owns its MCP transports and default transport HTTP pool. Providers and supplied cache backends belong to the application; close them after their clients. Create resources inside each worker's running event loop, rather than as global async singletons or before forking.
+The client owns its MCP transports and default transport HTTP pool. Providers belong to the application; close them after their clients. Create resources inside each worker's running event loop, rather than as global async singletons or before forking.
 
 ## Request handling
 
@@ -75,7 +75,7 @@ Own context budgeting and retention in your application. Preserve tool calls and
 - Use async tools for cancellable network and database I/O. Sync tools run in worker threads and continue running if their caller times out; CPU-heavy operations need separate workers.
 - Configure a shared client's providers, credentials, remote servers, and blocklist for the whole lifespan. Do not change these to implement individual users' permissions.
 - Remote MCP sessions have their own authentication state. Use separate client/session lifespans when connecting as different end users. Remote servers resolve hidden identity parameters from their authenticated server context.
-- Caching is off by default. If enabled, use only cache-safe tool collections, provide relevant permissions in trusted context, and choose a TTL that tolerates changed source data. See [caching](caching.md).
+- Tool results are not cached by the library. If caching is needed, implement it in the application operation or data service, with explicit ownership, invalidation, authorization scope, and replay rules.
 - Dependency declarations schedule tools requested in the same batch; they do not guarantee that an authentication tool ran or enforce access control. Authorize inside the operation itself.
 
 This release includes concurrency and transport regression tests. It does not claim measured throughput for any hosted model, database, or deployment size; benchmark the actual application workload before sizing workers.

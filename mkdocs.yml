@@ -27,11 +27,10 @@ nav:
   - Quickstart: quickstart.md
   - Web applications: topics/multi_tenancy.md
   - Tool execution: guides/ai_client.md
-  - MCP servers: servers.md
-  - Caching: topics/caching.md
+  - MCP connections: servers.md
   - Release review: release-review.md
   - API reference:
       - Client: reference/client.md
-      - Server: reference/server.md
+      - Local tools: reference/toolbox.md
       - Models: reference/models.md
       - Providers: reference/providers.md

@@ -28,7 +28,7 @@ Tool failures, including missing server-populated identity parameters, return `T
 
 ## Concurrency and cancellation
 
-Independent tools run concurrently, with a default limit of 16 executions per client. Configure `max_concurrency` and `tool_timeout` for your workload. The shared concurrency limit and execution timeout cover injected parameter resolution, cache I/O, and tool invocation. The timeout begins after acquiring a slot, so queue time is excluded. Dependencies declared with `depends_on` order requested tools and skip dependents after failures. They do not automatically call unrequested prerequisites or implement authorization.
+Independent tools run concurrently, with a default limit of 16 executions per client. Configure `max_concurrency` and `tool_timeout` for your workload. The shared concurrency limit and execution timeout cover injected parameter resolution and tool invocation. The timeout begins after acquiring a slot, so queue time is excluded. Dependencies declared with `depends_on` order requested tools and skip dependents after failures. They do not automatically call unrequested prerequisites or implement authorization.
 
 `run_tool_calls()` preserves input order. `run_call_stream()` yields `(request, result)` pairs in completion order. Closing a tool stream cancels unfinished async calls; explicitly close streams that a consumer abandons early, for example with `contextlib.aclosing`.
 
@@ -36,6 +36,8 @@ Synchronous tools run in Python worker threads and should perform bounded work. 
 
 ## Providers, retries, and configuration
 
-Provider fallback occurs before output is emitted. A failed stream after its first output propagates the error to avoid replaying partial text or tool calls. Transport retries default to one attempt; enabling retries can replay side effects after ambiguous network failures. Use idempotent tools before enabling retries. MCP tool error responses are failures and are not retried or cached as success.
+Provider fallback occurs before output is emitted. A failed stream after its first output propagates the error to avoid replaying partial text or tool calls. Transport retries default to one attempt; enabling retries can replay side effects after ambiguous network failures. Use idempotent tools before enabling retries. MCP tool error responses are failures and are not retried as successful operations.
 
 Prefer explicit `MCPServerConfig` values for transport settings. Unknown client keyword options are rejected. Tool blocklists and dynamic server changes are client-wide configuration, so do not use them as per-request permissions on a shared client. Schema aliases route to the original tool name; use unique tool names when integrating several servers to avoid ambiguity.
+
+Tool-result caching is not part of the current API. Every requested call executes, including repeated calls with identical arguments. Remove old `cache` and `cache_ttl` options; caching policies belong in application tools or services.

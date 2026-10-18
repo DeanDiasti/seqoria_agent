@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, List, Mapping, Union
 import logging
 
-from seqoria_agent.client.cache import CacheProtocol  # noqa: F401
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
 from seqoria_agent.client.parameters import ParameterSource, ParameterRegistry
@@ -35,8 +34,6 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
 
     # Registry / executor ---------------------------------------------------
     refresh_interval: float = 0.0
-    cache: CacheProtocol | None = None  # When None AIClient will use NullCache
-    cache_ttl: int | None = 300
     max_concurrency: int | None = None
     tool_timeout: float | None = None
     retry_policy: dict[str, Any] | None = None
@@ -85,5 +82,5 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
         return (
             f"{cls}(urls={'configured' if self.urls is not None else 'None'}, "
             f"providers={len(self.providers)} providers,"
-            f" cache={self.cache or 'NullCache'}, refresh_interval={self.refresh_interval})"
+            f" refresh_interval={self.refresh_interval})"
         )

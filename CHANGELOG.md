@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 — 2026-10-18
+
+### Breaking changes
+
+- Remove the tool-result cache layer, `cache`/`cache_ttl` options and settings fields, `CacheProtocol`/`DictCache`/`RedisCache`/`NullCache`, cache-key helpers, and Redis dependencies/extra. The executor no longer reuses cached results; applications own any required caching.
+- Remove `SeqoriaMCP`, the `seqoria_agent.server` module, its formatting/parameter-provider APIs, and the server-only `XMCPError` exception. Host remote tools with an independent MCP server implementation.
+- Keep MCP client transports, discovery, remote tool execution, and `LocalToolbox`. Migrate example servers and protocol integration tests to the official MCP SDK directly.
+
 ## 0.7.2 — 2026-10-18
 
 - Publish the updated README on PyPI, covering supported providers, streaming and tool failures, multi-user integration, caching, MCP servers, and migration from 0.6.

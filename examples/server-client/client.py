@@ -6,7 +6,6 @@ LLM providers, and enters an interactive loop where the user can chat.
 Demonstrates:
 - Connecting to multiple MCP servers
 - Streaming responses
-- Server-populated parameter injection
 - Bounded tool concurrency
 
 To run:

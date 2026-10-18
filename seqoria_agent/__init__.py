@@ -3,7 +3,6 @@
 This package provides tools for building AI applications with:
 - AIClient: Synchronous client for blocking usage
 - AsyncAIClient: Asynchronous client for async/await usage
-- SeqoriaMCP: Extended MCP server with Seqoria features
 - LocalToolbox: In-process tool execution without HTTP
 
 LLM Provider Support:
@@ -16,7 +15,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from seqoria_agent.client import AIClient, AsyncAIClient
-from seqoria_agent.server import SeqoriaMCP
 from seqoria_agent.toolbox import LocalToolbox
 
 # Always-safe provider base classes (no optional deps)
@@ -78,7 +76,6 @@ __all__ = [
     # Core classes
     "AIClient",
     "AsyncAIClient",
-    "SeqoriaMCP",
     "LocalToolbox",
     # Base providers
     "AsyncBaseProvider",

@@ -1,8 +1,8 @@
 """LocalToolbox - In-process tool execution using MCP primitives.
 
 This module provides LocalToolbox, which allows tools to be registered and
-executed in-process without an HTTP server. It uses MCP FastMCP internally
-but provides a simplified interface for local tool management.
+executed in-process without an HTTP server. Pydantic validates arguments and
+generates tool schemas; tools execute directly in Python.
 
 Example
 -------

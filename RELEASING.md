@@ -1,7 +1,7 @@
 # Publishing Seqoria Agent
 
 The package name is `seqoria-agent`; consumers import `seqoria_agent`.
-The 0.7 series is alpha; 0.7.0 introduced breaking changes from 0.6. Version 0.7.1 repairs retained features. Nothing is published by editing the repository or building artifacts locally.
+Version 0.8.0 is an alpha release with breaking removals of the server wrapper and tool-result caching. Nothing is published by editing the repository or building artifacts locally.
 
 ## Existing PyPI project setup
 
@@ -38,9 +38,15 @@ See the official PyPI guides for [new projects](https://docs.pypi.org/trusted-pu
 
    Use a fresh output directory for each build to avoid uploading old releases. Install the built wheel in a clean environment outside the checkout and import the core and HTTP providers. CI also checks this on Linux.
 
-4. Commit and push the reviewed code. Tag that commit with the matching version (`v0.7.2` for the prepared metadata), then push the tag when ready to publish.
+4. Commit and push the reviewed code. Tag that commit with the matching version (`v0.8.0` for the prepared metadata), then push the tag when ready to publish.
 5. The release workflow runs the test matrix and package checks, verifies the tag/version match, builds distributions, and publishes through the `pypi` environment. PyPI releases are immutable; fix a failed release by correcting the problem and choosing a new version if files have already been uploaded.
-6. Verify installation in a new environment with `pip install seqoria-agent==0.7.2`.
+6. Verify installation in a new environment with `pip install seqoria-agent==0.8.0`.
+
+## Migrating from 0.7 to 0.8
+
+`SeqoriaMCP`, `seqoria_agent.server`, and the server-only `XMCPError` exception have been removed in 0.8.0. Migrate server construction, authentication, parameter injection, and formatting to an independent MCP server implementation. Client MCP configuration and local tools remain supported.
+
+The built-in tool-result caching layer is also removed. Drop `cache` and `cache_ttl` arguments, `ClientSettings` cache fields, imports from `seqoria_agent.client.cache`, and the `redis` extra. `DictCache`, `RedisCache`, `NullCache`, `CacheProtocol`, and `build_cache_key` are no longer provided. Implement any required caching in application-owned tools/services with explicit authorization, invalidation, and side-effect rules. Existing Redis data is application-owned and is not deleted by this removal.
 
 ## Migrating from 0.6
 

@@ -1,18 +1,23 @@
-# Release review for 0.7
+# Release review
 
-The release scope is a small async orchestration library with application-owned history. This is an alpha API, with a breaking version change from 0.6.3 to 0.7.0.
+The release scope is a small async orchestration library with application-owned history. The API remains alpha; 0.8.0 removes server authoring and built-in tool-result caching while preserving MCP client interoperability and local tools.
 
-## Feature decisions
+## Scope of 0.8.0
+
+Version 0.8.0 removes the library-owned `SeqoriaMCP` wrapper, `seqoria_agent.server`, server-only formatting and parameter-provider APIs, and `XMCPError`. MCP client transports/discovery/execution and `LocalToolbox` remain supported. Existing server code must migrate to an independent server implementation. The built-in tool-result cache is also removed: there are no cache backends, cache client/settings options, key-building helpers, or Redis dependency/extra. The executor no longer reuses cached tool results. Future caching design belongs to a separate review; applications can own caching within their data services. The review and verification notes below describe the historical 0.7.0/0.7.1 releases.
+
+## Feature decisions in 0.7.0
 
 | Area | Decision | Reason |
 | --- | --- | --- |
 | Async model/tool loops and streaming | Keep and repair | Core web application workflow |
-| LocalToolbox and MCP server support | Keep and repair | In-process tools and standard remote interoperability |
+| LocalToolbox and MCP support | Keep client and local tools; remove the server wrapper in 0.8.0 | In-process execution and remote interoperability without owning a server implementation |
 | Explicit conversation lists | Supported history path | The application controls ownership, persistence, context size, and retention |
 | Automatic memory, planning, graph retrieval, compression, embeddings, and database/vector adapters | Remove entirely | Unnecessary hidden state, background work, and incomplete behavior for the intended core |
 | OpenAI, Anthropic, Ollama, OpenAI-compatible HTTP providers | Keep | Included through HTTPX without separate vendor SDKs |
 | MLX local inference | Optional Apple Silicon extras | No platform-specific runtime in the core installation |
-| Caching, retries, circuit breakers | Keep with explicit limits | Cache correctness and replay safety depend on the workload |
+| Tool-result caching | Removed in 0.8.0 | Replay safety, ownership, and invalidation need an application-specific design |
+| Retries and circuit breakers | Keep with explicit limits | Replay safety depends on the workload |
 | Rich UI / DisplayEnvelope, old FastXMCP APIs, speculative roadmap docs | Retire stale documentation | These are not implemented public APIs in this codebase |
 
 ## Confirmed defects fixed

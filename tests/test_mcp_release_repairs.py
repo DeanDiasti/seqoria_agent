@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
 
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.mcp_transport import (
@@ -18,7 +17,6 @@ from seqoria_agent.client.mcp_transport import (
     connect_mcp,
 )
 from seqoria_agent.client.parameters import ParameterRegistry
-from seqoria_agent.server import SeqoriaMCP
 from seqoria_agent.toolbox import LocalToolbox
 
 
@@ -167,7 +165,7 @@ async def test_oauth_loopback_listener_closes_without_a_callback(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["registry", "local", "remote"])
+@pytest.mark.parametrize("kind", ["registry", "local"])
 async def test_sync_parameter_providers_run_off_loop_with_request_context(kind):
     request_identity = ContextVar("identity", default="missing")
     token = request_identity.set("authenticated-tenant")
@@ -183,20 +181,14 @@ async def test_sync_parameter_providers_run_off_loop_with_request_context(kind):
             registry = ParameterRegistry({"tenant": provider})
             result = await registry.resolve("tenant", context={})
         else:
-            tools = LocalToolbox() if kind == "local" else SeqoriaMCP("thread-test")
+            tools = LocalToolbox()
             tools.register_param_provider(provider)
 
             @tools.tool(server_populated=["tenant"])
             async def identify(tenant: str) -> str:
                 return tenant
 
-            if kind == "local":
-                result = (await tools.call_tool("identify", {}))[0].text
-            else:
-                async with create_connected_server_and_client_session(tools) as session:
-                    response = await session.call_tool("identify", {})
-                    assert not response.isError
-                    result = response.content[0].text
+            result = (await tools.call_tool("identify", {}))[0].text
         assert result == "authenticated-tenant"
         assert calls == [(calls[0][0], "authenticated-tenant")]
         assert calls[0][0] != event_loop_thread
@@ -231,42 +223,3 @@ async def test_unannotated_local_arguments_accept_json_values():
 
     assert (await tools.call_tool("echo", {"value": 42}))[0].text == "42"
     assert (await tools.call_tool("echo", {"value": [1, 2]}))[0].text == "[\n  1,\n  2\n]"
-
-
-def test_remote_tool_rejects_invalid_hidden_parameter_registration():
-    server = SeqoriaMCP("registration-test")
-
-    def valid(value: int) -> int:
-        return value
-
-    with pytest.raises(ValueError, match="Unknown server-populated"):
-        server.tool(server_populated=["typo"])(valid)
-    assert server.tool_metadata == {}
-
-
-def test_principal_resolution_falls_back_past_empty_state():
-    server = SeqoriaMCP("principal-test")
-    principal = {"id": "trusted-user"}
-    context = SimpleNamespace(request_context=SimpleNamespace(state={}, principal=principal))
-    assert server._get_principal_from_context(context) is principal
-    context.request_context.state = {"principal": principal}
-    assert server._get_principal_from_context(context) is principal
-
-
-@pytest.mark.asyncio
-async def test_remote_principal_can_be_resolved_by_a_custom_provider():
-    server = SeqoriaMCP("custom-principal")
-
-    @server.register_param_provider
-    async def provide_principal(ctx, tool_name, parameter):
-        if parameter == "principal":
-            return {"id": "trusted-user"}
-
-    @server.tool(server_populated=["principal"])
-    async def identity(principal: dict) -> str:
-        return principal["id"]
-
-    async with create_connected_server_and_client_session(server) as session:
-        result = await session.call_tool("identity", {})
-        assert not result.isError
-        assert result.content[0].text == "trusted-user"

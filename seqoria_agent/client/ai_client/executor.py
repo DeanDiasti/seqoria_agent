@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-"""Dependency-aware concurrent tool execution, cancellation, caching, and parameter injection."""
+"""Dependency-aware concurrent tool execution, cancellation, and parameter injection."""
 
 import asyncio
 import copy
-import uuid
 import logging
 import math
 from collections import defaultdict, deque
@@ -16,8 +15,7 @@ from seqoria_agent.client.ai_client.callbacks import (
     on_error as _on_error_cb,
     on_metadata as _on_metadata_cb,
 )
-from seqoria_agent.client.ai_client.utils import json_loads, build_cache_key
-from seqoria_agent.client.cache import CacheProtocol, NullCache
+from seqoria_agent.client.ai_client.utils import json_loads
 from seqoria_agent.client.parameters import ParameterRegistry, ParameterSource, ParamContext
 from seqoria_agent.models.errors import DependencyError
 from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY
@@ -37,8 +35,6 @@ class Executor:
         *,
         pool: MCPConnectionPool,
         registry: ToolRegistry,
-        cache: CacheProtocol | None = None,
-        cache_ttl: int | None = None,
         tool_semaphore: Optional[asyncio.Semaphore] = None,
         tool_timeout: float | None = None,
         param_registry: Optional[Union[Mapping[str, ParameterSource], ParameterRegistry]] = None,
@@ -50,11 +46,6 @@ class Executor:
         # Core collaborators --------------------------------------------------
         self._pool = pool
         self._registry = registry
-
-        # Caching -------------------------------------------------------------
-        self._cache: CacheProtocol = cache or NullCache()
-        self._cache_ttl = cache_ttl
-        self._cache_namespace = uuid.uuid4().hex
 
         # Execution controls --------------------------------------------------
         if tool_timeout is not None and (
@@ -226,7 +217,7 @@ class Executor:
     ) -> ToolCallResult | ToolCallError:
         """Execute *tool_call* and return a fully-formed chat *history* entry.
 
-        The shared concurrency limit covers parameter resolution, cache I/O,
+        The shared concurrency limit covers parameter resolution
         and tool invocation. The timeout starts after acquiring a slot, so time
         spent waiting for other requests does not consume the execution budget.
         """
@@ -288,64 +279,18 @@ class Executor:
                     f"Missing server-populated parameters for tool '{tool_name}': {', '.join(still_missing)}"
                 )
 
-        # --------------------------------------------------------------------
-        # Client-side caching (best-effort)
-        #
-        # NOTE: Cache is opt-in by configuration (default is NullCache).
-        # We include server_args in the key to avoid cross-tenant / cross-user
-        # leakage when server-populated parameters affect results.
-        # --------------------------------------------------------------------
-
-        cache_key: str | None = None
-        if not isinstance(self._cache, NullCache):
-            try:
-                # Include the whole trusted request context: permissions can vary
-                # between users in the same tenant and between requests by one user.
-                merged_for_cache = {
-                    "client": self._cache_namespace,
-                    "registry_version": self._registry.version,
-                    "arguments": arguments,
-                    "server_args": server_args,
-                    "context": dict(context),
-                }
-                cache_key = build_cache_key(tool_name=tool_name, arguments=merged_for_cache)
-            except (TypeError, ValueError):
-                # Unserializable context cannot be safely cached.
-                cache_key = None
-
-        raw_output: Any | None = None
-        if cache_key is not None:
-            try:
-                cached = await self._cache.get(cache_key)
-            except Exception:  # pragma: no cover – cache backend must not break execution
-                cached = None
-            if cached is not None:
-                raw_output = (
-                    cached.decode("utf-8") if isinstance(cached, (bytes, bytearray)) else cached
-                )
-
-        # Regular tool execution (with timeout, circuit-breaker, …)
         if getattr(self._logger, "isEnabledFor", lambda *_: True)(logging.DEBUG):
             self._logger.debug("Executing tool %s", tool_name)
 
-        if raw_output is None:
-            tool_result = await self._pool.call_tool(
-                name=tool_name, arguments=arguments, server_args=server_args
-            )
-            text_blocks = [block.text for block in (tool_result or []) if hasattr(block, "text")]
-            raw_output = (
-                "\n".join(text_blocks)
-                if text_blocks
-                else "Tool executed successfully with no textual output."
-            )
-
-            # Best-effort cache write (only on success)
-            if cache_key is not None and isinstance(raw_output, str):
-                try:
-                    await self._cache.set(cache_key, raw_output, ttl=self._cache_ttl)
-                except Exception:  # pragma: no cover – cache backend must not break execution
-                    pass
-        # --------------------------------------------------------------------
+        tool_result = await self._pool.call_tool(
+            name=tool_name, arguments=arguments, server_args=server_args
+        )
+        text_blocks = [block.text for block in (tool_result or []) if hasattr(block, "text")]
+        raw_output = (
+            "\n".join(text_blocks)
+            if text_blocks
+            else "Tool executed successfully with no textual output."
+        )
 
         # Display envelope & structured metadata extraction ----------------
         metadata_block: Optional[dict[str, Any]] = None

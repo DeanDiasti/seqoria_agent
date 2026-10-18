@@ -1,41 +1,8 @@
-"""Tests for server-populated parameters with SeqoriaMCP and LocalToolbox."""
+"""Tests for hidden parameters in LocalToolbox."""
 
 import pytest
 
-from seqoria_agent.server import SeqoriaMCP
 from seqoria_agent.toolbox import LocalToolbox
-
-
-@pytest.fixture()
-def mcp_server():
-    """Create SeqoriaMCP with server-populated params."""
-    mcp = SeqoriaMCP("SPPTest")
-
-    # Register param provider
-    @mcp.register_param_provider
-    def provide_params(ctx, tool_name: str, param_name: str):
-        if param_name == "user_id":
-            return "injected_user_123"
-        return None
-
-    # Tool with server-populated param
-    @mcp.tool(server_populated=["user_id"])
-    def greet(name: str, user_id: str) -> str:
-        return f"Hi {name} (uid={user_id})"
-
-    return mcp
-
-
-def test_metadata_tracks_server_params(mcp_server):
-    """Verify server_populated is tracked in metadata."""
-    meta = mcp_server.tool_metadata["greet"]
-    assert "user_id" in meta.server_populated
-
-
-def test_annotations_expose_server_params(mcp_server):
-    """Verify annotations expose server_populated."""
-    ann = mcp_server.get_tool_annotations("greet")
-    assert "user_id" in ann["server_populated"]
 
 
 @pytest.fixture()

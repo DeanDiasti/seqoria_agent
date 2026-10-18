@@ -8,7 +8,6 @@ Features:
 - MCP server connections (HTTP, SSE, stdio)
 - Local toolbox support
 - Circuit breaker and retry resilience
-- Caching for tool results
 - Server-populated parameter injection
 
 For synchronous usage, see :class:`AIClient` in ``sync_client.py``.
@@ -27,7 +26,6 @@ from seqoria_agent.client.ai_client.executor import Executor
 from seqoria_agent.client.ai_client.history import build_system_prompt
 from seqoria_agent.client.ai_client.llm_interface import LLMInterface
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
-from seqoria_agent.client.cache import CacheProtocol, NullCache
 from seqoria_agent.client.mcp_transport import MCPServerConfig
 from seqoria_agent.client.parameters import ParamContext, ParameterRegistry, ParameterSource
 from seqoria_agent.client.settings import ClientSettings
@@ -70,15 +68,11 @@ class AsyncAIClient:
         Logger for client events.
     refresh_interval : float
         Interval for automatic tool registry refresh (0 = disabled).
-    cache : CacheProtocol | None
-        Cache for tool results.
-    cache_ttl : int | None
-        Cache TTL in seconds.
     max_concurrency : int | None
         Maximum concurrent tool executions across requests, including injected
-        parameter resolution and cache I/O.
+        parameter resolution.
     tool_timeout : float | None
-        Timeout in seconds for parameter resolution, cache I/O, and tool
+        Timeout in seconds for parameter resolution and tool
         execution after acquiring a concurrency slot. Queue time is excluded.
     retry_policy : dict | None
         Retry configuration with "max_attempts" and "backoff_base".
@@ -116,9 +110,6 @@ class AsyncAIClient:
         logger: logging.Logger | None = None,
         # Tool registry
         refresh_interval: float | None = None,
-        # Caching
-        cache: CacheProtocol | None = None,
-        cache_ttl: int | None = None,
         # Execution
         max_concurrency: int | None = None,
         tool_timeout: float | None = None,
@@ -157,8 +148,6 @@ class AsyncAIClient:
         refresh_interval = (
             refresh_interval if refresh_interval is not None else settings.refresh_interval
         )
-        cache = cache if cache is not None else settings.cache
-        cache_ttl = cache_ttl if cache_ttl is not None else settings.cache_ttl
         max_concurrency = (
             max_concurrency if max_concurrency is not None else settings.max_concurrency
         )
@@ -247,8 +236,6 @@ class AsyncAIClient:
         self.executor = Executor(
             pool=self.pool,
             registry=self.registry,
-            cache=cache or NullCache(),
-            cache_ttl=cache_ttl,
             tool_semaphore=(asyncio.Semaphore(value=max_concurrency) if max_concurrency else None),
             tool_timeout=tool_timeout,
             param_registry=param_registry,
