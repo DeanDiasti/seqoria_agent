@@ -3,14 +3,16 @@ from seqoria_agent import AsyncAIClient
 from seqoria_agent.providers import AsyncOllamaProvider
 from seqoria_agent.models.chunk import AssistantMessage, ToolMessages
 
+
 async def main() -> None:
     provider = AsyncOllamaProvider(model_id="gpt-oss:20b")
-    async with AsyncAIClient(urls=[], providers=[provider]) as ai:
+    async with provider, AsyncAIClient(urls=[], providers=[provider]) as ai:
+        history = []
         while True:
             user_query = input("You:\n")
-            if user_query.lower() in {"exit", "quit"}:  
+            if user_query.lower() in {"exit", "quit"}:
                 break
-            async for chunk in ai.chat(user_query=user_query, history=[]):
+            async for chunk in ai.chat(user_query=user_query, history=history):
                 if isinstance(chunk, AssistantMessage):
                     print(f"Bot:\n{chunk.content}")
                 elif isinstance(chunk, ToolMessages):
@@ -18,4 +20,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

@@ -1,31 +1,22 @@
-"""Shared value objects and error types used across *seqoria_agent*.
+"""Shared message models and error types, independent of client/server logic."""
 
-Nothing in here should depend on higher-level client or server logic to avoid
-import cycles.
-"""
+from seqoria_agent.models.chunk import (
+    AssistantMessage,
+    ChatChunk,
+    ChatMessages,
+    LLMUsage,
+    SystemMessage,
+    ToolCallError,
+    ToolCallRequest,
+    ToolCallRequestList,
+    ToolCallResult,
+    ToolMessages,
+    UserMessage,
+)
+from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError, XMCPError
 
-from seqoria_agent.models.chunk import (LLMUsage, 
-                                        ChatChunk, 
-                                        SystemMessage, 
-                                        AssistantMessage,
-                                        UserMessage, 
-                                        ToolCallRequest, 
-                                        ToolCallRequestList, 
-                                        ToolCallResult, 
-                                        ToolMessages, 
-                                        ChatMessages)
-from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError, XMCPError  # noqa: F401
-
-__all__: list[str] = ["ToolRemoteError",
-                      "CircuitOpenError",
-                      "XMCPError",
-                      "ToolCallRequest",
-                      "ToolCallResult",
-                      "ToolCallRequestList",
-                      "ToolMessages",
-                      "AssistantMessage",
-                      "UserMessage",
-                      "SystemMessage",
-                      "LLMUsage",
-                      "ChatChunk",
-                      "ChatMessages"] 
+__all__ = [
+    "AssistantMessage", "ChatChunk", "ChatMessages", "LLMUsage", "SystemMessage",
+    "ToolCallError", "ToolCallRequest", "ToolCallRequestList", "ToolCallResult",
+    "ToolMessages", "UserMessage", "CircuitOpenError", "ToolRemoteError", "XMCPError",
+]

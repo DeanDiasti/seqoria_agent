@@ -33,6 +33,7 @@ In the REPL
 The provider passes ``image`` and ``audio`` into ``stream_generate`` (and sets
 ``num_images`` / ``num_audios`` on ``apply_chat_template``), matching the upstream MLX-VLM API.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -98,8 +99,7 @@ def main() -> None:
 
     if not mlx_vlm_available():
         print(
-            "mlx_vlm is not installed. Install with:\n"
-            "  pip install 'seqoria-agent[mlx-vlm]'",
+            "mlx_vlm is not installed. Install with:\n  pip install 'seqoria-agent[mlx-vlm]'",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -119,87 +119,88 @@ def main() -> None:
         print(f"Failed to create provider: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    history: List[dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant. Answer clearly and concisely.",
-        }
-    ]
+    with provider:
+        history: List[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant. Answer clearly and concisely.",
+            }
+        ]
 
-    print("Commands:")
-    print("  /image <path-or-URL>  — attach image to your next message")
-    print("  /audio <path-or-URL>  — attach audio to your next message")
-    print("  /quit                 — exit\n")
+        print("Commands:")
+        print("  /image <path-or-URL>  — attach image to your next message")
+        print("  /audio <path-or-URL>  — attach audio to your next message")
+        print("  /quit                 — exit\n")
 
-    pending_image: str | None = None
-    pending_audio: str | None = None
+        pending_image: str | None = None
+        pending_audio: str | None = None
 
-    while True:
-        try:
-            user_line = input("You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
+        while True:
+            try:
+                user_line = input("You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
 
-        if not user_line:
-            continue
+            if not user_line:
+                continue
 
-        lowered = user_line.lower()
-        if lowered in ("/quit", "/exit", "quit", "exit"):
-            break
+            lowered = user_line.lower()
+            if lowered in ("/quit", "/exit", "quit", "exit"):
+                break
 
-        if lowered.startswith("/image "):
-            rest = user_line[7:].strip().strip('"').strip("'")
-            if rest.startswith(("http://", "https://")):
-                pending_image = rest
-                print("(Next message will include image URL.)\n")
-            elif Path(rest).expanduser().is_file():
-                pending_image = str(Path(rest).expanduser().resolve())
-                print(f"(Next message will include image: {pending_image})\n")
-            else:
-                print(f"Not a file or URL: {rest}\n", file=sys.stderr)
-            continue
+            if lowered.startswith("/image "):
+                rest = user_line[7:].strip().strip('"').strip("'")
+                if rest.startswith(("http://", "https://")):
+                    pending_image = rest
+                    print("(Next message will include image URL.)\n")
+                elif Path(rest).expanduser().is_file():
+                    pending_image = str(Path(rest).expanduser().resolve())
+                    print(f"(Next message will include image: {pending_image})\n")
+                else:
+                    print(f"Not a file or URL: {rest}\n", file=sys.stderr)
+                continue
 
-        if lowered.startswith("/audio "):
-            rest = user_line[7:].strip().strip('"').strip("'")
-            if rest.startswith(("http://", "https://")):
-                pending_audio = rest
-                print("(Next message will include audio URL.)\n")
-            elif Path(rest).expanduser().is_file():
-                pending_audio = str(Path(rest).expanduser().resolve())
-                print(f"(Next message will include audio: {pending_audio})\n")
-            else:
-                print(f"Not a file or URL: {rest}\n", file=sys.stderr)
-            continue
+            if lowered.startswith("/audio "):
+                rest = user_line[7:].strip().strip('"').strip("'")
+                if rest.startswith(("http://", "https://")):
+                    pending_audio = rest
+                    print("(Next message will include audio URL.)\n")
+                elif Path(rest).expanduser().is_file():
+                    pending_audio = str(Path(rest).expanduser().resolve())
+                    print(f"(Next message will include audio: {pending_audio})\n")
+                else:
+                    print(f"Not a file or URL: {rest}\n", file=sys.stderr)
+                continue
 
-        user_content = _build_user_content(user_line, pending_image, pending_audio)
-        pending_image = None
-        pending_audio = None
-        history.append({"role": "user", "content": user_content})
+            user_content = _build_user_content(user_line, pending_image, pending_audio)
+            pending_image = None
+            pending_audio = None
+            history.append({"role": "user", "content": user_content})
 
-        try:
-            print("Assistant: ", end="", flush=True)
-            full_text = ""
-            for chunk in provider.stream(chat_history=history):
-                if not isinstance(chunk, LLMResponse):
-                    continue
-                if chunk.type == "llm_delta" and chunk.text:
-                    print(chunk.text, end="", flush=True)
-                    full_text += chunk.text
-                elif chunk.type == "llm_response":
-                    full_text = (chunk.text or full_text or "").strip()
-                    if chunk.usage:
-                        u = chunk.usage
-                        print(
-                            f"\n  (tokens: prompt={u.prompt_tokens}, "
-                            f"completion={u.completion_tokens}, total={u.total_tokens})"
-                        )
-            print()
-            history.append({"role": "assistant", "content": full_text})
-        except Exception as exc:
-            print(f"\n[error] {exc}\n", file=sys.stderr)
-            history.pop()
-            continue
+            try:
+                print("Assistant: ", end="", flush=True)
+                full_text = ""
+                for chunk in provider.stream(chat_history=history):
+                    if not isinstance(chunk, LLMResponse):
+                        continue
+                    if chunk.type == "llm_delta" and chunk.text:
+                        print(chunk.text, end="", flush=True)
+                        full_text += chunk.text
+                    elif chunk.type == "llm_response":
+                        full_text = (chunk.text or full_text or "").strip()
+                        if chunk.usage:
+                            u = chunk.usage
+                            print(
+                                f"\n  (tokens: prompt={u.prompt_tokens}, "
+                                f"completion={u.completion_tokens}, total={u.total_tokens})"
+                            )
+                print()
+                history.append({"role": "assistant", "content": full_text})
+            except Exception as exc:
+                print(f"\n[error] {exc}\n", file=sys.stderr)
+                history.pop()
+                continue
 
 
 if __name__ == "__main__":

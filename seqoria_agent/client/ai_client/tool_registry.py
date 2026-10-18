@@ -69,6 +69,7 @@ class ToolRegistry:
         self._server_params: Dict[str, tuple[str, ...]] = {}
         self._tool_deps: Dict[str, frozenset[str]] = {}
         self._seen_schema_hash: Dict[str, str] = {}
+        self._registered_schemas: set[tuple[str, str]] = set()
         self._lock: asyncio.Lock = asyncio.Lock()
         self._refresher_task: Optional[asyncio.Task] = None
         self._version: int = 0
@@ -182,6 +183,7 @@ class ToolRegistry:
             self._server_params = snapshot._server_params
             self._tool_deps = snapshot._tool_deps
             self._seen_schema_hash = snapshot._seen_schema_hash
+            self._registered_schemas = snapshot._registered_schemas
             self._llm_tools = llm_tools
             self._version += 1
         self._logger.info("ToolRegistry refreshed with %d tools", len(llm_tools))
@@ -259,6 +261,9 @@ class ToolRegistry:
             input_schema = tool.input_schema
 
         schema_fingerprint = self._schema_hash(input_schema)
+        schema_key = (base_name, schema_fingerprint)
+        if schema_key in self._registered_schemas:
+            return
 
         # Determine public name (handle duplicates)
         primary_hash = self._seen_schema_hash.get(base_name)
@@ -280,6 +285,9 @@ class ToolRegistry:
             self._seen_schema_hash[base_name] = schema_fingerprint
             base_to_primary_alias[base_name] = public_name
 
+        # Deduplicate every schema variant, including aliases discovered on
+        # multiple servers, without changing the first registered route.
+        self._registered_schemas.add(schema_key)
         # Register in tool map
         self._tool_map[public_name] = source
         self._source_names[public_name] = base_name
@@ -320,6 +328,9 @@ class ToolRegistry:
         base_name: str = tool_info.name
         input_schema = getattr(tool_info, "inputSchema", {})
         schema_fingerprint = self._schema_hash(input_schema)
+        schema_key = (base_name, schema_fingerprint)
+        if schema_key in self._registered_schemas:
+            return
 
         # Determine public name
         primary_hash = self._seen_schema_hash.get(base_name)
@@ -339,6 +350,9 @@ class ToolRegistry:
             self._seen_schema_hash[base_name] = schema_fingerprint
             base_to_primary_alias[base_name] = public_name
 
+        # Deduplicate every schema variant, including aliases discovered on
+        # multiple servers, without changing the first registered route.
+        self._registered_schemas.add(schema_key)
         # Register in tool map
         self._tool_map[public_name] = source
         self._source_names[public_name] = base_name

@@ -64,19 +64,26 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
         new.providers.append(provider)
         return new
 
-    # Simple shallow copy since we only store primitives / references
     def copy(self) -> "ClientSettings":  # noqa: D401 – tiny helper
+        """Copy configuration containers while retaining provider/resource ownership."""
         import copy
 
         result = copy.copy(self)
         result.providers = list(self.providers)
         result.client_kwargs = dict(self.client_kwargs)
+        if self.retry_policy is not None:
+            result.retry_policy = dict(self.retry_policy)
+        if isinstance(self.urls, list):
+            result.urls = list(self.urls)
+        if isinstance(self.local_toolbox, list):
+            result.local_toolbox = list(self.local_toolbox)
         return result
 
     # Provide a readable string representation helpful in debug logs
     def __repr__(self) -> str:  # noqa: D401
         cls = self.__class__.__name__
         return (
-            f"{cls}(urls={self.urls}, providers={len(self.providers)} providers,"  # avoid verbose repr
+            f"{cls}(urls={'configured' if self.urls is not None else 'None'}, "
+            f"providers={len(self.providers)} providers,"
             f" cache={self.cache or 'NullCache'}, refresh_interval={self.refresh_interval})"
         )

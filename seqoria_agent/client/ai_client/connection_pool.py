@@ -167,8 +167,25 @@ class MCPConnectionPool:
             if not missing:
                 return
 
-            connect_tasks = [self._connect(config) for config in missing]
-            results = await asyncio.gather(*connect_tasks, return_exceptions=True)
+            connect_tasks = [asyncio.create_task(self._connect(config)) for config in missing]
+            try:
+                results = await asyncio.gather(*connect_tasks, return_exceptions=True)
+            except BaseException:
+                # A sibling may already have connected before startup is cancelled.
+                # Retain each task so those successful connections can be closed too.
+                for task in connect_tasks:
+                    task.cancel()
+                results = await asyncio.gather(*connect_tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, _ActiveConnection):
+                        await self._close_connection(result)
+                if not self._connections:
+                    self._started = False
+                    if self._owns_http_pool and self._http_client_pool is not None:
+                        await self._http_client_pool.close()
+                        self._http_client_pool = None
+                        self._owns_http_pool = False
+                raise
 
             for result in results:
                 if isinstance(result, _ActiveConnection):

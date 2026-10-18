@@ -14,7 +14,7 @@ When you run this script, it will:
    - Registers as an OAuth client (Dynamic Client Registration)
    - Opens your browser for you to log in to Linear
 4. You log in and authorize the app
-5. Copy the callback URL from your browser and paste it back
+5. The local callback listener captures the authorization response
 6. seqoria-agent exchanges the code for tokens
 7. Connection completes and tools are discovered!
 
@@ -56,15 +56,12 @@ class _StubProvider(AsyncBaseProvider):
         )
 
     async def async_stream(self, *, chat_history, **kwargs):
-        async def _gen():
-            yield LLMResponse(
-                model_id="stub",
-                type="llm_response",
-                text="(stub response)",
-                usage=LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
-            )
-
-        return _gen()
+        yield LLMResponse(
+            model_id="stub",
+            type="llm_response",
+            text="(stub response)",
+            usage=LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +79,7 @@ async def main() -> None:
     print(f"Connecting to: {LINEAR_MCP_URL}")
     print()
     print("This will open your browser for Linear authentication.")
-    print("After logging in, copy the callback URL and paste it here.")
+    print("The localhost callback is captured automatically after login.")
     print()
 
     # Configure OAuth-enabled connection to Linear
@@ -142,7 +139,7 @@ async def main() -> None:
         print("If OAuth failed, check that:")
         print("  - You have a Linear account")
         print("  - You authorized the app in your browser")
-        print("  - You copied the FULL callback URL including the ?code=... part")
+        print("  - Your browser can reach the local callback listener")
 
 
 if __name__ == "__main__":

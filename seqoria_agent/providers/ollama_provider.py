@@ -20,6 +20,7 @@ from seqoria_agent.models.chunk import (
     SystemMessage,
     ToolCallRequest,
     ToolCallResult,
+    ToolCallError,
     UserMessage,
 )
 from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
@@ -265,7 +266,7 @@ class _OllamaProviderMixin:
     def _prepare_chat_history_sync(
         self,
         chat_history: List[
-            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, AssistantMessage, UserMessage, SystemMessage]
+            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, ToolCallError, AssistantMessage, UserMessage, SystemMessage]
         ],
     ) -> List[Dict[str, Any]]:
         """Prepare chat history for Ollama API."""
@@ -289,8 +290,13 @@ class _OllamaProviderMixin:
                 )
                 continue
 
-            if isinstance(raw_msg, ToolCallResult):
-                prepared_messages.append({"role": "tool", "content": str(raw_msg.result)})
+            if isinstance(raw_msg, (ToolCallResult, ToolCallError)):
+                prepared_messages.append({
+                    "role": "tool",
+                    "content": str(raw_msg.result),
+                    "tool_call_id": str(raw_msg.tool_call_id),
+                    "tool_name": raw_msg.name or "",
+                })
                 continue
 
             if isinstance(raw_msg, (AssistantMessage, UserMessage, SystemMessage)):
@@ -321,8 +327,13 @@ class _OllamaProviderMixin:
                 )
                 continue
 
-            if role in {"tool_result", "tool"}:
-                prepared_messages.append({"role": "tool", "content": str(raw_msg.get("result", content))})
+            if role in {"tool_result", "tool_error", "tool"}:
+                prepared_messages.append({
+                    "role": "tool",
+                    "content": str(raw_msg.get("error", "") if role == "tool_error" else raw_msg.get("result", content)),
+                    "tool_call_id": str(raw_msg.get("tool_call_id", raw_msg.get("id", ""))),
+                    "tool_name": raw_msg.get("name", raw_msg.get("tool_name", "")) or "",
+                })
                 continue
 
             if role in {"assistant", "system", "user"}:
@@ -342,7 +353,7 @@ class _OllamaProviderMixin:
     async def _prepare_chat_history_async(
         self,
         chat_history: List[
-            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, AssistantMessage, UserMessage, SystemMessage]
+            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, ToolCallError, AssistantMessage, UserMessage, SystemMessage]
         ],
     ) -> List[Dict[str, Any]]:
         """Async wrapper around sync chat-history preparation."""
@@ -767,7 +778,7 @@ class AsyncOllamaProvider(AsyncBaseProvider, _OllamaProviderMixin):
                     except Exception:
                         pass
                 response.raise_for_status()
-            except Exception as e:
+            except BaseException as e:
                 await stream_ctx.__aexit__(type(e), e, e.__traceback__)
                 raise
             return stream_ctx, response
@@ -884,7 +895,12 @@ class OllamaProvider(BaseProvider, _OllamaProviderMixin):
             raise ConnectionError(provider="Ollama", message=str(e)) from e
 
         if validate_on_init:
-            self.validate_model()
+            try:
+                self.validate_model()
+            except BaseException:
+                # Construction failed, so no caller can close the owned client.
+                self.client.close()
+                raise
 
     def validate_model(self) -> None:
         """Validate that configured model is available."""

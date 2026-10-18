@@ -10,7 +10,7 @@ Prerequisites
 1. Install Ollama from https://ollama.com/download
 2. Start Ollama (it runs as a background service)
 3. Pull a model: ``ollama pull qwen3-vl:4b``
-4. Install the Python SDK: ``pip install ollama``
+4. Install this package: ``pip install seqoria-agent``
 
 Run with::
 
@@ -29,6 +29,7 @@ Enable thinking/reasoning output with --think flag:
 
     python examples/providers/ollama_stream.py --think
 """
+
 from __future__ import annotations
 
 import base64
@@ -40,47 +41,48 @@ from seqoria_agent.providers.schemas import LLMResponse, ToolCallList
 
 def main() -> None:
     """Run the Ollama streaming demo."""
-    
+
     # Parse arguments
     args = sys.argv[1:]
     think_mode = "--think" in args
     if think_mode:
         args.remove("--think")
-    
+
     # Initialize provider with qwen3-vl model (multimodal capable)
     # If the model isn't available, it will attempt to pull it automatically
     print("Initializing Ollama provider with qwen3-vl:4b...")
     print("(If model isn't downloaded, this will pull it automatically)\n")
-    
+
     provider_kwargs = {
         "model_id": "qwen3-vl:4b",
         "validate_on_init": True,
         "temperature": 0.7,
     }
-    
+
     # Enable thinking mode if requested
     if think_mode:
         provider_kwargs["think"] = True
         print("🧠 Thinking mode enabled - will show reasoning process\n")
-    
+
     try:
         provider = OllamaProvider(**provider_kwargs)
     except Exception as e:
         print(f"Error initializing provider: {e}")
         print("\nMake sure Ollama is running: ollama serve")
         sys.exit(1)
-    
-    # Check if user provided an image path for vision demo
-    if args:
-        image_path = args[0]
-        run_vision_demo(provider, image_path, think_mode)
-    else:
-        run_text_demo(provider, think_mode)
+
+    with provider:
+        # Check if user provided an image path for vision demo
+        if args:
+            image_path = args[0]
+            run_vision_demo(provider, image_path, think_mode)
+        else:
+            run_text_demo(provider, think_mode)
 
 
 def run_text_demo(provider: OllamaProvider, think_mode: bool = False) -> None:
     """Run a simple text streaming demo."""
-    
+
     chat_history = [
         {
             "role": "system",
@@ -91,14 +93,14 @@ def run_text_demo(provider: OllamaProvider, think_mode: bool = False) -> None:
             "content": "Explain quantum computing in 3 sentences.",
         },
     ]
-    
+
     print("=" * 60)
     print("Text Streaming Demo" + (" (with Thinking)" if think_mode else ""))
     print("=" * 60)
     print("\nUser: Explain quantum computing in 3 sentences.\n")
-    
+
     in_thinking = False
-    
+
     # Stream the response
     for chunk in provider.stream(chat_history=chat_history):
         if isinstance(chunk, LLMResponse):
@@ -109,7 +111,7 @@ def run_text_demo(provider: OllamaProvider, think_mode: bool = False) -> None:
                         print("🧠 Thinking: ", end="", flush=True)
                         in_thinking = True
                     print(chunk.thinking, end="", flush=True)
-                
+
                 # Handle regular text output
                 if chunk.text:
                     if in_thinking:
@@ -128,23 +130,25 @@ def run_text_demo(provider: OllamaProvider, think_mode: bool = False) -> None:
                     print(f"Full thinking: {len(chunk.thinking)} chars")
                 print(f"Stop reason: {chunk.stop_reason}")
                 if chunk.usage:
-                    print(f"Tokens - Prompt: {chunk.usage.prompt_tokens}, "
-                          f"Completion: {chunk.usage.completion_tokens}, "
-                          f"Total: {chunk.usage.total_tokens}")
+                    print(
+                        f"Tokens - Prompt: {chunk.usage.prompt_tokens}, "
+                        f"Completion: {chunk.usage.completion_tokens}, "
+                        f"Total: {chunk.usage.total_tokens}"
+                    )
         elif isinstance(chunk, ToolCallList):
             print(f"\nTool calls: {[tc.function_name for tc in chunk.tool_calls]}")
-    
+
     print()
 
 
 def run_vision_demo(provider: OllamaProvider, image_path: str, think_mode: bool = False) -> None:
     """Run a vision/multimodal streaming demo."""
-    
+
     print("=" * 60)
     print("Vision Streaming Demo" + (" (with Thinking)" if think_mode else ""))
     print("=" * 60)
     print(f"\nLoading image: {image_path}\n")
-    
+
     # Load and encode the image
     try:
         with open(image_path, "rb") as f:
@@ -156,7 +160,7 @@ def run_vision_demo(provider: OllamaProvider, image_path: str, think_mode: bool 
     except Exception as e:
         print(f"Error loading image: {e}")
         sys.exit(1)
-    
+
     # Determine media type from extension
     ext = image_path.lower().split(".")[-1]
     media_types = {
@@ -167,7 +171,7 @@ def run_vision_demo(provider: OllamaProvider, image_path: str, think_mode: bool 
         "webp": "image/webp",
     }
     media_type = media_types.get(ext, "image/jpeg")
-    
+
     chat_history = [
         {
             "role": "user",
@@ -177,11 +181,11 @@ def run_vision_demo(provider: OllamaProvider, image_path: str, think_mode: bool 
             ],
         },
     ]
-    
+
     print("User: What do you see in this image? Describe it in detail.\n")
-    
+
     in_thinking = False
-    
+
     # Stream the response
     for chunk in provider.stream(chat_history=chat_history):
         if isinstance(chunk, LLMResponse):
@@ -192,7 +196,7 @@ def run_vision_demo(provider: OllamaProvider, image_path: str, think_mode: bool 
                         print("🧠 Thinking: ", end="", flush=True)
                         in_thinking = True
                     print(chunk.thinking, end="", flush=True)
-                
+
                 # Handle regular text output
                 if chunk.text:
                     if in_thinking:
@@ -209,13 +213,14 @@ def run_vision_demo(provider: OllamaProvider, image_path: str, think_mode: bool 
                     print(f"Full thinking: {len(chunk.thinking)} chars")
                 print(f"Stop reason: {chunk.stop_reason}")
                 if chunk.usage:
-                    print(f"Tokens - Prompt: {chunk.usage.prompt_tokens}, "
-                          f"Completion: {chunk.usage.completion_tokens}, "
-                          f"Total: {chunk.usage.total_tokens}")
-    
+                    print(
+                        f"Tokens - Prompt: {chunk.usage.prompt_tokens}, "
+                        f"Completion: {chunk.usage.completion_tokens}, "
+                        f"Total: {chunk.usage.total_tokens}"
+                    )
+
     print()
 
 
 if __name__ == "__main__":
     main()
-

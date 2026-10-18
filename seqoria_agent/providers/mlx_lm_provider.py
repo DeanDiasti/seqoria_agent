@@ -20,6 +20,7 @@ from seqoria_agent.models.chunk import (
     SystemMessage,
     ToolCallRequest,
     ToolCallResult,
+    ToolCallError,
     UserMessage,
 )
 from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
@@ -157,7 +158,7 @@ class _MLXLMProviderMixin:
     def _prepare_chat_messages(
         self,
         chat_history: List[
-            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, AssistantMessage, UserMessage, SystemMessage]
+            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, ToolCallError, AssistantMessage, UserMessage, SystemMessage]
         ],
     ) -> List[Dict[str, str]]:
         """Normalize history to role/content strings for ``apply_chat_template``."""
@@ -173,11 +174,13 @@ class _MLXLMProviderMixin:
                 )
                 continue
 
-            if isinstance(raw_msg, ToolCallResult):
+            if isinstance(raw_msg, (ToolCallResult, ToolCallError)):
                 prepared.append(
                     {
                         "role": "user",
-                        "content": f"[tool_result] {raw_msg.name}: {raw_msg.result}",
+                        "content": (f"[tool_error] {raw_msg.name} (call_id={raw_msg.tool_call_id}): {raw_msg.error}"
+                                    if isinstance(raw_msg, ToolCallError)
+                                    else f"[tool_result] {raw_msg.name}: {raw_msg.result}"),
                     }
                 )
                 continue
@@ -202,11 +205,13 @@ class _MLXLMProviderMixin:
                 )
                 continue
 
-            if role in {"tool_result", "tool"}:
+            if role in {"tool_result", "tool_error", "tool"}:
                 prepared.append(
                     {
                         "role": "user",
-                        "content": f"[tool_result] {raw_msg.get('name', '')}: {raw_msg.get('result', content)}",
+                        "content": (f"[tool_error] {raw_msg.get('name', '')} (call_id={raw_msg.get('tool_call_id', '')}): {raw_msg.get('error', '')}"
+                                if role == "tool_error"
+                                else f"[tool_result] {raw_msg.get('name', '')}: {raw_msg.get('result', content)}"),
                     }
                 )
                 continue

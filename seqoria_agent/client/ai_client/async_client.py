@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from contextlib import aclosing
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Mapping, Self, Tuple, Union
 
@@ -35,6 +36,7 @@ from seqoria_agent.models.chunk import (
     ChatChunk,
     LLMUsage,
     ToolCallRequest,
+    ToolCallError,
     ToolCallRequestList,
     ToolCallResult,
     ToolMessages,
@@ -73,9 +75,11 @@ class AsyncAIClient:
     cache_ttl : int | None
         Cache TTL in seconds.
     max_concurrency : int | None
-        Maximum concurrent tool executions.
+        Maximum concurrent tool executions across requests, including injected
+        parameter resolution and cache I/O.
     tool_timeout : float | None
-        Timeout for tool execution in seconds.
+        Timeout in seconds for parameter resolution, cache I/O, and tool
+        execution after acquiring a concurrency slot. Queue time is excluded.
     retry_policy : dict | None
         Retry configuration with "max_attempts" and "backoff_base".
     breaker_threshold : int
@@ -183,10 +187,26 @@ class AsyncAIClient:
         if not providers:
             raise ValueError("'providers' may not be empty")
 
-        if max_concurrency is not None and max_concurrency < 1:
-            raise ValueError("max_concurrency must be positive")
-        if tool_timeout is not None and tool_timeout <= 0:
-            raise ValueError("tool_timeout must be positive")
+        if max_concurrency is not None and (
+            isinstance(max_concurrency, bool)
+            or not isinstance(max_concurrency, int)
+            or max_concurrency < 1
+        ):
+            raise ValueError("max_concurrency must be a positive integer")
+        if tool_timeout is not None and (
+            not isinstance(tool_timeout, (int, float))
+            or isinstance(tool_timeout, bool)
+            or not math.isfinite(tool_timeout)
+            or tool_timeout <= 0
+        ):
+            raise ValueError("tool_timeout must be positive and finite")
+        if (
+            not isinstance(refresh_interval, (int, float))
+            or isinstance(refresh_interval, bool)
+            or not math.isfinite(refresh_interval)
+            or refresh_interval < 0
+        ):
+            raise ValueError("refresh_interval must be nonnegative and finite")
 
         if any(not isinstance(provider, AsyncBaseProvider) for provider in providers):
             raise TypeError("AsyncAIClient requires async providers; use an Async*Provider class")
@@ -386,7 +406,7 @@ class AsyncAIClient:
         tool_calls: List[ToolCallRequest],
         *,
         context: ParamContext | None = None,
-    ) -> List[ToolCallResult]:
+    ) -> List[ToolCallResult | ToolCallError]:
         """Execute tool calls and return results."""
         return await self.executor.run_calls(tool_calls=tool_calls, context=context or {})
 
@@ -395,13 +415,13 @@ class AsyncAIClient:
         tool_calls: List[ToolCallRequest],
         *,
         context: ParamContext | None = None,
-    ) -> AsyncGenerator[Tuple[ToolCallRequest, ToolCallResult], None]:
+    ) -> AsyncGenerator[Tuple[ToolCallRequest, ToolCallResult | ToolCallError], None]:
         """Stream tool call results as they complete."""
         return self.executor.run_call_stream(tool_calls=tool_calls, context=context or {})
 
     def tools_enabled(self) -> bool:
         """Return True if any tools are available."""
-        return bool(self._tool_map or self._boxes)
+        return bool(self.registry._llm_tools_view())
 
     def list_tools(self) -> List[dict]:
         """List currently available tools (OpenAI-compatible tool schema).
@@ -515,9 +535,11 @@ class AsyncAIClient:
             raise ValueError("history required")
         if not isinstance(history, list):
             raise TypeError("history must be an application-owned list")
+        if user_query is None:
+            raise ValueError("user_query required")
 
-        if max_turns < 1:
-            raise ValueError("max_turns must be positive")
+        if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+            raise ValueError("max_turns must be a positive integer")
         tool_ctx: ParamContext = dict(context or {})
 
         self._append_user_turn(
@@ -557,6 +579,7 @@ class AsyncAIClient:
                 message = AssistantMessage(
                     role="assistant",
                     content=resp.content,
+                    thinking=resp.thinking,
                     model=resp.model,
                     usage=total_usage,
                 )
@@ -604,8 +627,8 @@ class AsyncAIClient:
         if user_query is None:
             raise ValueError("user_query required")
 
-        if max_turns < 1:
-            raise ValueError("max_turns must be positive")
+        if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+            raise ValueError("max_turns must be a positive integer")
         tool_ctx: ParamContext = dict(context or {})
 
         self._append_user_turn(
@@ -637,6 +660,7 @@ class AsyncAIClient:
                         message = AssistantMessage(
                             role="assistant",
                             content=chunk.content,
+                            thinking=chunk.thinking,
                             model=chunk.model,
                             usage=total_usage,
                         )
@@ -665,6 +689,7 @@ class AsyncAIClient:
                             message = AssistantMessage(
                                 role="assistant",
                                 content=c.content,
+                                thinking=c.thinking,
                                 model=c.model,
                                 usage=total_usage,
                             )

@@ -15,6 +15,7 @@ from seqoria_agent.models.chunk import (
     SystemMessage,
     ToolCallRequest,
     ToolCallResult,
+    ToolCallError,
     UserMessage,
 )
 
@@ -439,7 +440,7 @@ class _AnthropicProviderMixin:
                 )
                 continue
 
-            if isinstance(message, ToolCallResult):
+            if isinstance(message, (ToolCallResult, ToolCallError)):
                 result_content = message.result
                 content_value = result_content if isinstance(result_content, str) else str(result_content)
 
@@ -451,6 +452,7 @@ class _AnthropicProviderMixin:
                                 "type": "tool_result",
                                 "tool_use_id": str(message.tool_call_id),
                                 "content": content_value,
+                                **({"is_error": True} if isinstance(message, ToolCallError) else {}),
                             }
                         ],
                     }
@@ -523,10 +525,10 @@ class _AnthropicProviderMixin:
                 )
                 continue
 
-            if role in {"tool_result", "tool"}:
-                result = message.get("result", message.get("content", ""))
+            if role in {"tool_result", "tool_error", "tool"}:
+                result = (message.get("error", "") if role == "tool_error" else message.get("result", message.get("content", "")))
                 tool_use_id = message.get("tool_call_id", message.get("tool_use_id", ""))
-                is_error = bool(message.get("is_error", False))
+                is_error = role == "tool_error" or bool(message.get("is_error", False))
 
                 tool_result_block: Dict[str, Any] = {
                     "type": "tool_result",
@@ -880,6 +882,7 @@ class AsyncAnthropicProvider(AsyncBaseProvider, _AnthropicProviderMixin):
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,
@@ -953,6 +956,7 @@ class AsyncAnthropicProvider(AsyncBaseProvider, _AnthropicProviderMixin):
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,
@@ -996,7 +1000,7 @@ class AsyncAnthropicProvider(AsyncBaseProvider, _AnthropicProviderMixin):
                     except Exception:
                         pass
                 response.raise_for_status()
-            except Exception as e:
+            except BaseException as e:
                 await stream_ctx.__aexit__(type(e), e, e.__traceback__)
                 raise
             return stream_ctx, response
@@ -1175,7 +1179,12 @@ class AnthropicProvider(BaseProvider, _AnthropicProviderMixin):
         except Exception as e:
             raise ConnectionError(provider="Anthropic") from e
 
-        self._validate_model_sync(client=self.client, model_id=self.model_id)
+        try:
+            self._validate_model_sync(client=self.client, model_id=self.model_id)
+        except BaseException:
+            # Construction failed, so no caller can close the owned client.
+            self.client.close()
+            raise
 
     def validate_model(self) -> None:
         """Validate configured model is available via Anthropic API."""
@@ -1188,6 +1197,7 @@ class AnthropicProvider(BaseProvider, _AnthropicProviderMixin):
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,
@@ -1261,6 +1271,7 @@ class AnthropicProvider(BaseProvider, _AnthropicProviderMixin):
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,

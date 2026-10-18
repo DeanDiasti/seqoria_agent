@@ -6,6 +6,7 @@ import asyncio
 import copy
 import uuid
 import logging
+import math
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple, Mapping
 
@@ -56,6 +57,13 @@ class Executor:
         self._cache_namespace = uuid.uuid4().hex
 
         # Execution controls --------------------------------------------------
+        if tool_timeout is not None and (
+            not isinstance(tool_timeout, (int, float))
+            or isinstance(tool_timeout, bool)
+            or not math.isfinite(tool_timeout)
+            or tool_timeout <= 0
+        ):
+            raise ValueError("tool_timeout must be positive and finite")
         self._tool_semaphore = tool_semaphore or asyncio.Semaphore(value=16)
         self._tool_timeout = tool_timeout
 
@@ -78,7 +86,7 @@ class Executor:
         tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
         *,
         context: ParamContext | None = None,
-    ) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult]]:
+    ) -> AsyncIterator[Tuple[ToolCallRequest, ToolCallResult | ToolCallError]]:
         """Yield :class:`ToolCallResult` objects as soon as they are ready.
 
         The generator respects *dependency layers* computed by
@@ -93,12 +101,6 @@ class Executor:
             tool_calls = tool_calls.tool_calls
 
         ctx: ParamContext = context or {}
-
-        # Single-call fast-path ------------------------------------------------
-        if len(tool_calls) == 1:
-            single_req = tool_calls[0]
-            yield (single_req, await self._run_tool(tool_call=single_req, context=ctx))  # type: ignore[arg-type]
-            return
 
         # Multi-call with dependency handling ---------------------------------
         try:
@@ -172,7 +174,7 @@ class Executor:
             # --------------------------------------------------------------
             if ready_calls:
 
-                async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest, ToolCallResult]:  # noqa: D401
+                async def _exec_pair(tc: ToolCallRequest) -> Tuple[ToolCallRequest, ToolCallResult | ToolCallError]:  # noqa: D401
                     res = await self._run_tool(tool_call=tc, context=ctx)
                     return tc, res
 
@@ -205,7 +207,7 @@ class Executor:
         tool_calls: Union[List[ToolCallRequest], ToolCallRequestList],
         *,
         context: ParamContext | None = None,
-    ) -> List[ToolCallResult]:
+    ) -> List[ToolCallResult | ToolCallError]:
         """Execute *tool_calls* and return a list of results.
 
         This is now implemented on top of :pyfunc:`run_call_stream` to avoid
@@ -221,12 +223,41 @@ class Executor:
 
     async def _run_tool(
         self, tool_call: ToolCallRequest, *, context: ParamContext
-    ) -> ToolCallResult:
+    ) -> ToolCallResult | ToolCallError:
         """Execute *tool_call* and return a fully-formed chat *history* entry.
 
-        No tuple or additional metadata is returned - early-exit or metadata
-        handling is performed via callbacks.
+        The shared concurrency limit covers parameter resolution, cache I/O,
+        and tool invocation. The timeout starts after acquiring a slot, so time
+        spent waiting for other requests does not consume the execution budget.
         """
+        try:
+            async with self._tool_semaphore:
+                async with asyncio.timeout(self._tool_timeout):
+                    return await self._execute_tool(tool_call, context=context)
+        except Exception as exc:
+            # Parameter resolution and output processing are part of this call
+            # too. One malformed request must not cancel unrelated tool tasks.
+            return self._tool_error(tool_call, exc)
+
+    def _tool_error(self, tool_call: ToolCallRequest, exc: Exception) -> ToolCallError:
+        err_msg = (
+            f"Tool '{tool_call.name}' timed out after {self._tool_timeout}s"
+            if isinstance(exc, asyncio.TimeoutError)
+            else f"Tool '{tool_call.name}' failed: {exc}"
+        )
+        _on_error_cb(
+            error_payload={
+                "tool": tool_call.name,
+                "tool_call_id": tool_call.id,
+                "message": err_msg,
+            },
+            cb=self._on_error,
+        )
+        return ToolCallError(tool_call_id=tool_call.id, name=tool_call.name, error=err_msg)
+
+    async def _execute_tool(
+        self, tool_call: ToolCallRequest, *, context: ParamContext
+    ) -> ToolCallResult | ToolCallError:
         tool_name = tool_call.name
         arguments = copy.deepcopy(tool_call.arguments or {})
 
@@ -298,50 +329,22 @@ class Executor:
             self._logger.debug("Executing tool %s", tool_name)
 
         if raw_output is None:
-            try:
-                async with self._tool_semaphore:
-                    exec_coro = self._pool.call_tool(
-                        name=tool_name, arguments=arguments, server_args=server_args
-                    )
-                    if self._tool_timeout:
-                        exec_coro = asyncio.wait_for(fut=exec_coro, timeout=self._tool_timeout)
-                    tool_result = await exec_coro
+            tool_result = await self._pool.call_tool(
+                name=tool_name, arguments=arguments, server_args=server_args
+            )
+            text_blocks = [block.text for block in (tool_result or []) if hasattr(block, "text")]
+            raw_output = (
+                "\n".join(text_blocks)
+                if text_blocks
+                else "Tool executed successfully with no textual output."
+            )
 
-                # --------------------------- success path ---------------------------
-                if tool_result and hasattr(tool_result[0], "text"):
-                    raw_output = tool_result[0].text  # type: ignore[assignment]
-                else:
-                    raw_output = "Tool executed successfully with no textual output."
-
-                # Best-effort cache write (only on success)
-                if cache_key is not None and isinstance(raw_output, str):
-                    try:
-                        await self._cache.set(cache_key, raw_output, ttl=self._cache_ttl)
-                    except Exception:  # pragma: no cover – cache backend must not break execution
-                        pass
-
-            except Exception as exc:
-                # -------------------------------------------------------------------
-                # Failure path – encapsulate the error in a ToolCallError instance so
-                # callers can react without relying on side-band callbacks.
-                # -------------------------------------------------------------------
-                err_msg = (
-                    f"Tool '{tool_name}' failed: {exc}"
-                    if not isinstance(exc, asyncio.TimeoutError)
-                    else f"Tool '{tool_name}' timed out after {self._tool_timeout}s"
-                )
-
-                # Structured callback so external apps can log/telemetry the error
-                _on_error_cb(
-                    error_payload={
-                        "tool": tool_name,
-                        "tool_call_id": tool_call.id,
-                        "message": err_msg,
-                    },
-                    cb=self._on_error,
-                )
-
-                return ToolCallError(tool_call_id=tool_call.id, name=tool_name, error=err_msg)
+            # Best-effort cache write (only on success)
+            if cache_key is not None and isinstance(raw_output, str):
+                try:
+                    await self._cache.set(cache_key, raw_output, ttl=self._cache_ttl)
+                except Exception:  # pragma: no cover – cache backend must not break execution
+                    pass
         # --------------------------------------------------------------------
 
         # Display envelope & structured metadata extraction ----------------
@@ -390,7 +393,7 @@ class Executor:
 
         # Build dependency graph (edges: dep_name → tool_name)
         graph: Dict[str, Set[str]] = defaultdict(set)
-        indegree: Dict[str, int] = {name: 0 for name in requested_names}
+        indegree: Dict[str, int] = {name: 0 for name in name_to_calls}
 
         deps_cache: Dict[str, Set[str]] = {}
         for tool_name in requested_names:
@@ -415,7 +418,7 @@ class Executor:
                 processed += 1
                 # Append *all* calls for this tool name – preserves duplicates
                 current_layer.extend(name_to_calls[n])
-                for succ in graph.get(n, []):
+                for succ in sorted(graph.get(n, [])):
                     indegree[succ] -= 1
                     if indegree[succ] == 0:
                         queue.append(succ)

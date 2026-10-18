@@ -13,7 +13,6 @@ import asyncio
 import os
 from typing import List
 
-from dotenv import load_dotenv
 
 from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.toolbox import LocalToolbox
@@ -38,11 +37,10 @@ async def hello(name: str = "world") -> str:
 
 
 async def main() -> None:  # noqa: D401 – simple demo
-    load_dotenv()
-    async with AsyncAIClient(urls=[],
-                        providers=[AsyncOpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))],
-                        local_toolbox=tb) as ai:
-
+    async with (
+        AsyncOpenAIProvider(api_key=os.getenv("OPENAI_API_KEY")) as provider,
+        AsyncAIClient(urls=[], providers=[provider], local_toolbox=tb) as ai,
+    ):
         tool_calls: List[ToolCallRequest] = [
             ToolCallRequest(id="1", name="broken_tool", arguments={}),
             ToolCallRequest(id="2", name="hello", arguments={"name": "Seqoria"}),
@@ -57,4 +55,4 @@ async def main() -> None:  # noqa: D401 – simple demo
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

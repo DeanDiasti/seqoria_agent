@@ -50,11 +50,8 @@ class _OfflineStubProvider(AsyncBaseProvider):
         model: str | None = None,
         **kwargs: Any,
     ):
-        async def _gen():
-            usage = LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-            yield LLMResponse(model_id="offline-stub", type="llm_response", text="ok", usage=usage)
-
-        return _gen()
+        usage = LLMUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+        yield LLMResponse(model_id="offline-stub", type="llm_response", text="ok", usage=usage)
 
 
 def _tool_names(tools: list[dict]) -> list[str]:
@@ -104,5 +101,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-

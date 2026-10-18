@@ -1,42 +1,47 @@
-from __future__ import annotations
+"""Show example token usage without API calls: python examples/token_counting/client.py.
 
-"""Example: Using AIClient with token usage reporting.
-
-Run with:
-    python examples/token_counting/client.py
-
-The example uses the same _DummyProvider from the test-suite so it works out
-of the box without external API keys.  Replace the provider with a real
-OpenAIProvider / AnthropicProvider (and provide keys) to see live numbers.
+The offline provider returns illustrative counts. Hosted providers return the
+usage supplied by their model service.
 """
 
 import asyncio
-from seqoria_agent import AsyncAIClient
-from seqoria_agent.providers import AsyncOpenAIProvider
-import os
-from dotenv import load_dotenv
-from seqoria_agent.models.chunk import AssistantMessage, ToolMessages, ChatChunk
 
-load_dotenv()
+from seqoria_agent import AsyncAIClient
+from seqoria_agent.models.chunk import AssistantMessage, ChatChunk
+from seqoria_agent.providers.base_provider import AsyncBaseProvider
+from seqoria_agent.providers.schemas import LLMResponse, LLMUsage
+
+
+class StubProvider(AsyncBaseProvider):
+    """Offline provider used to demonstrate orchestration without API calls."""
+
+    async def async_generate(self, *, chat_history, **kwargs):
+        return LLMResponse(
+            model_id="offline",
+            type="llm_response",
+            text="pong",
+            usage=LLMUsage(prompt_tokens=3, completion_tokens=1, total_tokens=4),
+        )
+
+    async def async_stream(self, *, chat_history, **kwargs):
+        yield LLMResponse(model_id="offline", type="llm_delta", text="pong")
+        yield await self.async_generate(chat_history=chat_history)
+
 
 async def main() -> None:
-    ai = AsyncAIClient(providers=[AsyncOpenAIProvider(api_key=os.getenv(key="OPENAI_API_KEY"))], urls=[])
-    hist: list[dict] = [{"role": "user", "content": "Hello, how are you?"}]
-    # Single-shot generation -------------------------------------------------
-    result = await ai.llm_generate_once(history=hist)
-    print("One-shot answer:", result.content)
-    print("Token usage: ", result.usage.model_dump())
-
-    # Streaming generation ---------------------------------------------------
-    print("\nStreaming answer:")
-    async for chunk in ai.llm_stream_once(history=hist):
-        if isinstance(chunk, ChatChunk):
-            print(chunk.content, end="", flush=True)
-        elif isinstance(chunk, AssistantMessage):
-            print("\n(Token usage:", chunk.usage.model_dump(), ")")
-        elif isinstance(chunk, ToolMessages):
-            print("tool call\n" * (len(chunk) // 2), end="", flush=True)
+    async with StubProvider() as provider, AsyncAIClient(providers=[provider]) as client:
+        history = [{"role": "user", "content": "ping"}]
+        result = await client.llm_generate_once(history=history)
+        print("One-shot answer:", result.content)
+        if result.usage:
+            print("Token usage:", result.usage.model_dump())
+        print("Streaming answer:", end=" ")
+        async for chunk in client.llm_stream_once(history=history):
+            if isinstance(chunk, ChatChunk):
+                print(chunk.content, end="", flush=True)
+            elif isinstance(chunk, AssistantMessage) and chunk.usage:
+                print("\nToken usage:", chunk.usage.model_dump())
 
 
 if __name__ == "__main__":
-    asyncio.run(main=main())
+    asyncio.run(main())

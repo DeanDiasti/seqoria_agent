@@ -23,6 +23,7 @@ from seqoria_agent.models.chunk import (
     SystemMessage,
     ToolCallRequest,
     ToolCallResult,
+    ToolCallError,
     UserMessage,
 )
 from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
@@ -258,11 +259,13 @@ class _MLXVLMProviderMixin:
             )
             return
 
-        if role in {"tool_result", "tool"}:
+        if role in {"tool_result", "tool_error", "tool"}:
             prepared.append(
                 {
                     "role": "user",
-                    "content": f"[tool_result] {raw_msg.get('name', '')}: {raw_msg.get('result', content)}",
+                    "content": (f"[tool_error] {raw_msg.get('name', '')} (call_id={raw_msg.get('tool_call_id', '')}): {raw_msg.get('error', '')}"
+                                if role == "tool_error"
+                                else f"[tool_result] {raw_msg.get('name', '')}: {raw_msg.get('result', content)}"),
                 }
             )
             return
@@ -292,7 +295,7 @@ class _MLXVLMProviderMixin:
     def _prepare_chat_messages_text_only(
         self,
         chat_history: List[
-            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, AssistantMessage, UserMessage, SystemMessage]
+            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, ToolCallError, AssistantMessage, UserMessage, SystemMessage]
         ],
     ) -> List[Dict[str, str]]:
         """String roles and text-only content for chat templates."""
@@ -308,11 +311,13 @@ class _MLXVLMProviderMixin:
                 )
                 continue
 
-            if isinstance(raw_msg, ToolCallResult):
+            if isinstance(raw_msg, (ToolCallResult, ToolCallError)):
                 prepared.append(
                     {
                         "role": "user",
-                        "content": f"[tool_result] {raw_msg.name}: {raw_msg.result}",
+                        "content": (f"[tool_error] {raw_msg.name} (call_id={raw_msg.tool_call_id}): {raw_msg.error}"
+                                    if isinstance(raw_msg, ToolCallError)
+                                    else f"[tool_result] {raw_msg.name}: {raw_msg.result}"),
                     }
                 )
                 continue
@@ -334,7 +339,7 @@ class _MLXVLMProviderMixin:
     def _last_user_message_media(
         self,
         chat_history: List[
-            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, AssistantMessage, UserMessage, SystemMessage]
+            Union[Dict[str, Any], ToolCallRequest, ToolCallResult, ToolCallError, AssistantMessage, UserMessage, SystemMessage]
         ],
         tmp_dir: str,
     ) -> Tuple[List[Dict[str, str]], str, List[str], List[str]]:
@@ -358,12 +363,17 @@ class _MLXVLMProviderMixin:
             return messages, "", image_refs, audio_refs
 
         raw_for_last_user: Any = None
-        for raw_msg in reversed(chat_history):
-            if isinstance(raw_msg, UserMessage):
+        for raw_idx in range(len(chat_history) - 1, -1, -1):
+            raw_msg = chat_history[raw_idx]
+            if isinstance(raw_msg, UserMessage) or (
+                isinstance(raw_msg, dict) and raw_msg.get("role") == "user"
+            ):
                 raw_for_last_user = raw_msg
-                break
-            if isinstance(raw_msg, dict) and raw_msg.get("role") == "user":
-                raw_for_last_user = raw_msg
+                # Tool results also use the user role in text-only templates.
+                # Locate the real user message, preserving later tool feedback.
+                last_user_idx = len(
+                    self._prepare_chat_messages_text_only(chat_history[:raw_idx + 1])
+                ) - 1
                 break
 
         if raw_for_last_user is None:

@@ -4,7 +4,7 @@
 
 ## Agent loops
 
-`chat(query, history=history, context=context)` runs up to `max_turns` model/tool rounds. `stream_chat()` streams text deltas as well. Both append user messages, paired tool calls/results, and final responses to application-owned history. A turn-limit message is returned if the model keeps requesting tools. `max_turns` must be positive.
+`chat(query, history=history, context=context)` runs up to `max_turns` model/tool rounds. `stream_chat()` streams text deltas as well. Both append user messages, paired tool calls/results, and final responses to application-owned history. A turn-limit message is returned if the model keeps requesting tools. `max_turns` must be a positive integer.
 
 History is a list containing message dictionaries or the exported Pydantic message models. Save models with `message.model_dump(mode="json")`; dictionaries can be passed back directly on the next turn. The library does not retain histories, compact context, infer plans, or write conversation files. Apply context limits and persistence in your application.
 
@@ -24,9 +24,11 @@ elif isinstance(response, AssistantMessage):
 
 The single-step helpers append an explicitly supplied user message but leave response recording to the caller. Repeat the step until an assistant response is returned, with your own round limit. `llm_stream_once()` is the streaming equivalent.
 
+Tool failures, including missing server-populated identity parameters, return `ToolCallError` alongside successful `ToolCallResult` events. Inspect the result type to distinguish them. Missing identity previously raised `RuntimeError`; it now fails only that call, lets independent tools finish, and skips its declared dependents. `ToolMessages` accepts both successes and failures, and both can be serialized into history.
+
 ## Concurrency and cancellation
 
-Independent tools run concurrently, with a default limit of 16 executions per client. Configure `max_concurrency` and `tool_timeout` for your workload. Dependencies declared with `depends_on` order requested tools and skip dependents after failures. They do not automatically call unrequested prerequisites or implement authorization.
+Independent tools run concurrently, with a default limit of 16 executions per client. Configure `max_concurrency` and `tool_timeout` for your workload. The shared concurrency limit and execution timeout cover injected parameter resolution, cache I/O, and tool invocation. The timeout begins after acquiring a slot, so queue time is excluded. Dependencies declared with `depends_on` order requested tools and skip dependents after failures. They do not automatically call unrequested prerequisites or implement authorization.
 
 `run_tool_calls()` preserves input order. `run_call_stream()` yields `(request, result)` pairs in completion order. Closing a tool stream cancels unfinished async calls; explicitly close streams that a consumer abandons early, for example with `contextlib.aclosing`.
 

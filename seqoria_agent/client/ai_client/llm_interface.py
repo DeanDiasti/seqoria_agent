@@ -27,7 +27,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
     ) -> None:
         if not providers:
             raise ValueError("'providers' must contain at least one AsyncBaseProvider instance.")
-        self._providers: List[AsyncBaseProvider] = providers
+        self._providers: List[AsyncBaseProvider] = list(providers)
         # Cache index of provider that succeeded last time – optimistic fast-path
         self._primary_provider_idx: int = 0
         if logger is not None:
@@ -114,6 +114,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
             return AssistantMessage(
                 role="assistant",
                 content=raw_resp.text or "",
+                thinking=raw_resp.thinking,
                 model=raw_resp.model_id,
                 usage=LLMUsage(
                     prompt_tokens=usage.prompt_tokens,
@@ -175,22 +176,20 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
         for idx in indices:
             provider = self._providers[idx]
             emitted = False
-            stream_gen = provider.async_stream(**kwargs_stream_base, tools=tools)
+            stream_gen = None
             try:
+                stream_gen = provider.async_stream(**kwargs_stream_base, tools=tools)
                 async for chunk in stream_gen:
-                    # Once output is visible, switching providers would duplicate
-                    # text or tool calls. Failover is safe only before first output.
-                    emitted = True
-                    self._primary_provider_idx = idx
-                    # Forward recognised response types as-is.
                     if isinstance(chunk, LLMResponse):
                         if chunk.type == "llm_delta":
                             # Some providers (e.g. Ollama with think=True) may emit "thinking" deltas
                             # with text=None. Do not emit invalid ChatChunk(content=None).
+                            if not chunk.text and not chunk.thinking:
+                                continue
+                            emitted = True
+                            self._primary_provider_idx = idx
                             if chunk.text is None:
                                 thinking_delta = chunk.thinking
-                                if not thinking_delta:
-                                    continue
                                 # Forward thinking deltas via the explicit field.
                                 yield ChatChunk(
                                     role="assistant",
@@ -203,11 +202,13 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                             yield ChatChunk(
                                 role="assistant",
                                 content=chunk.text,
-                                thinking=None,
+                                thinking=chunk.thinking,
                                 model=chunk.model_id,
                                 usage=None,
                             )
                         elif chunk.type == "llm_response":
+                            emitted = True
+                            self._primary_provider_idx = idx
                             usage = chunk.usage or LLMUsage(
                                 prompt_tokens=0, completion_tokens=0, total_tokens=0
                             )
@@ -223,6 +224,8 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                                 ),
                             )
                     elif isinstance(chunk, ToolCallList):
+                        emitted = True
+                        self._primary_provider_idx = idx
                         usage = chunk.usage or LLMUsage(
                             prompt_tokens=0, completion_tokens=0, total_tokens=0
                         )
@@ -246,6 +249,8 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                     else:
                         raise TypeError(f"Unknown chunk type from provider stream: {type(chunk)}")
 
+                if not emitted:
+                    raise LLMError(message="Provider stream ended without a response.")
                 return
             except LLMError as exc:
                 if emitted:
@@ -255,6 +260,7 @@ class LLMInterface:  # noqa: D101 – module-level docstring provides context
                     "Provider %s failed to start stream: %s", provider.__class__.__name__, exc
                 )
             finally:
-                with suppress(Exception):
-                    await stream_gen.aclose()
+                if stream_gen is not None:
+                    with suppress(Exception):
+                        await stream_gen.aclose()
         raise RuntimeError(f"All LLM providers failed to stream. Last error: {last_err}")

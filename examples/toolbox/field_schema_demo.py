@@ -15,15 +15,17 @@ from seqoria_agent.toolbox import LocalToolbox
 
 tb = LocalToolbox()
 
+
 class SearchType(str, Enum):
     TEST = "test"
     DEMO = "demo"
 
 
-
 @tb.tool()
 async def search(
-    query: Literal[SearchType.TEST, SearchType.DEMO] = Field(..., description="Free-text search query"),
+    query: Literal[SearchType.TEST, SearchType.DEMO] = Field(
+        ..., description="Free-text search query"
+    ),
     limit: int = Field(10, ge=1, le=100, description="Maximum results to return"),
 ):
     """Dummy search tool."""
@@ -33,4 +35,4 @@ async def search(
 if __name__ == "__main__":
     tool_info = tb.list_tools()[0]
     print("JSON-schema for the 'search' tool parameters (what the AI sees):\n")
-    pprint(tool_info.inputSchema) 
+    pprint(tool_info.inputSchema)

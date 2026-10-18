@@ -23,7 +23,10 @@ def shout(msg: str):
 
 async def main():
     provider = AsyncOpenAIProvider(model_id="gpt-4o")
-    async with AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=toolbox) as ai:
+    async with (
+        provider,
+        AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=toolbox) as ai,
+    ):
         async for chunk in ai.chat(user_query="What is 2+3?", history=[]):
             if isinstance(chunk, AssistantMessage):
                 print(f"Answer\n: {chunk.content}")
@@ -32,4 +35,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

@@ -5,13 +5,12 @@ LLM providers, and enters an interactive loop where the user can chat.
 
 Demonstrates:
 - Connecting to multiple MCP servers
-- Using multiple LLM providers with fallback
 - Streaming responses
 - Server-populated parameter injection
-- Caching and resilience features
+- Bounded tool concurrency
 
 To run:
-1. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in your environment
+1. Start Ollama and pull the model: ollama pull gpt-oss:20b
 2. Start the example servers:
    python examples/server-client/server1.py
    python examples/server-client/server2.py
@@ -21,15 +20,11 @@ To run:
 
 import asyncio
 
-from dotenv import load_dotenv
 
 from seqoria_agent import AsyncAIClient
-from seqoria_agent.client.cache import DictCache
-from seqoria_agent.client.parameters import ParameterRegistry
 from seqoria_agent.providers import AsyncOllamaProvider
 from seqoria_agent.models.chunk import ChatChunk, ToolMessages
 
-load_dotenv()
 
 # ------------------------------------------------------------------
 # MCP server endpoints
@@ -45,36 +40,21 @@ servers = [
 async def main() -> None:
     """Interactive CLI that streams AI responses."""
 
-    # Parameter registry for server-populated parameters
-    registry = ParameterRegistry(mapping={
-        "tenant_id": "demo-tenant",
-        "user_id": "cli-user-123",
-    })
-
-    # Initialize AsyncAIClient with caching and resilience
+    # Providers are owned by the application and closed after the client.
+    provider = AsyncOllamaProvider(model_id="gpt-oss:20b", keep_alive="5m")
+    # Initialize AsyncAIClient
     client = AsyncAIClient(
         mcp_servers=servers,
-        providers=[
-            AsyncOllamaProvider(
-                model_id="gpt-oss:20b",
-                keep_alive="5m",
-            ),
-        ],
-        # Caching
-        cache=DictCache(),
-        cache_ttl=600,
+        providers=[provider],
         # Concurrency and resilience
         max_concurrency=5,
         tool_timeout=8.0,
-        retry_policy={"max_attempts": 3, "backoff_base": 0.5},
         breaker_threshold=5,
         breaker_reset_after=60,
-        # Parameter injection
-        param_registry=registry,
     )
 
     try:
-        async with client:
+        async with provider, client:
             print("=" * 60)
             print("Welcome to the Seqoria-Agent Multi-Tool Client!")
             print("Connected to MCP servers and discovered tools.")

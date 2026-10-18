@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from copy import deepcopy
 import json
 import time
 from typing import Any, Dict, Protocol
@@ -24,7 +25,7 @@ __all__: list[str] = [
 
 
 class CacheProtocol(Protocol):
-    """Minimal async cache contract accepted by :class:`seqoria_agent.client.core.AIClient`."""
+    """Minimal async cache contract accepted by :class:`seqoria_agent.AsyncAIClient`."""
 
     async def get(self, key: str) -> Any | None:  # noqa: D401 – single-line docstring
         """Return the cached value or ``None`` when missing/expired."""
@@ -57,13 +58,14 @@ class NullCache:
 class DictCache:
     """Bounded LRU in-memory cache with optional TTL support.
 
-    Thread-safe across coroutines via an ``asyncio.Lock``.  **Not** suitable for
-    multi-process deployments – use :class:`RedisCache` instead.
+    Intended for coroutines on one event loop, with an ``asyncio.Lock`` protecting
+    updates. Values are copied on storage and retrieval so callers cannot mutate
+    cached objects. Use :class:`RedisCache` for storage outside the process.
     """
 
     def __init__(self, max_entries: int = 1024):
-        if max_entries < 1:
-            raise ValueError("max_entries must be positive")
+        if isinstance(max_entries, bool) or not isinstance(max_entries, int) or max_entries < 1:
+            raise ValueError("max_entries must be a positive integer")
         self._max_entries = max_entries
         self._data: OrderedDict[str, tuple[Any, float | None]] = OrderedDict()
         self._lock = asyncio.Lock()
@@ -74,14 +76,17 @@ class DictCache:
             if item is None:
                 return None
             value, expires_at = item
-            if expires_at is not None and expires_at < time.monotonic():
+            if expires_at is not None and expires_at <= time.monotonic():
                 # Expired – remove lazily
                 self._data.pop(key, None)
                 return None
             self._data.move_to_end(key)
-            return value
+            return deepcopy(value)
 
     async def set(self, key: str, value: Any, ttl: int | None = None):  # noqa: D401, ANN001
+        if ttl is not None and ttl < 0:
+            raise ValueError("ttl must be nonnegative or None")
+        value = deepcopy(value)
         async with self._lock:
             expires_at: float | None = None
             if ttl is not None and ttl > 0:
@@ -104,7 +109,7 @@ class DictCache:
 class RedisCache:  # pragma: no cover – optional path
     """Redis-based cache using ``redis.asyncio``.
 
-    Requires ``pip install redis>=4.5``.
+    Requires the ``seqoria-agent[redis]`` extra. Values must be JSON serializable.
     """
 
     _redis_missing_msg = "RedisCache requires the 'redis' package. Install via 'pip install redis' to use this backend."
@@ -129,6 +134,8 @@ class RedisCache:  # pragma: no cover – optional path
 
         if redis_asyncio is None:
             raise ImportError(self._redis_missing_msg)
+        if ttl is not None and ttl < 0:
+            raise ValueError("ttl must be nonnegative or None")
 
         self._redis = redis_asyncio.from_url(url, encoding="utf-8", decode_responses=False)
         self._default_ttl = ttl
@@ -141,18 +148,13 @@ class RedisCache:  # pragma: no cover – optional path
         raw = await self._redis.get(key)
         if raw is None:
             return None
-        try:
-            return json.loads(raw)
-        except Exception:
-            return raw
+        return json.loads(raw)
 
     async def set(self, key: str, value: Any, ttl: int | None = None):  # noqa: D401, ANN001
-        try:
-            raw = json.dumps(value)
-        except TypeError:
-            raw = str(value)
-
         ttl_to_use = ttl if ttl is not None else self._default_ttl
+        if ttl_to_use is not None and ttl_to_use < 0:
+            raise ValueError("ttl must be nonnegative or None")
+        raw = json.dumps(value)
         if ttl_to_use:
             await self._redis.setex(key, ttl_to_use, raw)
         else:

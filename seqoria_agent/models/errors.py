@@ -10,7 +10,7 @@ class CircuitOpenError(Exception):
 
 
 class XMCPError(Exception):
-    """Structured error raised by xmcp tools.
+    """Structured error raised by Seqoria tools.
 
     When a tool raises :class:`XMCPError`, the server intercepts it and returns
     a *structured* error envelope instead of propagating the raw stack-trace.
@@ -69,4 +69,4 @@ class DependencyError(Exception):
     be satisfied (e.g. because of a cycle like *A → B → A*).
     """
 
-    pass 
+    pass

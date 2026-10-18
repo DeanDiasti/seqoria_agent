@@ -1,6 +1,6 @@
 [project]
 name = "seqoria-agent"
-version = "0.7.0"
+version = "0.7.1"
 description = "Seqoria Agentic Assistant Framework - MCP-native tool orchestration for AI applications"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -100,4 +100,4 @@ known-first-party = ["seqoria_agent"]
 packages = ["seqoria_agent"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/seqoria_agent", "/tests", "/README.md", "/CHANGELOG.md", "/LICENSE.txt", "/pyproject.toml", "/pytest.ini", "/RELEASING.md"]
+include = ["/seqoria_agent", "/tests", "/docs", "/examples", "/mkdocs.yml", "/README.md", "/CHANGELOG.md", "/LICENSE.txt", "/pyproject.toml", "/pytest.ini", "/RELEASING.md"]

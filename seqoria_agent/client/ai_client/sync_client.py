@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import Any, Dict, Generator, Iterable, List, Mapping, Self, Tuple, Union
 
 from seqoria_agent.client.ai_client.async_client import AsyncAIClient
@@ -82,14 +83,27 @@ class _SyncProviderAdapter(AsyncBaseProvider):
     async def async_stream(self, **kwargs):
         stream = self._provider.stream(**kwargs)
         sentinel = object()
+        stream_lock = threading.Lock()
+
+        def advance():
+            with stream_lock:
+                return next(stream, sentinel)
+
+        def close():
+            # Cancelling to_thread does not stop its worker. Serialize close
+            # with the pending next() so the generator is never closed while
+            # it is executing. The provider's I/O timeout bounds this wait.
+            with stream_lock:
+                stream.close()
+
         try:
             while True:
-                item = await asyncio.to_thread(next, stream, sentinel)
+                item = await asyncio.to_thread(advance)
                 if item is sentinel:
                     return
                 yield item
         finally:
-            await asyncio.to_thread(stream.close)
+            await asyncio.to_thread(close)
 
 
 class AIClient:

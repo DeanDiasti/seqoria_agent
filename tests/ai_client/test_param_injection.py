@@ -5,7 +5,7 @@ import pytest
 
 from seqoria_agent.client.ai_client.executor import Executor
 from seqoria_agent.client.parameters import ParamContext, ParameterSource
-from seqoria_agent.models.chunk import ToolCallRequest
+from seqoria_agent.models.chunk import ToolCallError, ToolCallRequest
 
 
 class _DummyPool:  # minimal stub for ConnectionPool
@@ -62,7 +62,7 @@ async def test_callable_param_injection():
 
 
 @pytest.mark.asyncio
-async def test_missing_param_raises():
+async def test_missing_param_returns_tool_error():
     tool_name = "demo3"
     tc = ToolCallRequest(role="tool_call", id="1", type="function_call", name=tool_name, arguments={})
     exec_ = Executor(pool=_DummyPool(),
@@ -70,5 +70,6 @@ async def test_missing_param_raises():
                      param_registry={},
                      allow_override=False)
     context: ParamContext = {"history": []}
-    with pytest.raises(RuntimeError):
-        await exec_.run_calls([tc], context=context) 
+    results = await exec_.run_calls([tc], context=context)
+    assert isinstance(results[0], ToolCallError)
+    assert "Missing server-populated parameters" in results[0].error

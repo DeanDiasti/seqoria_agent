@@ -20,8 +20,6 @@ from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.chunk import ToolCallRequest
 from seqoria_agent import AsyncOpenAIProvider
-from dotenv import load_dotenv
-
 
 
 # ---------------------------------------------------------------------------
@@ -45,8 +43,10 @@ async def random_int():
 
 
 async def main() -> None:  # noqa: D401 – simple demo
-    load_dotenv()
-    async with AsyncAIClient(urls=[], providers=[AsyncOpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))], local_toolbox=tb) as ai:
+    async with (
+        AsyncOpenAIProvider(api_key=os.getenv("OPENAI_API_KEY")) as provider,
+        AsyncAIClient(urls=[], providers=[provider], local_toolbox=tb) as ai,
+    ):
         tool_calls: List[ToolCallRequest] = [
             ToolCallRequest(id="1", name="slow_timestamp", arguments={}),
             ToolCallRequest(id="2", name="random_int", arguments={}),
@@ -58,4 +58,4 @@ async def main() -> None:  # noqa: D401 – simple demo
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

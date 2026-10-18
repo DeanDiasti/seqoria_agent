@@ -24,10 +24,8 @@ class DummyProvider(AsyncBaseProvider):
         return LLMResponse(model_id="dummy", type="llm_response", text="Hello! (dummy)")
 
     async def async_stream(self, *args, **kwargs):  # noqa: ANN001
-        async def _gen():
-            yield "Hello! (dummy)"
-            yield LLMResponse(model_id="dummy", type="llm_response", text="Hello! (dummy)")
-        return _gen()
+        yield "Hello! (dummy)"
+        yield LLMResponse(model_id="dummy", type="llm_response", text="Hello! (dummy)")
 
 
 tb = LocalToolbox()
@@ -41,7 +39,9 @@ async def echo(message: str) -> str:
 async def main() -> None:  # noqa: D401
     custom_prompt = "You are a very friendly assistant that always says please and thank you."
 
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb, system_prompt=custom_prompt) as ai:
+    async with AsyncAIClient(
+        urls=[], providers=[DummyProvider()], local_toolbox=tb, system_prompt=custom_prompt
+    ) as ai:
         history: List[dict] = []
 
         # First illustrate that the system prompt was automatically injected
@@ -55,4 +55,4 @@ async def main() -> None:  # noqa: D401
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

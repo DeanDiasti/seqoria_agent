@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1 — 2026-10-18
+
+- Keep failed tool calls in chat history as `ToolCallError` events, isolate missing identity parameters to their own tool call, and check dependency cycles for single calls.
+- Preserve all text blocks in tool results and retain provider reasoning in chat messages. Deduplicate repeated schema aliases without changing their routes.
+- Reject invalid concurrency limits, timeouts, refresh intervals, and turn limits before starting work.
+- Close partial MCP startup, OAuth callback listeners, failed provider initialization, and cancelled HTTP streams. Fix the `connect_mcp()` context manager and HTTP pool shutdown races.
+- Run synchronous parameter callbacks off the event loop, preserve OAuth headers, and repair principal fallback and tool registration validation.
+- Repair empty-stream fallback and synchronous iterator cleanup during cancellation.
+- Preserve failed-tool feedback and call IDs in all provider converters, including serialized histories; keep MLX VLM media conversion from overwriting later tool feedback.
+- Accept tool errors and generator inputs in `ToolMessages`; validate list updates before applying them. Give basic messages valid role and usage defaults.
+- Copy mutable in-process cache values, reject lossy Redis serialization and negative TTLs, detach copied settings containers, and omit endpoint credentials from settings representations.
+- Include documentation and examples in source distributions so contributor instructions work from an extracted archive.
+- Repair example streaming stubs, close provider resources, preserve chatbot history, remove misleading remote identity/replay configuration, and provide offline manual-step and token-usage demos.
+
 ## 0.7.0 — 2026-10-18
 
 ### Breaking changes

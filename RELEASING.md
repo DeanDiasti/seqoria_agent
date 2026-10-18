@@ -1,7 +1,7 @@
 # Publishing Seqoria Agent
 
 The package name is `seqoria-agent`; consumers import `seqoria_agent`.
-Version 0.7.0 is a breaking alpha release. Nothing is published by editing the repository or building artifacts locally.
+The 0.7 series is alpha; 0.7.0 introduced breaking changes from 0.6. Version 0.7.1 repairs retained features. Nothing is published by editing the repository or building artifacts locally.
 
 ## Existing PyPI project setup
 
@@ -38,9 +38,9 @@ See the official PyPI guides for [new projects](https://docs.pypi.org/trusted-pu
 
    Use a fresh output directory for each build to avoid uploading old releases. Install the built wheel in a clean environment outside the checkout and import the core and HTTP providers. CI also checks this on Linux.
 
-4. Commit and push the reviewed code. Tag that commit with the matching version (`v0.7.0` for the prepared metadata), then push the tag when ready to publish.
+4. Commit and push the reviewed code. Tag that commit with the matching version (`v0.7.1` for the prepared metadata), then push the tag when ready to publish.
 5. The release workflow runs the test matrix and package checks, verifies the tag/version match, builds distributions, and publishes through the `pypi` environment. PyPI releases are immutable; fix a failed release by correcting the problem and choosing a new version if files have already been uploaded.
-6. Verify installation in a new environment with `pip install seqoria-agent==0.7.0`.
+6. Verify installation in a new environment with `pip install seqoria-agent==0.7.1`.
 
 ## Migrating from 0.6
 

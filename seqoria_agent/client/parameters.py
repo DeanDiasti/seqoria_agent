@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, Mapping, Optional, Union, Type
 import inspect
 import logging
+import asyncio
 from pydantic import BaseModel
 
 __all__: list[str] = ["ParamContext",
@@ -23,7 +24,7 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
     async def demo():
         async def get_user_id(tenant_id: str | None = None) -> str:
             return "u-42" if tenant_id == "acme" else "anonymous"
-   
+
         reg = ParameterRegistry({
             "tenant_id": "acme",
             "user_id": get_user_id,
@@ -34,7 +35,7 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
         assert await reg.resolve("missing", context=ctx) is None
     """
 
-    def __init__(self, 
+    def __init__(self,
                  mapping: Mapping[Union[str, Type[BaseModel]], ParameterSource]):
         """Create a new registry from *mapping*.
 
@@ -85,9 +86,9 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
 
         self._log = logging.getLogger(name="seqoria_agent.param_registry")
 
-    async def resolve(self, 
-                      name: str, 
-                      *, 
+    async def resolve(self,
+                      name: str,
+                      *,
                       context: ParamContext) -> Optional[Any]:  # noqa: D401
         """Return the resolved value for *name* or *None* when unresolved.
 
@@ -117,18 +118,22 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
             kw_params = self._kw_params.get(name, set())
             if kw_params is None:
                 # Callable accepts **kwargs: pass full context mapping.
-                result = source(**context)  # type: ignore[arg-type]
+                kwargs = dict(context)
             elif not kw_params:
                 # No kwargs expected (or signature unknown): call without kwargs.
-                result = source()  # type: ignore[misc]
+                kwargs = {}
             else:
                 # Pass only the subset of context keys the callable declares.
                 kwargs = {k: context[k] for k in kw_params if k in context}
-                result = source(**kwargs)  # type: ignore[arg-type]
+
+            if inspect.iscoroutinefunction(source):
+                result = source(**kwargs)
+            else:
+                result = await asyncio.to_thread(source, **kwargs)
 
             if inspect.isawaitable(object=result):  # covers coroutine & awaitable objects
                 return await result  # type: ignore[misc]
             return result
         except Exception as exc:  # noqa: BLE001 – user code must not crash core
             self._log.warning("Parameter '%s' failed to resolve: %s", name, exc)
-            return None 
+            return None

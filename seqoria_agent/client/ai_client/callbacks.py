@@ -1,8 +1,8 @@
 """Safe wrapper helpers for optional callbacks used by *AIClient*.
 
 External users of :class:`seqoria_agent.client.AIClient` can supply optional
-synchronous callbacks like ``on_display`` to intercept display envelopes or
-``on_error`` to observe structured error payloads.  Because these callbacks are
+synchronous callbacks like ``on_metadata`` to inspect tool metadata or
+``on_error`` to observe structured error payloads. Because these callbacks are
 **user code** they may raise exceptions – the helpers defined here encapsulate
 common safety patterns so that failures never propagate back into the core
 execution engine.

@@ -16,13 +16,14 @@ inside a ``[Thinking]`` block before the visible answer.
 
 Prerequisites
 -------------
-1. Set ``OPENROUTER_API_KEY`` in your environment (or a ``.env`` file).
+1. Set ``OPENROUTER_API_KEY`` in your environment.
 2. Python >= 3.12 with ``seqoria_agent`` installed (``pip install -e .[dev]``).
 
 Run with::
 
     python examples/providers/openrouter_agent.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,7 +31,6 @@ import datetime as _dt
 import os
 import random
 
-from dotenv import load_dotenv
 
 from seqoria_agent.client import AsyncAIClient
 from seqoria_agent.models.chunk import (
@@ -62,7 +62,9 @@ def random_number() -> int:
     return random.randint(0, 100)
 
 
-async def _stream_and_collect(ai: AsyncAIClient, history) -> AssistantMessage | ToolCallRequestList | None:
+async def _stream_and_collect(
+    ai: AsyncAIClient, history
+) -> AssistantMessage | ToolCallRequestList | None:
     """Stream one LLM turn, printing thinking + text tokens live.
 
     Returns the final ``AssistantMessage`` or ``ToolCallRequestList`` so the
@@ -122,7 +124,6 @@ async def _stream_and_collect(ai: AsyncAIClient, history) -> AssistantMessage | 
 
 
 async def main() -> None:
-    load_dotenv()
 
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
@@ -141,11 +142,14 @@ async def main() -> None:
     print(f"Connected to OpenRouter  |  model: {MODEL_ID}")
     print("Type a message to chat. Empty input or Ctrl-C exits.\n")
 
-    async with AsyncAIClient(
-        urls=[],
-        providers=[provider],
-        local_toolbox=box,
-    ) as ai:
+    async with (
+        provider,
+        AsyncAIClient(
+            urls=[],
+            providers=[provider],
+            local_toolbox=box,
+        ) as ai,
+    ):
         history = []
 
         MAX_ROUNDS = 10
@@ -161,6 +165,7 @@ async def main() -> None:
                 break
 
             from seqoria_agent.models.chunk import UserMessage
+
             history.append(UserMessage(role="user", content=user_query))
 
             for _ in range(5):

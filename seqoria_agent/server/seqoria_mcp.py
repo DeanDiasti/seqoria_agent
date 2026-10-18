@@ -177,6 +177,14 @@ class SeqoriaMCP(FastMCP):
         def decorator(fn: F) -> F:
             tool_name = name or fn.__name__
             tool_desc = description or (fn.__doc__ or "").strip().split("\n")[0]
+            parameters = inspect.signature(fn).parameters
+            unknown = set(server_populated_list) - set(parameters)
+            if unknown:
+                raise ValueError(
+                    f"Unknown server-populated parameters: {', '.join(sorted(unknown))}"
+                )
+            if any(p.kind == inspect.Parameter.POSITIONAL_ONLY for p in parameters.values()):
+                raise TypeError("Tool parameters must accept keyword arguments")
 
             # Store metadata
             self._tool_metadata[tool_name] = ToolMetadata(
@@ -321,7 +329,9 @@ class SeqoriaMCP(FastMCP):
         """
         # Try built-in parameters first
         if param_name == "principal":
-            return self._get_principal_from_context(ctx)
+            principal = self._get_principal_from_context(ctx)
+            if principal is not None:
+                return principal
 
         if param_name == "user_id":
             principal = self._get_principal_from_context(ctx)
@@ -334,7 +344,10 @@ class SeqoriaMCP(FastMCP):
         # Try custom providers
         for provider in self._param_providers:
             try:
-                result = provider(ctx, tool_name, param_name)
+                if inspect.iscoroutinefunction(provider):
+                    result = provider(ctx, tool_name, param_name)
+                else:
+                    result = await asyncio.to_thread(provider, ctx, tool_name, param_name)
                 if inspect.isawaitable(result):
                     result = await result
                 if result is not None:
@@ -358,7 +371,14 @@ class SeqoriaMCP(FastMCP):
         if hasattr(ctx, "request_context"):
             req_ctx = ctx.request_context
             if hasattr(req_ctx, "state"):
-                return getattr(req_ctx.state, "principal", None)
+                state = req_ctx.state
+                principal = (
+                    state.get("principal")
+                    if isinstance(state, dict)
+                    else getattr(state, "principal", None)
+                )
+                if principal is not None:
+                    return principal
             if hasattr(req_ctx, "principal"):
                 return req_ctx.principal
             if isinstance(req_ctx, dict):

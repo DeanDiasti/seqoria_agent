@@ -15,6 +15,7 @@ from seqoria_agent.models.chunk import (
     SystemMessage,
     ToolCallRequest,
     ToolCallResult,
+    ToolCallError,
     UserMessage,
 )
 from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
@@ -295,6 +296,7 @@ class _OpenAICompatibleProviderMixin:
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,
@@ -321,7 +323,7 @@ class _OpenAICompatibleProviderMixin:
                 )
                 continue
 
-            if isinstance(raw_msg, ToolCallResult):
+            if isinstance(raw_msg, (ToolCallResult, ToolCallError)):
                 prepared.append(
                     {
                         "role": "tool",
@@ -376,12 +378,12 @@ class _OpenAICompatibleProviderMixin:
                 )
                 continue
 
-            if role in {"tool_result", "tool"}:
+            if role in {"tool_result", "tool_error", "tool"}:
                 prepared.append(
                     {
                         "role": "tool",
                         "tool_call_id": str(raw_msg.get("tool_call_id", raw_msg.get("id", ""))),
-                        "content": str(raw_msg.get("result", raw_msg.get("content", ""))),
+                        "content": str(raw_msg.get("error", "") if role == "tool_error" else raw_msg.get("result", raw_msg.get("content", ""))),
                     }
                 )
                 continue
@@ -685,6 +687,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,
@@ -747,6 +750,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,
@@ -785,7 +789,7 @@ class AsyncOpenAICompatibleProvider(AsyncBaseProvider, _OpenAICompatibleProvider
                     except Exception:
                         pass
                 response.raise_for_status()
-            except Exception as e:
+            except BaseException as e:
                 await stream_ctx.__aexit__(type(e), e, e.__traceback__)
                 raise
             return stream_ctx, response
@@ -951,7 +955,12 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
         except Exception as e:
             raise ConnectionError(provider="OpenAI", message=str(e)) from e
 
-        self._validate_model_sync(self.client, self.model_id)
+        try:
+            self._validate_model_sync(self.client, self.model_id)
+        except BaseException:
+            # Construction failed, so no caller can close the owned client.
+            self.client.close()
+            raise
 
     def validate_model(self) -> None:
         """Validate that configured model exists for this endpoint."""
@@ -964,6 +973,7 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,
@@ -1026,6 +1036,7 @@ class OpenAICompatibleProvider(BaseProvider, _OpenAICompatibleProviderMixin):
                 Dict[str, Any],
                 ToolCallRequest,
                 ToolCallResult,
+                ToolCallError,
                 AssistantMessage,
                 UserMessage,
                 SystemMessage,

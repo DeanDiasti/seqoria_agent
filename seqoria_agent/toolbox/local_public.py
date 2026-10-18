@@ -171,13 +171,18 @@ class LocalToolbox:
         """Build the public argument schema and validator once at registration."""
         sig = inspect.signature(fn)
         hints = get_type_hints(fn, include_extras=True)
+        unknown = set(server_populated) - set(sig.parameters)
+        if unknown:
+            raise ValueError(f"Unknown server-populated parameters: {', '.join(sorted(unknown))}")
         fields = {}
         for name, param in sig.parameters.items():
+            if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+                raise TypeError("Tool parameters must accept keyword arguments")
             if name in server_populated or name == "self":
                 continue
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                 raise TypeError("Tool parameters must be explicitly named")
-            annotation = hints.get(name, str)
+            annotation = hints.get(name, Any)
             default = ... if param.default is inspect.Parameter.empty else param.default
             fields[name] = (annotation, default)
         return create_model(
@@ -270,7 +275,10 @@ class LocalToolbox:
             try:
                 # Call provider with (request, tool_name, param_name) signature
                 # For local toolbox, we pass None as request
-                result = provider(None, tool_name, param_name)
+                if inspect.iscoroutinefunction(provider):
+                    result = provider(None, tool_name, param_name)
+                else:
+                    result = await asyncio.to_thread(provider, None, tool_name, param_name)
                 if inspect.isawaitable(result):
                     result = await result
                 if result is not None:
