@@ -63,4 +63,12 @@ Explain the concrete problem, resulting behavior, compatibility impact, and vali
 
 Public APIs may change during alpha, but removals still need migration instructions. Configuration shared by a client must not become implicit per-user state. Keep identity and authorization in trusted application context, preserve tool call/result pairing, and make ownership of async resources explicit.
 
+## Repository maintenance
+
+Dependabot checks Python packages and pinned GitHub Actions weekly. Minor and patch version updates are grouped separately for runtime packages, contributor tools, and Actions. Major upgrades remain individual pull requests. Review API compatibility and changelog/migration needs before merging; a passing test suite alone does not establish that a new major dependency is supported. Security-fix pull requests and dependency vulnerability alerts are enabled in GitHub, separately from the routine version-update groups.
+
+`CODEOWNERS` routes changes to the maintainer. Protected `main` requires a pull request, up-to-date branches, and passing quality, package, documentation, dependency/secret, and cross-platform test checks. The solo-maintainer configuration requires no additional approval quorum. There is no automatic dependency merging. The existing issue forms, PR template, security policy, support guide, and code of conduct provide the contribution/reporting routes.
+
+GitHub release-note generation uses `.github/release.yml` to separate dependency, fix, documentation, and other changes. Maintainers should review generated notes against the curated changelog and follow [RELEASING.md](RELEASING.md) for publication.
+
 Contributions are provided under the repository's [Apache-2.0 license](LICENSE.txt). Do not include code or data you are not entitled to contribute. Maintainers handle release tags, trusted publishing, and repository visibility separately from merging contributions.

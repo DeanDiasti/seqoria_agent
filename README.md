@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
 Reuse `history` for another turn in the same conversation. The client appends the user message, paired tool calls/results, and final response. Providers belong to the application; close clients before closing their providers.
 
-For a checkout or extracted source distribution, run `python examples/quickstart/offline.py` after installing the package. It needs no API key or service. The [example catalog](examples/README.md) covers tools, conversation state, MCP, and provider setup.
+For a checkout or extracted source distribution, run `python examples/quickstart/offline.py` after installing the package. It needs no API key or service. The [example catalog](https://github.com/DeanDiasti/seqoria_agent/blob/main/examples/README.md) covers tools, conversation state, MCP, and provider setup.
 
 ## Choose a provider
 
@@ -98,12 +98,12 @@ Read the [documentation site](https://deandiasti.github.io/seqoria_agent/), or b
 
 ## Contribute and get help
 
-[CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the organized test suite, formatting, type checks, package validation, and pull requests. Tests use deterministic HTTP transports, in-memory MCP sessions, and a local subprocess; the default suite needs no hosted model or model downloads. CI covers Python 3.12/3.13 on Linux, macOS, and Windows.
+[CONTRIBUTING.md](https://github.com/DeanDiasti/seqoria_agent/blob/main/CONTRIBUTING.md) covers setup, the organized test suite, formatting, type checks, package validation, and pull requests. Tests use deterministic HTTP transports, in-memory MCP sessions, and a local subprocess; the default suite needs no hosted model or model downloads. CI covers Python 3.12/3.13 on Linux, macOS, and Windows.
 
-Use [GitHub issues](https://github.com/DeanDiasti/seqoria_agent/issues) for ordinary reports and follow [SECURITY.md](SECURITY.md) for vulnerabilities. See [SUPPORT.md](SUPPORT.md) and the [code of conduct](CODE_OF_CONDUCT.md). Keep sensitive reports out of public issues.
+Use [GitHub issues](https://github.com/DeanDiasti/seqoria_agent/issues) for ordinary reports and follow [SECURITY.md](https://github.com/DeanDiasti/seqoria_agent/blob/main/SECURITY.md) for vulnerabilities. See [SUPPORT.md](https://github.com/DeanDiasti/seqoria_agent/blob/main/SUPPORT.md) and the [code of conduct](https://github.com/DeanDiasti/seqoria_agent/blob/main/CODE_OF_CONDUCT.md). Keep sensitive reports out of public issues.
 
-Maintainer evidence is grouped under [release review](docs/maintainers/release-review.md) and [public alpha review](docs/maintainers/public-alpha.md), including the live integration checks and their limits. See [RELEASING.md](RELEASING.md) and [CHANGELOG.md](CHANGELOG.md) for release operations and history.
+Maintainer evidence is grouped under [release review](https://deandiasti.github.io/seqoria_agent/maintainers/release-review/) and [public alpha review](https://deandiasti.github.io/seqoria_agent/maintainers/public-alpha/), including the live integration checks and their limits. See [RELEASING.md](https://github.com/DeanDiasti/seqoria_agent/blob/main/RELEASING.md) and [CHANGELOG.md](https://github.com/DeanDiasti/seqoria_agent/blob/main/CHANGELOG.md) for release operations and history.
 
 ## License
 
-Apache-2.0. See [LICENSE.txt](LICENSE.txt).
+Apache-2.0. See [LICENSE.txt](https://github.com/DeanDiasti/seqoria_agent/blob/main/LICENSE.txt).

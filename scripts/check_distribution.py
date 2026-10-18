@@ -24,7 +24,8 @@ RETIRED = (
 
 
 def check(directory: Path) -> None:
-    expected = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+    project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+    expected = project["version"]
     wheels = list(directory.glob("*.whl"))
     sources = list(directory.glob("*.tar.gz"))
     assert len(wheels) == len(sources) == 1, "Use a clean build directory with one wheel and sdist"
@@ -36,6 +37,10 @@ def check(directory: Path) -> None:
         assert info["Version"] == expected
         assert info["License-Expression"] == "Apache-2.0"
         assert info["Requires-Python"] == ">=3.12"
+        assert (
+            dict(value.split(", ", 1) for value in info.get_all("Project-URL", []))
+            == project["urls"]
+        ), "Package project URLs differ from pyproject.toml"
         assert info.get_payload(decode=True).decode("utf-8") == Path("README.md").read_text(), (
             "README differs from package metadata"
         )
