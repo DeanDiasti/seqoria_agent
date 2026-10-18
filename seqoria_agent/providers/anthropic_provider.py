@@ -441,7 +441,7 @@ class _AnthropicProviderMixin:
                 continue
 
             if isinstance(message, (ToolCallResult, ToolCallError)):
-                result_content = message.result
+                result_content = message.error if isinstance(message, ToolCallError) else message.result
                 content_value = result_content if isinstance(result_content, str) else str(result_content)
 
                 prepared_chat_history.append(
@@ -672,48 +672,26 @@ class _AnthropicProviderMixin:
         return text, thinking, tool_calls, stop_reason, model_used, usage_obj
 
     @staticmethod
-    def _extract_model_ids_from_items(items: Any) -> List[str]:  # noqa: ANN401
-        """Extract model IDs from mixed dict/object collections."""
+    def _extract_model_ids_from_items(items: Any) -> List[str]:
+        """Extract model IDs from a JSON model listing."""
         if not isinstance(items, list):
             return []
-
-        ids: List[str] = []
-        for item in items:
-            model_id: Optional[str] = None
-            if isinstance(item, dict):
-                raw = item.get("id")
-                if raw:
-                    model_id = str(raw)
-            else:
-                raw = getattr(item, "id", None)
-                if raw:
-                    model_id = str(raw)
-
-            if model_id:
-                ids.append(model_id)
-        return ids
+        return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
 
     def _validate_model_sync(self, client: httpx.Client, model_id: str) -> None:
         """Validate requested model by calling `GET /v1/models`."""
         try:
-            available_models: List[str] = []
-
-            # Backward-compatible path used by unit tests that mock SDK style.
-            if hasattr(client, "models") and hasattr(client.models, "list") and callable(client.models.list):
-                models_response = client.models.list()
-                available_models = self._extract_model_ids_from_items(getattr(models_response, "data", []))
+            response = client.get("/v1/models")
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict):
+                raw_data = payload.get("data", [])
+                data: List[Any] = raw_data if isinstance(raw_data, list) else []
+            elif isinstance(payload, list):
+                data = payload
             else:
-                response = client.get("/v1/models")
-                response.raise_for_status()
-                payload = response.json()
-                if isinstance(payload, dict):
-                    raw_data = payload.get("data", [])
-                    data: List[Any] = raw_data if isinstance(raw_data, list) else []
-                elif isinstance(payload, list):
-                    data = payload
-                else:
-                    data = []
-                available_models = self._extract_model_ids_from_items(data)
+                data = []
+            available_models = self._extract_model_ids_from_items(data)
 
             if model_id not in available_models:
                 raise ModelNotFoundError(
@@ -729,24 +707,17 @@ class _AnthropicProviderMixin:
     async def _validate_model_async(self, async_client: httpx.AsyncClient, model_id: str) -> None:
         """Async variant of model validation with `GET /v1/models`."""
         try:
-            available_models: List[str] = []
-
-            # Backward-compatible path used by unit tests that mock SDK style.
-            if hasattr(async_client, "models") and hasattr(async_client.models, "list") and callable(async_client.models.list):
-                models_response = await async_client.models.list()
-                available_models = self._extract_model_ids_from_items(getattr(models_response, "data", []))
+            response = await async_client.get("/v1/models")
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict):
+                raw_data = payload.get("data", [])
+                data: List[Any] = raw_data if isinstance(raw_data, list) else []
+            elif isinstance(payload, list):
+                data = payload
             else:
-                response = await async_client.get("/v1/models")
-                response.raise_for_status()
-                payload = response.json()
-                if isinstance(payload, dict):
-                    raw_data = payload.get("data", [])
-                    data: List[Any] = raw_data if isinstance(raw_data, list) else []
-                elif isinstance(payload, list):
-                    data = payload
-                else:
-                    data = []
-                available_models = self._extract_model_ids_from_items(data)
+                data = []
+            available_models = self._extract_model_ids_from_items(data)
 
             if model_id not in available_models:
                 raise ModelNotFoundError(

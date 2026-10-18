@@ -338,7 +338,7 @@ class _OpenAIProviderMixin:
                     {
                         "type": "function_call_output",
                         "call_id": str(raw_msg.tool_call_id),
-                        "output": str(raw_msg.result),
+                        "output": str(raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result),
                     }
                 )
                 continue
@@ -532,49 +532,27 @@ class _OpenAIProviderMixin:
         )
 
     @staticmethod
-    def _extract_model_ids_from_items(items: Any) -> List[str]:  # noqa: ANN401
-        """Extract model IDs from mixed dict/object collections."""
+    def _extract_model_ids_from_items(items: Any) -> List[str]:
+        """Extract model IDs from a JSON model listing."""
         if not isinstance(items, list):
             return []
-
-        ids: List[str] = []
-        for item in items:
-            model_id: Optional[str] = None
-            if isinstance(item, dict):
-                raw = item.get("id")
-                if raw:
-                    model_id = str(raw)
-            else:
-                raw = getattr(item, "id", None)
-                if raw:
-                    model_id = str(raw)
-
-            if model_id:
-                ids.append(model_id)
-        return ids
+        return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
 
     def _validate_model_sync(self, client: httpx.Client, model_id: str) -> None:
         """Validate that the requested model is available via `/models`."""
         try:
-            available_models: List[str] = []
+            response = client.get("/models")
+            response.raise_for_status()
+            payload = response.json()
 
-            # Backward-compatible path used by unit tests that mock SDK style.
-            if hasattr(client, "models") and hasattr(client.models, "list") and callable(client.models.list):
-                models_response = client.models.list()
-                available_models = self._extract_model_ids_from_items(getattr(models_response, "data", []))
+            if isinstance(payload, dict):
+                data = payload.get("data", [])
+            elif isinstance(payload, list):
+                data = payload
             else:
-                response = client.get("/models")
-                response.raise_for_status()
-                payload = response.json()
+                data = []
 
-                if isinstance(payload, dict):
-                    data = payload.get("data", [])
-                elif isinstance(payload, list):
-                    data = payload
-                else:
-                    data = []
-
-                available_models = self._extract_model_ids_from_items(data)
+            available_models = self._extract_model_ids_from_items(data)
 
             if model_id not in available_models:
                 raise ModelNotFoundError(
@@ -588,25 +566,18 @@ class _OpenAIProviderMixin:
     async def _validate_model_async(self, async_client: httpx.AsyncClient, model_id: str) -> None:
         """Asynchronously validate that requested model is available via `/models`."""
         try:
-            available_models: List[str] = []
+            response = await async_client.get("/models")
+            response.raise_for_status()
+            payload = response.json()
 
-            # Backward-compatible path used by unit tests that mock SDK style.
-            if hasattr(async_client, "models") and hasattr(async_client.models, "list") and callable(async_client.models.list):
-                models_response = await async_client.models.list()
-                available_models = self._extract_model_ids_from_items(getattr(models_response, "data", []))
+            if isinstance(payload, dict):
+                data = payload.get("data", [])
+            elif isinstance(payload, list):
+                data = payload
             else:
-                response = await async_client.get("/models")
-                response.raise_for_status()
-                payload = response.json()
+                data = []
 
-                if isinstance(payload, dict):
-                    data = payload.get("data", [])
-                elif isinstance(payload, list):
-                    data = payload
-                else:
-                    data = []
-
-                available_models = self._extract_model_ids_from_items(data)
+            available_models = self._extract_model_ids_from_items(data)
 
             if model_id not in available_models:
                 raise ModelNotFoundError(

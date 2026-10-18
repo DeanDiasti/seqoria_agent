@@ -328,7 +328,7 @@ class _OpenAICompatibleProviderMixin:
                     {
                         "role": "tool",
                         "tool_call_id": str(raw_msg.tool_call_id),
-                        "content": str(raw_msg.result),
+                        "content": str(raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result),
                     }
                 )
                 continue

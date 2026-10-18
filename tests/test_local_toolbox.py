@@ -54,14 +54,7 @@ async def test_local_tool_with_server_params():
     def greet(name: str, user_id: str) -> str:
         return f"Hello {name}, user {user_id}!"
 
-    # Register a param provider
-    @tb.register_param_provider
-    def provide_user_id(request, tool_name, param_name):
-        if param_name == "user_id":
-            return "test-user-123"
-        return None
-
-    result = await tb.call_tool("greet", {"name": "Alice"})
+    result = await tb.call_tool("greet", {"name": "Alice"}, server_args={"user_id": "test-user-123"})
     assert "Hello Alice" in result[0].text
     assert "test-user-123" in result[0].text
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 — 2026-10-18
+
+- Keep remote identity resolution on the server instead of injecting client context from remote annotations.
+- Preserve structured-only MCP tool results as JSON text, including empty objects.
+- Validate and snapshot retry/breaker settings; start breaker cooldown at failure time rather than request start.
+- Close HTTP pools owned by low-level connection helpers on exit and startup failure; preserve caller-owned pools.
+- Reject unsupported OAuth configurations on SSE/stdio instead of silently ignoring them.
+- Require valid tool-message IDs, names, and result/error payloads; use independent argument defaults and clean up model documentation.
+- Remove MLX text/vision providers, exports, factory entries, extras, and the local inference example.
+- Consolidate hidden local parameter resolution on trusted request context and client `ParameterRegistry`; remove toolbox provider callbacks. Direct toolbox calls use explicit `server_args`.
+- Preserve complete tool output instead of auto-unwrapping `ai_message`/`metadata`; remove legacy XML/envelope helpers and the executor's metadata callback.
+- Remove SDK-style validation shims; test model discovery and Ollama pulls through real HTTPX transport paths.
+- Replace the `urls` alias with `mcp_servers` in constructors/settings; remove unused `ClientSettings.client_kwargs`, global HTTP pool helpers, no-op connection close, old ownership bookkeeping, and the `ConnectionPool` alias.
+- Remove the `ToolCallError.result` alias; provider converters read explicit error payloads. Document migration for all removed APIs.
+
 ## 0.8.0 — 2026-10-18
 
 ### Breaking changes

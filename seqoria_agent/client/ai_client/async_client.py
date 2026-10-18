@@ -102,8 +102,6 @@ class AsyncAIClient:
         *,
         # MCP server connections
         mcp_servers: Iterable[str | MCPServerConfig] | None = None,
-        # Legacy alias for mcp_servers
-        urls: Iterable[str] | None = None,
         # Local tools
         local_toolbox: LocalToolbox | list[LocalToolbox] | None = None,
         # Logging
@@ -126,7 +124,7 @@ class AsyncAIClient:
         settings: ClientSettings | None = None,
         # System prompt
         system_prompt: str | None = None,
-        **client_kwargs: Any,
+        **unknown_options: Any,
     ) -> None:
         if settings is None:
             settings = ClientSettings()
@@ -134,14 +132,8 @@ class AsyncAIClient:
         # Resolve settings with explicit overrides
         providers = settings.providers if providers is None else providers
 
-        # Merge mcp_servers and legacy urls
-        _servers: list[str | MCPServerConfig] = []
-        if mcp_servers is not None:
-            _servers.extend(mcp_servers)
-        elif urls is not None:
-            _servers.extend(urls)
-        elif settings.urls:
-            _servers.extend(settings.urls)
+        configured_servers = mcp_servers if mcp_servers is not None else settings.mcp_servers
+        _servers = list(configured_servers) if configured_servers is not None else []
 
         local_toolbox = local_toolbox if local_toolbox is not None else settings.local_toolbox
         logger = logger if logger is not None else settings.logger
@@ -162,14 +154,14 @@ class AsyncAIClient:
         param_registry = (
             param_registry
             if param_registry is not None
-            else getattr(settings, "param_registry", None)
+            else settings.param_registry
         )
         blocked_tools = (
-            blocked_tools if blocked_tools is not None else getattr(settings, "blocked_tools", ())
+            blocked_tools if blocked_tools is not None else settings.blocked_tools
         )
 
         allow_override = settings.allow_override if allow_override is None else allow_override
-        if client_kwargs or settings.client_kwargs:
+        if unknown_options:
             raise TypeError("Unknown client options; configure transports with MCPServerConfig")
 
         # Validate

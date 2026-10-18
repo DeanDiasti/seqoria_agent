@@ -68,7 +68,7 @@ async def main() -> None:
     server2 = "http://localhost:8005"
 
     provider = _OfflineStubProvider()
-    client = AsyncAIClient(urls=[], providers=[provider])
+    client = AsyncAIClient(mcp_servers=[], providers=[provider])
 
     async with client:
         print("Initial MCP servers:", _server_urls(client.list_mcp_servers()))

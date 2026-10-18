@@ -10,7 +10,7 @@ An async Python library for building assistants that call Python tools and remot
 - In-process tools with Pydantic argument validation, nested schemas, and hidden parameters supplied from trusted request context.
 - MCP client connections over Streamable HTTP, SSE, and stdio.
 - Parallel tool execution with shared concurrency limits, timeouts, dependency scheduling, and structured failure events.
-- OpenAI, Anthropic, Ollama, and OpenAI-compatible HTTP providers; optional MLX inference on Apple Silicon.
+- OpenAI, Anthropic, Ollama, and OpenAI-compatible HTTP providers.
 - Explicit conversation histories and provider fallback.
 
 ## Installation
@@ -27,9 +27,7 @@ Optional extras:
 | --- | --- |
 | `performance` | Optional JSON serialization and hashing accelerators |
 | `server` | FastAPI dependency for application integration |
-| `mlx-lm` | Local text inference on Apple Silicon |
-| `mlx-vlm` | Local vision inference on Apple Silicon |
-| `all` | All portable extras; MLX is installed separately |
+| `all` | All runtime extras |
 | `dev,docs` | Contributor and documentation tools |
 
 For example: `pip install 'seqoria-agent[server]'`.
@@ -92,8 +90,6 @@ Import provider classes from `seqoria_agent.providers`:
 | OpenAI-compatible endpoint | `AsyncOpenAICompatibleProvider` | Core |
 | Anthropic | `AsyncAnthropicProvider` | Core |
 | Ollama | `AsyncOllamaProvider` | Core; requires a running Ollama service |
-| MLX text | `AsyncMLXLMProvider` | `mlx-lm` extra; Apple Silicon |
-| MLX vision | `AsyncMLXVLMProvider` | `mlx-vlm` extra; Apple Silicon |
 
 Use `Async*Provider` classes with `AsyncAIClient`. Blocking scripts can use `AIClient` as a regular context manager with either sync or async providers; `chat_sync()` returns the final answer. Provider classes without the `Async` prefix are the synchronous variants.
 
@@ -194,6 +190,15 @@ Use `MCPServerConfig` for headers, timeouts, transport selection, stdio configur
 Seqoria Agent provides MCP client orchestration and `LocalToolbox` for in-process tools. Build and deploy remote servers separately with the official MCP SDK or another compatible implementation. The example servers under `examples/server-client/` use the official SDK directly.
 
 ## Migration
+
+### From 0.8 to 0.9
+
+- MLX providers and the `mlx-lm`/`mlx-vlm` extras are removed. For local inference, use Ollama or an OpenAI-compatible HTTP service.
+- Use `context` and `param_registry` with `AsyncAIClient` for hidden local parameters. `LocalToolbox.register_param_provider` is removed; direct toolbox calls supply trusted `server_args` explicitly.
+- Tool output stays intact: JSON keys such as `ai_message` and `metadata` are ordinary data. Interpret display metadata in your application. XML parsing helpers and the executor's `on_metadata` callback are removed.
+- Use `mcp_servers` in client constructors and `ClientSettings`; the `urls` alias and unused `ClientSettings.client_kwargs` field are removed. Configure transports with `MCPServerConfig`.
+- Use `ToolCallError.error` for failures and `ToolCallResult.result` for successes. The error's `result` alias is removed.
+- Use transport/pool context managers for resource ownership. The no-op `MCPConnection.close()`, global HTTP pool helpers, and `ConnectionPool` alias are removed; use `MCPConnectionPool`.
 
 ### From 0.7 to 0.8
 

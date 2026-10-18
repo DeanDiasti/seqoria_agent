@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -42,11 +43,17 @@ async def test_pool_remove_server_disconnects_and_prunes_tool_map():
     url = "http://example.com/mcp"
     fake_session = object()
 
-    # Simulate an active connection with a kept-alive context manager
-    cm = AsyncMock()
-    conn = _ActiveConnection(session=fake_session, url=url, transport_type="http", _context_manager=cm)
+    # Model the production connection owner: it exits in the same task.
+    stopped = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def owner():
+        await stopped.wait()
+        closed.set()
+
+    task = asyncio.create_task(owner())
+    conn = _ActiveConnection(session=fake_session, url=url, transport_type="http", _owner_task=task, _stop_event=stopped)
     pool._connections = [conn]
-    pool._context_managers = [cm]
     pool._session_to_url = {fake_session: url}  # type: ignore[assignment]
 
     # Simulate tool routing to that session
@@ -63,8 +70,8 @@ async def test_pool_remove_server_disconnects_and_prunes_tool_map():
 
     # Connection removed
     assert pool.connections == []
-    # Context manager closed (best-effort)
-    assert cm.__aexit__.called
+    assert closed.is_set()
+    assert task.done()
     # Tool map entries pointing to removed session are pruned
     assert "tool_a" not in pool._tool_map
     assert "tool_keep" in pool._tool_map

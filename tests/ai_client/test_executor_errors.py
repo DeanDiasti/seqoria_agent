@@ -28,7 +28,7 @@ async def test_executor_returns_tool_error_on_exception():
     def failing_tool():  # noqa: D401, ANN001 – intentional failure
         raise ValueError("boom")
 
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         tc = ToolCallRequest(id="fail1", name="failing_tool", arguments={})
 
         # Blocking helper ----------------------------------------------
@@ -60,7 +60,7 @@ async def test_executor_stream_mixed_success_and_failure():
     def bad_tool():  # noqa: D401, ANN001
         raise RuntimeError("nope")
 
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="ok_tool", arguments={}),
             ToolCallRequest(id="2", name="bad_tool", arguments={}),

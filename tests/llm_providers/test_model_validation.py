@@ -1,208 +1,66 @@
-"""Tests for model validation functionality in providers."""
+"""Exercise model validation through the providers' actual HTTP interface."""
 
+import httpx
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
-from seqoria_agent.providers.errors import ModelNotFoundError
-
-
-class TestOpenAIModelValidation:
-    """Tests for OpenAI model validation."""
-
-    def test_validate_model_sync_success(self):
-        """Model validation should pass when model exists."""
-        from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
-        
-        mixin = _OpenAIProviderMixin()
-        mixin.model_id = "gpt-4o"
-        
-        # Mock client with models list
-        mock_client = MagicMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "gpt-4o"
-        mock_model2 = MagicMock()
-        mock_model2.id = "gpt-3.5-turbo"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        # Should not raise
-        mixin._validate_model_sync(client=mock_client, model_id="gpt-4o")
-
-    def test_validate_model_sync_not_found(self):
-        """Model validation should raise ModelNotFoundError when model doesn't exist."""
-        from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
-        
-        mixin = _OpenAIProviderMixin()
-        mixin.model_id = "nonexistent-model"
-        
-        # Mock client with models list
-        mock_client = MagicMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "gpt-4o"
-        mock_model2 = MagicMock()
-        mock_model2.id = "gpt-3.5-turbo"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        with pytest.raises(ModelNotFoundError) as exc_info:
-            mixin._validate_model_sync(client=mock_client, model_id="nonexistent-model")
-        
-        error = exc_info.value
-        assert error.model_id == "nonexistent-model"
-        assert error.provider == "OpenAI"
-        assert "gpt-4o" in error.available_models
-        assert "gpt-3.5-turbo" in error.available_models
-
-    def test_validate_model_sync_error_message_includes_available_models(self):
-        """Error message should list all available models."""
-        from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
-        
-        mixin = _OpenAIProviderMixin()
-        mixin.model_id = "nonexistent-model"
-        
-        # Mock client with models list
-        mock_client = MagicMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "gpt-4o"
-        mock_model2 = MagicMock()
-        mock_model2.id = "gpt-3.5-turbo"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        with pytest.raises(ModelNotFoundError) as exc_info:
-            mixin._validate_model_sync(client=mock_client, model_id="nonexistent-model")
-        
-        error_message = str(exc_info.value)
-        assert "Available models:" in error_message
-        assert "gpt-4o" in error_message
-        assert "gpt-3.5-turbo" in error_message
-
-    @pytest.mark.asyncio
-    async def test_validate_model_async_success(self):
-        """Async model validation should pass when model exists."""
-        from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
-        
-        mixin = _OpenAIProviderMixin()
-        mixin.model_id = "gpt-4o"
-        
-        # Mock async client with models list
-        mock_client = AsyncMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "gpt-4o"
-        mock_model2 = MagicMock()
-        mock_model2.id = "gpt-3.5-turbo"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        # Should not raise
-        await mixin._validate_model_async(async_client=mock_client, model_id="gpt-4o")
-
-    @pytest.mark.asyncio
-    async def test_validate_model_async_not_found(self):
-        """Async model validation should raise ModelNotFoundError when model doesn't exist."""
-        from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
-        
-        mixin = _OpenAIProviderMixin()
-        mixin.model_id = "nonexistent-model"
-        
-        # Mock async client with models list
-        mock_client = AsyncMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "gpt-4o"
-        mock_model2 = MagicMock()
-        mock_model2.id = "gpt-3.5-turbo"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        with pytest.raises(ModelNotFoundError) as exc_info:
-            await mixin._validate_model_async(async_client=mock_client, model_id="nonexistent-model")
-        
-        error = exc_info.value
-        assert error.model_id == "nonexistent-model"
-        assert error.provider == "OpenAI"
+from seqoria_agent.providers.errors import ModelNotFoundError, QuotaExceededError
+from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
+from seqoria_agent.providers.anthropic_provider import _AnthropicProviderMixin
 
 
-class TestAnthropicModelValidation:
-    """Tests for Anthropic model validation."""
+CASES = [
+    (_OpenAIProviderMixin, "OpenAI", "/models"),
+    (_AnthropicProviderMixin, "Anthropic", "/v1/models"),
+]
 
-    def test_validate_model_sync_success(self):
-        """Model validation should pass when model exists."""
-        from seqoria_agent.providers.anthropic_provider import _AnthropicProviderMixin
-        
-        mixin = _AnthropicProviderMixin()
-        mixin.model_id = "claude-sonnet-4-20250514"
-        
-        # Mock client with models list
-        mock_client = MagicMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "claude-sonnet-4-20250514"
-        mock_model2 = MagicMock()
-        mock_model2.id = "claude-3-haiku-20240307"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        # Should not raise
-        mixin._validate_model_sync(client=mock_client, model_id="claude-sonnet-4-20250514")
 
-    def test_validate_model_sync_not_found(self):
-        """Model validation should raise ModelNotFoundError when model doesn't exist."""
-        from seqoria_agent.providers.anthropic_provider import _AnthropicProviderMixin
-        
-        mixin = _AnthropicProviderMixin()
-        mixin.model_id = "nonexistent-model"
-        
-        # Mock client with models list
-        mock_client = MagicMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "claude-sonnet-4-20250514"
-        mock_model2 = MagicMock()
-        mock_model2.id = "claude-3-haiku-20240307"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        with pytest.raises(ModelNotFoundError) as exc_info:
-            mixin._validate_model_sync(client=mock_client, model_id="nonexistent-model")
-        
-        error = exc_info.value
-        assert error.model_id == "nonexistent-model"
-        assert error.provider == "Anthropic"
-        assert "claude-sonnet-4-20250514" in error.available_models
-        assert "claude-3-haiku-20240307" in error.available_models
+def model_listing(request, *, endpoint, status):
+    assert request.method == "GET"
+    assert request.url.path == endpoint
+    return httpx.Response(status, json={"data": [{"id": "model-a"}, {"id": "model-b"}]})
 
-    @pytest.mark.asyncio
-    async def test_validate_model_async_success(self):
-        """Async model validation should pass when model exists."""
-        from seqoria_agent.providers.anthropic_provider import _AnthropicProviderMixin
-        
-        mixin = _AnthropicProviderMixin()
-        mixin.model_id = "claude-sonnet-4-20250514"
-        
-        # Mock async client with models list
-        mock_client = AsyncMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "claude-sonnet-4-20250514"
-        mock_model2 = MagicMock()
-        mock_model2.id = "claude-3-haiku-20240307"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        # Should not raise
-        await mixin._validate_model_async(async_client=mock_client, model_id="claude-sonnet-4-20250514")
 
-    @pytest.mark.asyncio
-    async def test_validate_model_async_not_found(self):
-        """Async model validation should raise ModelNotFoundError when model doesn't exist."""
-        from seqoria_agent.providers.anthropic_provider import _AnthropicProviderMixin
-        
-        mixin = _AnthropicProviderMixin()
-        mixin.model_id = "nonexistent-model"
-        
-        # Mock async client with models list
-        mock_client = AsyncMock()
-        mock_model1 = MagicMock()
-        mock_model1.id = "claude-sonnet-4-20250514"
-        mock_model2 = MagicMock()
-        mock_model2.id = "claude-3-haiku-20240307"
-        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
-        
-        with pytest.raises(ModelNotFoundError) as exc_info:
-            await mixin._validate_model_async(async_client=mock_client, model_id="nonexistent-model")
-        
-        error = exc_info.value
-        assert error.model_id == "nonexistent-model"
-        assert error.provider == "Anthropic"
+def assert_missing(error, provider):
+    assert error.model_id == "missing"
+    assert error.provider == provider
+    assert error.available_models == ["model-a", "model-b"]
+    assert "Available models:" in str(error)
+    assert "model-a" in str(error) and "model-b" in str(error)
+
+
+@pytest.mark.parametrize("mixin_type,provider,endpoint", CASES)
+@pytest.mark.parametrize("model,status", [("model-a", 200), ("missing", 200), ("model-a", 429)])
+def test_validate_model_http_sync(mixin_type, provider, endpoint, model, status):
+    transport = httpx.MockTransport(lambda request: model_listing(request, endpoint=endpoint, status=status))
+    with httpx.Client(base_url="https://provider.test", transport=transport) as client:
+        mixin = mixin_type()
+        if status == 429:
+            with pytest.raises(QuotaExceededError):
+                mixin._validate_model_sync(client, model)
+        elif model == "missing":
+            with pytest.raises(ModelNotFoundError) as exc:
+                mixin._validate_model_sync(client, model)
+            assert_missing(exc.value, provider)
+        else:
+            mixin._validate_model_sync(client, model)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mixin_type,provider,endpoint", CASES)
+@pytest.mark.parametrize("model,status", [("model-a", 200), ("missing", 200), ("model-a", 429)])
+async def test_validate_model_http_async(mixin_type, provider, endpoint, model, status):
+    transport = httpx.MockTransport(lambda request: model_listing(request, endpoint=endpoint, status=status))
+    async with httpx.AsyncClient(base_url="https://provider.test", transport=transport) as client:
+        mixin = mixin_type()
+        if status == 429:
+            with pytest.raises(QuotaExceededError):
+                await mixin._validate_model_async(client, model)
+        elif model == "missing":
+            with pytest.raises(ModelNotFoundError) as exc:
+                await mixin._validate_model_async(client, model)
+            assert_missing(exc.value, provider)
+        else:
+            await mixin._validate_model_async(client, model)
 
 
 class TestModelNotFoundErrorMessage:

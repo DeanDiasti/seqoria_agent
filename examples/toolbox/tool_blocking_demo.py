@@ -76,7 +76,7 @@ async def main() -> None:
     provider = _OfflineStubProvider()
 
     async with AsyncAIClient(
-        urls=[],
+        mcp_servers=[],
         providers=[provider],
         local_toolbox=toolbox,
         blocked_tools=["beta"],  # block one by default

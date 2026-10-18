@@ -2,7 +2,7 @@
 
 import pytest
 import base64
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch
 
 from seqoria_agent.providers.errors import (
     InvalidRequestError,
@@ -172,122 +172,6 @@ class TestOllamaProviderInit:
             )
             
             assert auto_pull is False
-
-
-class TestOllamaModelValidation:
-    """Tests for Ollama model validation with auto-pull."""
-
-    def test_validate_model_found(self):
-        """Model validation should pass when model exists."""
-        from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
-        
-        mixin = _OllamaProviderMixin()
-        mixin.model_id = "gemma3"
-        
-        mock_client = MagicMock()
-        mock_client.list.return_value = {
-            "models": [
-                {"name": "gemma3:latest"},
-                {"name": "llama3.2:latest"}
-            ]
-        }
-        
-        # Should not raise
-        mixin._validate_model_sync(mock_client, "gemma3", auto_pull=True)
-
-    def test_validate_model_found_with_tag(self):
-        """Model validation should work with model:tag format."""
-        from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
-        
-        mixin = _OllamaProviderMixin()
-        mixin.model_id = "gemma3:latest"
-        
-        mock_client = MagicMock()
-        mock_client.list.return_value = {
-            "models": [{"name": "gemma3:latest"}]
-        }
-        
-        # Should not raise
-        mixin._validate_model_sync(mock_client, "gemma3:latest", auto_pull=True)
-
-    def test_validate_model_not_found_auto_pull_success(self):
-        """Model should be pulled automatically when not found."""
-        from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
-        
-        mixin = _OllamaProviderMixin()
-        mixin.model_id = "new-model"
-        
-        mock_client = MagicMock()
-        mock_client.list.return_value = {"models": []}
-        mock_client.pull.return_value = iter([{"status": "success"}])
-        
-        # Should not raise - pull succeeds
-        mixin._validate_model_sync(mock_client, "new-model", auto_pull=True)
-        mock_client.pull.assert_called_once_with("new-model", stream=True)
-
-    def test_validate_model_not_found_auto_pull_fails(self):
-        """ModelNotFoundError should be raised when pull fails."""
-        from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
-        
-        mixin = _OllamaProviderMixin()
-        mixin.model_id = "nonexistent-model"
-        
-        mock_client = MagicMock()
-        mock_client.list.return_value = {"models": [{"name": "gemma3:latest"}]}
-        mock_client.pull.side_effect = Exception("Pull failed")
-        
-        with pytest.raises(ModelNotFoundError) as exc_info:
-            mixin._validate_model_sync(mock_client, "nonexistent-model", auto_pull=True)
-        
-        error = exc_info.value
-        assert error.model_id == "nonexistent-model"
-        assert error.provider == "Ollama"
-        assert "gemma3:latest" in error.available_models
-
-    def test_validate_model_not_found_auto_pull_disabled(self):
-        """ModelNotFoundError should be raised immediately when auto_pull is False."""
-        from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
-        
-        mixin = _OllamaProviderMixin()
-        mixin.model_id = "missing-model"
-        
-        mock_client = MagicMock()
-        mock_client.list.return_value = {"models": [{"name": "gemma3:latest"}]}
-        
-        with pytest.raises(ModelNotFoundError) as exc_info:
-            mixin._validate_model_sync(mock_client, "missing-model", auto_pull=False)
-        
-        # pull should not be called
-        mock_client.pull.assert_not_called()
-        assert "gemma3:latest" in exc_info.value.available_models
-
-    @pytest.mark.asyncio
-    async def test_validate_model_async_found(self):
-        """Async model validation should pass when model exists."""
-        from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
-        
-        mixin = _OllamaProviderMixin()
-        mixin.model_id = "gemma3"
-        
-        mock_client = AsyncMock()
-        mock_client.list.return_value = {"models": [{"name": "gemma3:latest"}]}
-        
-        await mixin._validate_model_async(mock_client, "gemma3", auto_pull=True)
-
-    @pytest.mark.asyncio
-    async def test_validate_model_async_not_found(self):
-        """Async model validation should raise ModelNotFoundError when not found."""
-        from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
-        
-        mixin = _OllamaProviderMixin()
-        mixin.model_id = "nonexistent"
-        
-        mock_client = AsyncMock()
-        mock_client.list.return_value = {"models": []}
-        mock_client.pull.side_effect = Exception("Pull failed")
-        
-        with pytest.raises(ModelNotFoundError):
-            await mixin._validate_model_async(mock_client, "nonexistent", auto_pull=True)
 
 
 class TestOllamaImageConversion:

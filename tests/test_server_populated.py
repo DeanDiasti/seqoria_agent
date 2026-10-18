@@ -10,15 +10,6 @@ def local_toolbox():
     """Create LocalToolbox with server-populated params."""
     tb = LocalToolbox()
 
-    # Register param provider
-    @tb.register_param_provider
-    def provide_params(request, tool_name: str, param_name: str):
-        if param_name == "user_id":
-            return "local_user_456"
-        if param_name == "tenant_id":
-            return "tenant_abc"
-        return None
-
     # Tool with single server-populated param
     @tb.tool(server_populated=["user_id"])
     def greet(name: str, user_id: str) -> str:
@@ -35,7 +26,7 @@ def local_toolbox():
 @pytest.mark.asyncio
 async def test_local_toolbox_injection(local_toolbox):
     """Verify LocalToolbox injects server-populated params."""
-    result = await local_toolbox.call_tool("greet", {"name": "Alice"})
+    result = await local_toolbox.call_tool("greet", {"name": "Alice"}, server_args={"user_id": "local_user_456"})
     text = result[0].text
     assert "Hi Alice" in text
     assert "local_user_456" in text
@@ -44,7 +35,7 @@ async def test_local_toolbox_injection(local_toolbox):
 @pytest.mark.asyncio
 async def test_local_toolbox_multiple_params(local_toolbox):
     """Verify multiple server-populated params are injected."""
-    result = await local_toolbox.call_tool("info", {})
+    result = await local_toolbox.call_tool("info", {}, server_args={"user_id": "local_user_456", "tenant_id": "tenant_abc"})
     text = result[0].text
     assert "local_user_456" in text
     assert "tenant_abc" in text
@@ -52,7 +43,7 @@ async def test_local_toolbox_multiple_params(local_toolbox):
 
 @pytest.mark.asyncio
 async def test_local_toolbox_server_args(local_toolbox):
-    """Verify server_args can override param providers."""
+    """Verify server_args supplies trusted values."""
     result = await local_toolbox.call_tool(
         "greet",
         {"name": "Bob"},

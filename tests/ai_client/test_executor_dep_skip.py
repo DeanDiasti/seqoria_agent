@@ -48,7 +48,7 @@ async def test_dep_skip_basic():
     def ok_tool():  # noqa: D401
         return "ok"
 
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="fail_tool", arguments={}),
             ToolCallRequest(id="2", name="ok_tool", arguments={}),
@@ -85,7 +85,7 @@ async def test_dep_skip_duplicates():
     def dep_tool():  # noqa: D401
         return "dep ok"
 
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="flaky_tool", arguments={"val": 0}),
             ToolCallRequest(id="2", name="flaky_tool", arguments={"val": 1}),
@@ -126,7 +126,7 @@ async def test_dep_skip_transitive():
     def dep_c():  # noqa: D401
         return "c"
 
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb) as client:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=tb) as client:
         calls = [
             ToolCallRequest(id="1", name="fail_a", arguments={}),
             ToolCallRequest(id="2", name="dep_b", arguments={}),

@@ -165,8 +165,7 @@ async def test_oauth_loopback_listener_closes_without_a_callback(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["registry", "local"])
-async def test_sync_parameter_providers_run_off_loop_with_request_context(kind):
+async def test_sync_parameter_providers_run_off_loop_with_request_context():
     request_identity = ContextVar("identity", default="missing")
     token = request_identity.set("authenticated-tenant")
     event_loop_thread = get_ident()
@@ -177,18 +176,8 @@ async def test_sync_parameter_providers_run_off_loop_with_request_context(kind):
         return request_identity.get()
 
     try:
-        if kind == "registry":
-            registry = ParameterRegistry({"tenant": provider})
-            result = await registry.resolve("tenant", context={})
-        else:
-            tools = LocalToolbox()
-            tools.register_param_provider(provider)
-
-            @tools.tool(server_populated=["tenant"])
-            async def identify(tenant: str) -> str:
-                return tenant
-
-            result = (await tools.call_tool("identify", {}))[0].text
+        registry = ParameterRegistry({"tenant": provider})
+        result = await registry.resolve("tenant", context={})
         assert result == "authenticated-tenant"
         assert calls == [(calls[0][0], "authenticated-tenant")]
         assert calls[0][0] != event_loop_thread

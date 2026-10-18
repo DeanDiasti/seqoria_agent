@@ -292,13 +292,10 @@ class ToolRegistry:
         self._tool_map[public_name] = source
         self._source_names[public_name] = base_name
 
-        # Parse annotations
+        # Remote identity belongs to the authenticated server. Never resolve
+        # its server_populated annotation using the client's local context.
         annotations = getattr(tool, "annotations", None)
         if annotations:
-            sp_raw = self._get_annotation_field(annotations, "server_populated")
-            if sp_raw:
-                self._server_params[public_name] = tuple(sp_raw)
-
             dep_raw = self._get_annotation_field(annotations, "depends_on")
             if dep_raw:
                 mapped = {base_to_primary_alias.get(d, d) for d in dep_raw}

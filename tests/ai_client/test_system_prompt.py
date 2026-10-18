@@ -21,7 +21,7 @@ class DummyProvider(AsyncBaseProvider):
 @pytest.mark.asyncio
 async def test_default_system_prompt_inserted():
     history: list[dict] = []
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=None) as ai:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=None) as ai:
         await ai.llm_generate_once(history=history, use_tools=False)
         assert history[0]["role"] == "system"
         # The prompt should be non-empty
@@ -32,7 +32,7 @@ async def test_default_system_prompt_inserted():
 async def test_custom_system_prompt():
     custom = "You are a unit-test assistant."
     history: list[dict] = []
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=None, system_prompt=custom) as ai:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=None, system_prompt=custom) as ai:
         await ai.llm_generate_once(history=history, use_tools=False)
         assert history[0]["content"] == custom
 
@@ -41,7 +41,7 @@ async def test_custom_system_prompt():
 async def test_existing_system_prompt_not_duplicated():
     existing = {"role": "system", "content": "Pre inserted"}
     history = [existing]
-    async with AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=None) as ai:
+    async with AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=None) as ai:
         await ai.llm_generate_once(history=history, use_tools=False)
         # Still single system prompt
         assert history[0] is existing

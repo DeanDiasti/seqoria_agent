@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Self
 
@@ -33,8 +35,9 @@ from seqoria_agent.client.mcp_transport import (
 )
 from seqoria_agent.toolbox import LocalToolbox
 from seqoria_agent.models.errors import CircuitOpenError, ToolRemoteError
+from seqoria_agent.client.ai_client.utils import json_dumps
 
-__all__ = ["MCPConnectionPool", "ConnectionPool"]
+__all__ = ["MCPConnectionPool"]
 
 
 @dataclass
@@ -44,7 +47,6 @@ class _ActiveConnection:
     session: ClientSession
     url: str
     transport_type: TransportType
-    _context_manager: Any = field(default=None, repr=False)
     _owner_task: asyncio.Task | None = field(default=None, repr=False)
     _stop_event: asyncio.Event | None = field(default=None, repr=False)
 
@@ -106,16 +108,37 @@ class MCPConnectionPool:
         self._lock: asyncio.Lock = asyncio.Lock()
         self._started: bool = False
         self._connections: List[_ActiveConnection] = []
-        self._context_managers: List[Any] = []  # Keep context managers alive
 
         # Shared HTTP client pool for connection reuse
         self._http_client_pool: Optional[HTTPClientPool] = http_client_pool
         self._owns_http_pool: bool = False  # Track if we created the pool
 
         # Resilience configuration
-        self._retry_policy: Dict[str, Any] = retry_policy or {}
-        self._breaker_threshold: int = int(breaker_threshold)
-        self._breaker_reset_after: int = int(breaker_reset_after)
+        if retry_policy is not None and not isinstance(retry_policy, Mapping):
+            raise TypeError("retry_policy must be a mapping")
+        self._retry_policy: Dict[str, Any] = dict(retry_policy or {})
+        unknown = set(self._retry_policy) - {"max_attempts", "backoff_base"}
+        if unknown:
+            raise ValueError(f"Unknown retry options: {', '.join(sorted(map(str, unknown)))}")
+        for option, value in (
+            ("max_attempts", self._retry_policy.get("max_attempts", 1)),
+            ("breaker_threshold", breaker_threshold),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{option} must be a positive integer")
+        for option, value in (
+            ("backoff_base", self._retry_policy.get("backoff_base", 0.5)),
+            ("breaker_reset_after", breaker_reset_after),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ValueError(f"{option} must be nonnegative and finite")
+        self._breaker_threshold: int = breaker_threshold
+        self._breaker_reset_after: float = float(breaker_reset_after)
         self._fail_log: Dict[str, int] = {}
         self._breaker_until: Dict[str, float] = {}
 
@@ -272,17 +295,6 @@ class MCPConnectionPool:
                         continue
 
                     await self._close_connection(conn)
-                    cm = getattr(conn, "_context_manager", None)
-                    if cm is not None:
-                        try:
-                            await cm.__aexit__(None, None, None)
-                        except Exception:
-                            pass
-                        try:
-                            self._context_managers.remove(cm)
-                        except ValueError:
-                            pass
-
                     self._session_to_url.pop(conn.session, None)
                     self._prune_tool_map_for_session(conn.session)
 
@@ -304,15 +316,7 @@ class MCPConnectionPool:
         async with self._lock:
             for conn in self._connections:
                 await self._close_connection(conn)
-            # Legacy/test context managers without an owner task.
-            for cm in self._context_managers:
-                try:
-                    await cm.__aexit__(None, None, None)
-                except Exception:
-                    pass
-
             self._connections.clear()
-            self._context_managers.clear()
             self._session_to_url.clear()
             self._tool_map.clear()
             self._tool_names.clear()
@@ -422,7 +426,9 @@ class MCPConnectionPool:
                 if attempt >= max_attempts:
                     # Trip breaker if threshold met
                     if self._fail_log[server_url] >= self._breaker_threshold:
-                        self._breaker_until[server_url] = now + self._breaker_reset_after
+                        self._breaker_until[server_url] = (
+                            time.monotonic() + self._breaker_reset_after
+                        )
                         self._logger.warning("Circuit breaker tripped for %s", server_url)
                     raise exc
 
@@ -447,6 +453,9 @@ class MCPConnectionPool:
                 else:
                     contents.append(_TextItem(text=str(item)))
 
+        structured = getattr(result, "structuredContent", None)
+        if not contents and isinstance(structured, dict):
+            contents.append(_TextItem(text=json_dumps(structured)))
         if not contents:
             contents.append(_TextItem(text="Tool executed successfully."))
 
@@ -500,7 +509,3 @@ class MCPConnectionPool:
             if conn.url == url:
                 return conn.session
         return None
-
-
-# Backwards compatibility alias
-ConnectionPool = MCPConnectionPool

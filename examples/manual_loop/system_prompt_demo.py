@@ -40,7 +40,7 @@ async def main() -> None:  # noqa: D401
     custom_prompt = "You are a very friendly assistant that always says please and thank you."
 
     async with AsyncAIClient(
-        urls=[], providers=[DummyProvider()], local_toolbox=tb, system_prompt=custom_prompt
+        mcp_servers=[], providers=[DummyProvider()], local_toolbox=tb, system_prompt=custom_prompt
     ) as ai:
         history: List[dict] = []
 

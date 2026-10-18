@@ -1,7 +1,7 @@
 # Publishing Seqoria Agent
 
 The package name is `seqoria-agent`; consumers import `seqoria_agent`.
-Version 0.8.0 is an alpha release with breaking removals of the server wrapper and tool-result caching. Nothing is published by editing the repository or building artifacts locally.
+Version 0.9.0 is an alpha release that removes MLX adapters, consolidates parameter resolution, and retires legacy tool envelopes and compatibility APIs. Nothing is published by editing the repository or building artifacts locally.
 
 ## Existing PyPI project setup
 
@@ -38,9 +38,15 @@ See the official PyPI guides for [new projects](https://docs.pypi.org/trusted-pu
 
    Use a fresh output directory for each build to avoid uploading old releases. Install the built wheel in a clean environment outside the checkout and import the core and HTTP providers. CI also checks this on Linux.
 
-4. Commit and push the reviewed code. Tag that commit with the matching version (`v0.8.0` for the prepared metadata), then push the tag when ready to publish.
+4. Commit and push the reviewed code. Tag that commit with the matching version (`v0.9.0` for the prepared metadata), then push the tag when ready to publish.
 5. The release workflow runs the test matrix and package checks, verifies the tag/version match, builds distributions, and publishes through the `pypi` environment. PyPI releases are immutable; fix a failed release by correcting the problem and choosing a new version if files have already been uploaded.
-6. Verify installation in a new environment with `pip install seqoria-agent==0.8.0`.
+6. Verify installation in a new environment with `pip install seqoria-agent==0.9.0`.
+
+## Migrating from 0.8 to 0.9
+
+Version 0.9.0 removes MLX adapters and extras, toolbox parameter-provider callbacks, XML helpers, automatic `ai_message`/`metadata` envelopes, and the executor's `on_metadata` callback. Use HTTP providers, request `context` and `ParameterRegistry`, and application-owned display interpretation. Direct toolbox calls pass resolved hidden fields in `server_args`.
+
+Replace `urls` with `mcp_servers` in constructors and `ClientSettings`. Remove `ClientSettings.client_kwargs`; use `MCPServerConfig` for transport options. Read `ToolCallError.error` instead of its removed `result` alias. Use `MCPConnectionPool` instead of `ConnectionPool`. Enter transport/pool context managers and close explicitly owned HTTP pools; `MCPConnection.close()` and `HTTPClientPool.get_shared()`/`close_shared()` are removed. Provider internals accept HTTPX clients only, with no vendor-SDK validation shims.
 
 ## Migrating from 0.7 to 0.8
 

@@ -92,9 +92,6 @@ class LocalToolbox:
         # Tool registry
         self._tools: Dict[str, ToolInfo] = {}
 
-        # Parameter providers for server-populated params
-        self._param_providers: List[Callable[..., Any]] = []
-
     def tool(
         self,
         name: str | None = None,
@@ -205,7 +202,9 @@ class LocalToolbox:
         arguments : dict | None
             Arguments from the caller/LLM.
         server_args : dict | None
-            Server-populated arguments.
+            Trusted hidden arguments supplied by the application. Direct calls
+            must provide these explicitly; AIClient resolves them using request
+            context and ParameterRegistry.
 
         Returns
         -------
@@ -240,13 +239,6 @@ class LocalToolbox:
         # Merge server_args into arguments
         arguments.update(server_args)
 
-        # Resolve missing server-populated params via providers
-        for param in info.server_params:
-            if param not in arguments:
-                value = await self._resolve_param(name, param)
-                if value is not None:
-                    arguments[param] = value
-
         # Check all server-populated params are resolved
         missing = [p for p in info.server_params if p not in arguments]
         if missing:
@@ -265,39 +257,17 @@ class LocalToolbox:
             arguments = {key: getattr(validated, key) for key in type(validated).model_fields}
             arguments.update(hidden)
         result = await info.func(**arguments)
-        text = self._format_result(name, result)
+        text = self._format_result(result)
 
         return [SimpleNamespace(text=text)]
 
-    async def _resolve_param(self, tool_name: str, param_name: str) -> Any | None:
-        """Resolve a server-populated parameter via providers."""
-        for provider in self._param_providers:
-            try:
-                # Call provider with (request, tool_name, param_name) signature
-                # For local toolbox, we pass None as request
-                if inspect.iscoroutinefunction(provider):
-                    result = provider(None, tool_name, param_name)
-                else:
-                    result = await asyncio.to_thread(provider, None, tool_name, param_name)
-                if inspect.isawaitable(result):
-                    result = await result
-                if result is not None:
-                    return result
-            except Exception:
-                continue
-        return None
-
-    def _format_result(self, tool_name: str, result: Any) -> str:
+    def _format_result(self, result: Any) -> str:
         """Format tool result as string."""
         if isinstance(result, str):
             content = result
         else:
             content = json.dumps(result, indent=2, default=str)
         return content
-
-    def _format_error(self, tool_name: str, exc: Exception) -> str:
-        """Format tool error as string."""
-        return f"Error in {tool_name}: {exc}"
 
     def list_tools(self) -> List[SimpleNamespace]:
         """List all registered tools with their metadata.
@@ -324,25 +294,6 @@ class LocalToolbox:
                 )
             )
         return items
-
-    def register_param_provider(self, fn: Callable[..., Any]) -> Callable[..., Any]:
-        """Register a parameter provider for server-populated parameters.
-
-        The provider is called with (request, tool_name, param_name) and should
-        return the value or None if it cannot provide the parameter.
-
-        Parameters
-        ----------
-        fn : Callable
-            Provider function.
-
-        Returns
-        -------
-        Callable
-            The same function (allows use as decorator).
-        """
-        self._param_providers.append(fn)
-        return fn
 
     def get_tool_info(self, name: str) -> ToolInfo | None:
         """Get metadata for a specific tool."""

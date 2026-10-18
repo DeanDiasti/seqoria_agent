@@ -53,7 +53,7 @@ async def test_chat_llm_only_returns_assistant_message():
     """When no tools are available the chat loop should yield a single AssistantMessage."""
 
     provider = _LLMOnlyStub()
-    ai = AsyncAIClient(urls=[], providers=[provider])
+    ai = AsyncAIClient(mcp_servers=[], providers=[provider])
 
     async with ai as client:
         # Collect all yielded messages from the async generator
@@ -77,7 +77,7 @@ async def test_chat_with_tool_call_executes_and_returns_tool_messages():
         return "42"
 
     provider = _ToolCallingStub()
-    ai = AsyncAIClient(urls=[], providers=[provider], local_toolbox=toolbox)
+    ai = AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=toolbox)
 
     async with ai as client:
         msgs = [m async for m in client.chat(user_query="what is foo?", history=[])]
@@ -119,7 +119,7 @@ async def test_executor_run_calls_returns_history_entries():
         return "42"
 
     provider = _LLMOnlyStub()
-    ai = AsyncAIClient(urls=[], providers=[provider], local_toolbox=toolbox)
+    ai = AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=toolbox)
 
     tc = ToolCallRequest(id="1", name="foo", arguments={})
 

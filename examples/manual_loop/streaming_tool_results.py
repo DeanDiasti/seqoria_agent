@@ -45,7 +45,7 @@ async def random_int():
 async def main() -> None:  # noqa: D401 – simple demo
     async with (
         AsyncOpenAIProvider(api_key=os.getenv("OPENAI_API_KEY")) as provider,
-        AsyncAIClient(urls=[], providers=[provider], local_toolbox=tb) as ai,
+        AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=tb) as ai,
     ):
         tool_calls: List[ToolCallRequest] = [
             ToolCallRequest(id="1", name="slow_timestamp", arguments={}),

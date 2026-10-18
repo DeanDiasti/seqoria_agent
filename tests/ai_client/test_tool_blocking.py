@@ -46,7 +46,7 @@ async def test_blocked_tool_not_listed_and_not_exposed_to_provider():
 
     provider = _ToolPickingStub()
 
-    async with AsyncAIClient(urls=[], providers=[provider], local_toolbox=tb, blocked_tools=["foo"]) as client:
+    async with AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=tb, blocked_tools=["foo"]) as client:
         # Registry tool list should exclude blocked tool
         names = [t["function"]["name"] for t in client.list_tools()]
         assert "foo" not in names
@@ -75,7 +75,7 @@ async def test_block_tools_runtime_then_refresh_hides_tool():
 
     provider = _ToolPickingStub()
 
-    async with AsyncAIClient(urls=[], providers=[provider], local_toolbox=tb) as client:
+    async with AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=tb) as client:
         names_before = [t["function"]["name"] for t in client.list_tools()]
         assert "foo" in names_before and "bar" in names_before
 

@@ -25,8 +25,8 @@ import hashlib
 import shlex
 import webbrowser
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Awaitable, Callable, ClassVar, Dict, Literal, Optional
+from dataclasses import dataclass
+from typing import AsyncIterator, Awaitable, Callable, Dict, Literal
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -112,7 +112,8 @@ class OAuthConfig:
     redirect_handler : callable | None
         Custom handler for opening the auth URL. Defaults to webbrowser.open.
     callback_handler : callable | None
-        Custom handler for receiving the callback. Defaults to CLI prompt.
+        Custom handler for receiving the callback. Automatic redirects use a
+        loopback listener; explicit redirect URIs default to a CLI prompt.
     """
 
     client_name: str = "Seqoria Agent"
@@ -260,7 +261,7 @@ class HTTPClientPool:
     This pool maintains one AsyncClient per unique (host, port) combination,
     enabling HTTP connection reuse (keep-alive) across multiple MCP requests.
 
-    Thread-safe via asyncio.Lock.
+    Use within one event loop; access is serialized with asyncio.Lock.
 
     Example
     -------
@@ -269,9 +270,6 @@ class HTTPClientPool:
     >>> response = await client.get("https://api.example.com/health")
     >>> await pool.close()  # Cleanup when done
     """
-
-    _instance: ClassVar[Optional["HTTPClientPool"]] = None
-    _lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     def __init__(
         self,
@@ -303,22 +301,6 @@ class HTTPClientPool:
             max_keepalive_connections=max_keepalive_connections,
         )
         self._closed = False
-
-    @classmethod
-    async def get_shared(cls) -> "HTTPClientPool":
-        """Get or create the shared singleton instance."""
-        async with cls._lock:
-            if cls._instance is None or cls._instance._closed:
-                cls._instance = cls()
-            return cls._instance
-
-    @classmethod
-    async def close_shared(cls) -> None:
-        """Close the shared singleton instance."""
-        async with cls._lock:
-            if cls._instance is not None:
-                await cls._instance.close()
-                cls._instance = None
 
     def _headers_fingerprint(self, headers: Dict[str, str] | None) -> str:
         """Return a stable fingerprint for headers without retaining raw values.
@@ -419,7 +401,7 @@ class MCPServerConfig:
     env : dict[str, str] | None
         Environment variables for stdio subprocess.
     oauth : OAuthConfig | bool | None
-        OAuth configuration for protected servers.
+        OAuth configuration for Streamable HTTP servers (not SSE or stdio).
         - None or False: No OAuth (use headers for auth if needed)
         - True: Enable OAuth with default settings
         - OAuthConfig: Enable OAuth with custom settings
@@ -435,7 +417,7 @@ class MCPServerConfig:
 
 @dataclass
 class MCPConnection:
-    """Wrapper for an active MCP session with its transport context.
+    """Session details valid within the transport factory context manager.
 
     Attributes
     ----------
@@ -450,15 +432,6 @@ class MCPConnection:
     session: ClientSession
     url: str
     transport_type: TransportType
-    _cleanup: Any = field(default=None, repr=False)
-
-    async def close(self) -> None:
-        """Close the connection and cleanup resources."""
-        if self._cleanup is not None:
-            try:
-                await self._cleanup.__aexit__(None, None, None)
-            except Exception:
-                pass
 
 
 class MCPTransportFactory:
@@ -515,7 +488,7 @@ class MCPTransportFactory:
             Either a URL string or full MCPServerConfig.
         client_pool : HTTPClientPool | None
             Optional shared HTTP client pool for connection reuse.
-            If None, uses the global shared pool for HTTP transports.
+            If None, the HTTP connection owns and closes its own pool.
 
         Yields
         ------
@@ -530,6 +503,9 @@ class MCPTransportFactory:
         transport_type = config.transport
         if transport_type == "auto":
             transport_type = MCPTransportFactory.detect_transport(config.url)
+
+        if config.oauth and transport_type != "http":
+            raise ValueError("OAuth is supported only for Streamable HTTP connections")
 
         # Create appropriate transport
         if transport_type == "http":
@@ -558,7 +534,7 @@ class MCPTransportFactory:
         config : MCPServerConfig
             Server configuration.
         client_pool : HTTPClientPool | None
-            Optional shared client pool. If None, uses the global shared pool.
+            Optional shared client pool. If None, this connection owns its pool.
         """
         url = config.url
         # Normalize URL to include /mcp if not present
@@ -572,24 +548,25 @@ class MCPTransportFactory:
                 yield conn
             return
 
-        # Non-OAuth path: use shared client pool for connection reuse
-        if client_pool is None:
-            client_pool = await HTTPClientPool.get_shared()
+        async with AsyncExitStack() as stack:
+            if client_pool is None:
+                client_pool = HTTPClientPool()
+                stack.push_async_callback(client_pool.close)
 
-        http_client = await client_pool.get_client(
-            url,
-            headers=config.headers,
-            timeout=config.timeout,
-        )
+            http_client = await client_pool.get_client(
+                url,
+                headers=config.headers,
+                timeout=config.timeout,
+            )
 
-        async with streamable_http_client(url, http_client=http_client) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield MCPConnection(
-                    session=session,
-                    url=config.url,
-                    transport_type="http",
-                )
+            async with streamable_http_client(url, http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield MCPConnection(
+                        session=session,
+                        url=config.url,
+                        transport_type="http",
+                    )
 
     @staticmethod
     @asynccontextmanager

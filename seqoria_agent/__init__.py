@@ -25,12 +25,8 @@ if TYPE_CHECKING:
     from seqoria_agent.providers import (  # noqa: F401
         AnthropicProvider,
         AsyncAnthropicProvider,
-        AsyncMLXLMProvider,
-        AsyncMLXVLMProvider,
         AsyncOllamaProvider,
         AsyncOpenAIProvider,
-        MLXLMProvider,
-        MLXVLMProvider,
         OllamaProvider,
         OpenAIProvider,
     )
@@ -41,25 +37,21 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _LAZY_EXPORTS: set[str] = {
-    # Providers (optional deps)
+    # HTTP providers
     "AsyncOpenAIProvider",
     "OpenAIProvider",
     "AsyncAnthropicProvider",
     "AnthropicProvider",
     "AsyncOllamaProvider",
     "OllamaProvider",
-    "AsyncMLXLMProvider",
-    "MLXLMProvider",
-    "AsyncMLXVLMProvider",
-    "MLXVLMProvider",
 }
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy re-export of optional provider classes.
+    """Lazy re-export of provider classes.
 
     This keeps `from seqoria_agent import AsyncAIClient` lightweight while still
-    supporting `from seqoria_agent import OpenAIProvider` when the extra is installed.
+    supporting `from seqoria_agent import OpenAIProvider`.
     """
     if name in _LAZY_EXPORTS:
         from seqoria_agent import providers as _providers
@@ -80,15 +72,11 @@ __all__ = [
     # Base providers
     "AsyncBaseProvider",
     "BaseProvider",
-    # Optional providers (lazy)
+    # Providers (lazy)
     "AsyncOpenAIProvider",
     "OpenAIProvider",
     "AsyncAnthropicProvider",
     "AnthropicProvider",
     "AsyncOllamaProvider",
     "OllamaProvider",
-    "AsyncMLXLMProvider",
-    "MLXLMProvider",
-    "AsyncMLXVLMProvider",
-    "MLXVLMProvider",
 ]

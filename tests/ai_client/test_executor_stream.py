@@ -28,7 +28,7 @@ class DummyProvider(AsyncBaseProvider):
 
 def _build_client(tb: LocalToolbox) -> AsyncAIClient:
     """Helper to build an AsyncAIClient instance with *tb* registered."""
-    return AsyncAIClient(urls=[], providers=[DummyProvider()], local_toolbox=tb)
+    return AsyncAIClient(mcp_servers=[], providers=[DummyProvider()], local_toolbox=tb)
 
 
 @pytest.mark.asyncio

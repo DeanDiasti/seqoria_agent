@@ -11,14 +11,9 @@ from typing import Any, Dict, List, Optional, Set, Union, AsyncIterator, Tuple, 
 
 from seqoria_agent.client.ai_client.connection_pool import MCPConnectionPool
 from seqoria_agent.client.ai_client.tool_registry import ToolRegistry
-from seqoria_agent.client.ai_client.callbacks import (
-    on_error as _on_error_cb,
-    on_metadata as _on_metadata_cb,
-)
-from seqoria_agent.client.ai_client.utils import json_loads
+from seqoria_agent.client.ai_client.callbacks import on_error as _on_error_cb
 from seqoria_agent.client.parameters import ParameterRegistry, ParameterSource, ParamContext
 from seqoria_agent.models.errors import DependencyError
-from seqoria_agent.client.ai_client.consts_runtime import AI_MESSAGE_KEY
 from seqoria_agent.models.chunk import (
     ToolCallResult,
     ToolCallError,
@@ -40,7 +35,6 @@ class Executor:
         param_registry: Optional[Union[Mapping[str, ParameterSource], ParameterRegistry]] = None,
         allow_override: bool = False,
         on_error=None,
-        on_metadata=None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         # Core collaborators --------------------------------------------------
@@ -67,7 +61,6 @@ class Executor:
 
         # Callbacks -----------------------------------------------------------
         self._on_error = on_error
-        self._on_metadata = on_metadata
 
         # Logger --------------------------------------------------------------
         self._logger = logger or logging.getLogger(name="seqoria_agent.executor")
@@ -191,7 +184,7 @@ class Executor:
                     failed_names.add(name)
 
     # ----------------------------------------------------------------------
-    # Backwards-compatibility wrapper – accumulate results into a list
+    # Collect results in request order
     # ----------------------------------------------------------------------
     async def run_calls(
         self,
@@ -292,23 +285,6 @@ class Executor:
             else "Tool executed successfully with no textual output."
         )
 
-        # Display envelope & structured metadata extraction ----------------
-        metadata_block: Optional[dict[str, Any]] = None
-
-        if isinstance(raw_output, str):
-            # Try JSON wrapper first
-            # Guard against exception-heavy parsing when output is clearly not a JSON envelope.
-            if AI_MESSAGE_KEY in raw_output:
-                stripped = raw_output.lstrip()
-                if stripped.startswith("{"):
-                    try:
-                        tmp = json_loads(raw_output)
-                        if isinstance(tmp, dict) and AI_MESSAGE_KEY in tmp:
-                            metadata_block = tmp.get("metadata", {})
-                            raw_output = tmp.get(AI_MESSAGE_KEY, "")
-                    except Exception:  # noqa: BLE001
-                        pass
-
         history_entry = ToolCallResult(
             tool_call_id=tool_call.id,
             role="tool_result",
@@ -316,10 +292,6 @@ class Executor:
             type="tool_use",
             result=raw_output,
         )
-
-        # Callback – metadata --------------------------------------------------
-        if metadata_block is not None:
-            _on_metadata_cb(meta=metadata_block, cb=self._on_metadata)
 
         return history_entry
 

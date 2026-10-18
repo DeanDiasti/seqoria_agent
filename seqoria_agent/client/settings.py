@@ -5,8 +5,7 @@ from __future__ import annotations
 The :class:`ClientSettings` dataclass groups the most commonly adjusted runtime
 configuration values for :class:`seqoria_agent.client.AIClient` and
 :class:`seqoria_agent.client.AsyncAIClient`.  Supplying a pre-constructed
-settings object keeps application code tidy when many knobs need tweaking
-while **not** breaking the existing constructor signature.
+settings object groups reusable defaults for application startup.
 
 Explicit keyword arguments passed to :class:`AIClient` or :class:`AsyncAIClient`
 continue to take precedence over the values held in a :class:`ClientSettings`
@@ -18,6 +17,7 @@ from typing import Any, Iterable, List, Mapping, Union
 import logging
 
 from seqoria_agent.toolbox import LocalToolbox
+from seqoria_agent.client.mcp_transport import MCPServerConfig
 from seqoria_agent.providers.base_provider import AsyncBaseProvider, BaseProvider
 from seqoria_agent.client.parameters import ParameterSource, ParameterRegistry
 
@@ -28,7 +28,7 @@ __all__: list[str] = ["ClientSettings"]
 class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
     # Core ------------------------------------------------------------------
     providers: List[Union[AsyncBaseProvider, BaseProvider]] = field(default_factory=list)
-    urls: Iterable[str] | None = None
+    mcp_servers: Iterable[str | MCPServerConfig] | None = None
     local_toolbox: LocalToolbox | list[LocalToolbox] | None = None
     logger: logging.Logger | None = None
 
@@ -49,9 +49,6 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
     # Stored as an immutable tuple to keep `ClientSettings.copy()` safe (shallow copy).
     blocked_tools: tuple[str, ...] = ()
 
-    # Transport customisation ----------------------------------------------
-    client_kwargs: dict[str, Any] = field(default_factory=dict)
-
     # ----------------------------------------------------------------------
     # Convenience helpers
     # ----------------------------------------------------------------------
@@ -67,11 +64,10 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
 
         result = copy.copy(self)
         result.providers = list(self.providers)
-        result.client_kwargs = dict(self.client_kwargs)
         if self.retry_policy is not None:
             result.retry_policy = dict(self.retry_policy)
-        if isinstance(self.urls, list):
-            result.urls = list(self.urls)
+        if isinstance(self.mcp_servers, list):
+            result.mcp_servers = list(self.mcp_servers)
         if isinstance(self.local_toolbox, list):
             result.local_toolbox = list(self.local_toolbox)
         return result
@@ -80,7 +76,7 @@ class ClientSettings:  # noqa: D101 – succinct due to dataclass auto-doc
     def __repr__(self) -> str:  # noqa: D401
         cls = self.__class__.__name__
         return (
-            f"{cls}(urls={'configured' if self.urls is not None else 'None'}, "
+            f"{cls}(mcp_servers={'configured' if self.mcp_servers is not None else 'None'}, "
             f"providers={len(self.providers)} providers,"
             f" refresh_interval={self.refresh_interval})"
         )

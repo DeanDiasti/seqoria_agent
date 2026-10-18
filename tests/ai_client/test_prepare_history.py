@@ -30,7 +30,7 @@ class StubProvider(AsyncBaseProvider):
 async def test_tools_enabled_toggle():  # noqa: D401
     provider = StubProvider()
     # No tools (LLM-only)
-    ai = AsyncAIClient(urls=[], providers=[provider])
+    ai = AsyncAIClient(mcp_servers=[], providers=[provider])
     async with ai as client:
         assert client.tools_enabled() is False
 
@@ -41,6 +41,6 @@ async def test_tools_enabled_toggle():  # noqa: D401
     def foo():  # noqa: D401, ANN001
         return 1
 
-    ai2 = AsyncAIClient(urls=[], providers=[provider], local_toolbox=box)
+    ai2 = AsyncAIClient(mcp_servers=[], providers=[provider], local_toolbox=box)
     async with ai2 as client:
         assert client.tools_enabled() is True 

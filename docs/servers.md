@@ -16,7 +16,7 @@ server = MCPServerConfig(
 
 A bare HTTP origin is expanded to `/mcp`; explicit endpoint paths are preserved. `MCPServerConfig` also accepts headers, transport selection, subprocess environment, and OAuth configuration. Enter `async with client:` before listing or calling remote tools. The client owns its sessions and closes them on exit.
 
-The default interactive OAuth browser/loopback flow is for local scripts. A web service must supply its own user authorization flow and handlers. Remote MCP servers must authenticate callers, enforce authorization, and resolve any hidden identity parameters themselves. Local `server_args` are not transmitted to remote tools. Use separate client/session lifespans for remote connections authenticated as different end users.
+OAuth is supported for Streamable HTTP only; configuring it on SSE or stdio raises an error. The default interactive OAuth browser/loopback flow is for local scripts. A web service must supply its own user authorization flow and handlers. Remote MCP servers must authenticate callers, enforce authorization, and resolve any hidden identity parameters themselves. Local `server_args` are not transmitted to remote tools. Use separate client/session lifespans for remote connections authenticated as different end users.
 
 The library no longer ships `SeqoriaMCP`, `seqoria_agent.server`, or `XMCPError`. For local Python functions, use `LocalToolbox` and pass trusted per-request context to the executor. For remote hosting, use the official MCP SDK or another compatible server implementation. The standalone example servers in `examples/server-client/server1.py` and `server2.py` use the official SDK directly.
 

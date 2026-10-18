@@ -161,8 +161,6 @@ class AIClient:
         *,
         # MCP server connections
         mcp_servers: Iterable[str | MCPServerConfig] | None = None,
-        # Legacy alias for mcp_servers
-        urls: Iterable[str] | None = None,
         # Local tools
         local_toolbox: LocalToolbox | list[LocalToolbox] | None = None,
         # Logging
@@ -183,7 +181,7 @@ class AIClient:
         settings: ClientSettings | None = None,
         # System prompt
         system_prompt: str | None = None,
-        **client_kwargs: Any,
+        **unknown_options: Any,
     ) -> None:
         # Convert sync providers to async providers if needed
         async_providers: List[AsyncBaseProvider] = []
@@ -205,7 +203,6 @@ class AIClient:
         self._async_client = AsyncAIClient(
             providers=async_providers or None,
             mcp_servers=mcp_servers,
-            urls=urls,
             local_toolbox=local_toolbox,
             logger=logger,
             refresh_interval=refresh_interval,
@@ -218,7 +215,7 @@ class AIClient:
             allow_override=allow_override,
             settings=settings,
             system_prompt=system_prompt,
-            **client_kwargs,
+            **unknown_options,
         )
 
         # Track if we're in context manager

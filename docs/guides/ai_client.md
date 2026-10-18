@@ -24,7 +24,38 @@ elif isinstance(response, AssistantMessage):
 
 The single-step helpers append an explicitly supplied user message but leave response recording to the caller. Repeat the step until an assistant response is returned, with your own round limit. `llm_stream_once()` is the streaming equivalent.
 
-Tool failures, including missing server-populated identity parameters, return `ToolCallError` alongside successful `ToolCallResult` events. Inspect the result type to distinguish them. Missing identity previously raised `RuntimeError`; it now fails only that call, lets independent tools finish, and skips its declared dependents. `ToolMessages` accepts both successes and failures, and both can be serialized into history.
+Tool failures, including missing server-populated identity parameters, return `ToolCallError` alongside successful `ToolCallResult` events. Inspect the result type to distinguish them. Missing identity fails only that call, lets independent tools finish, and skips its declared dependents. `ToolMessages` accepts both successes and failures, and both can be serialized into history.
+
+## Hidden local parameters
+
+Declare hidden local arguments with `@tools.tool(server_populated=["user_id"])`. The model does not see those fields. Pass authenticated values in `context` on each tool-executing request, or configure a `ParameterRegistry` once:
+
+```python
+from seqoria_agent.client.parameters import ParameterRegistry
+
+async def user_id(principal):
+    return principal.user_id
+
+parameters = ParameterRegistry({"user_id": user_id})
+# Set param_registry=parameters when constructing the client.
+results = await client.run_tool_calls(calls, context={"principal": principal})
+```
+
+Request context takes precedence over registry sources. Registry values can be literals or sync/async callables; a callable receives matching context keys as keyword arguments. Sync callbacks run in worker threads. Missing values and callback failures fail that tool call without running it. Model-supplied hidden values are discarded by default; do not enable `allow_override` for identity or authorization fields.
+
+There is one resolver in the client; toolbox callback registration is removed. A direct toolbox call supplies resolved, trusted values explicitly:
+
+```python
+result = await tools.call_tool("account_summary", {}, server_args={"user_id": principal.user_id})
+```
+
+`call_mcp_tool()` also accepts explicit local `server_args` and bypasses registry resolution. Use `run_tool_calls()` when you need request context and registry sources. Remote MCP servers resolve their own authenticated identity; local `server_args` are never transmitted remotely.
+
+## Tool output
+
+String results pass through as text. Local non-string results are JSON serialized; all MCP text blocks are joined in order, and structured-only MCP results become JSON text. JSON fields named `ai_message` or `metadata` and XML-looking strings have no special meaning. Interpret any application-specific envelope yourself after receiving the complete result.
+
+Failures are explicit `ToolCallError` events with an `error` payload. Successes are `ToolCallResult` events with a `result` payload. MCP image/audio/resource content is not exposed as a typed multimodal result in this text-oriented tool loop.
 
 ## Concurrency and cancellation
 
@@ -41,3 +72,7 @@ Provider fallback occurs before output is emitted. A failed stream after its fir
 Prefer explicit `MCPServerConfig` values for transport settings. Unknown client keyword options are rejected. Tool blocklists and dynamic server changes are client-wide configuration, so do not use them as per-request permissions on a shared client. Schema aliases route to the original tool name; use unique tool names when integrating several servers to avoid ambiguity.
 
 Tool-result caching is not part of the current API. Every requested call executes, including repeated calls with identical arguments. Remove old `cache` and `cache_ttl` options; caching policies belong in application tools or services.
+
+Manual `ToolCallRequest` instances require a nonempty `id` and `name`; omitted arguments default to `{}`. Results and errors require a nonempty `tool_call_id` and an explicit result/error payload. This prevents incomplete messages from entering provider histories.
+
+Remote MCP identity annotations are not used for client-side parameter injection. A structured-only MCP result is converted to JSON text for the model. OAuth configuration is supported only for Streamable HTTP connections. Retry options are validated when the client is constructed, and circuit-breaker cooldown begins when the failure occurs.

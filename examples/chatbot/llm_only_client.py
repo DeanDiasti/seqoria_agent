@@ -6,7 +6,7 @@ from seqoria_agent.models.chunk import AssistantMessage, ToolMessages
 
 async def main() -> None:
     provider = AsyncOllamaProvider(model_id="gpt-oss:20b")
-    async with provider, AsyncAIClient(urls=[], providers=[provider]) as ai:
+    async with provider, AsyncAIClient(mcp_servers=[], providers=[provider]) as ai:
         history = []
         while True:
             user_query = input("You:\n")

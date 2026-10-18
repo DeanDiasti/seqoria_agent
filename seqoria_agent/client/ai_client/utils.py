@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from contextlib import asynccontextmanager
-from typing import Any, Optional
-
-# Phase 9 constant extraction
-from seqoria_agent.client.ai_client.consts_runtime import XML_ERROR_TAG  # noqa: F401
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # High-performance JSON utilities with fallback
@@ -107,7 +103,7 @@ def fast_hash(data: str | bytes) -> str:
     Returns
     -------
     str
-        Hexadecimal hash string (16 chars for xxhash, 8 for SHA-1).
+        Hexadecimal hash string (16 characters).
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -119,53 +115,8 @@ def fast_hash(data: str | bytes) -> str:
 
 
 __all__: list[str] = [
-    "null_async_cm",
-    "extract_error_from_xml",
     "json_dumps",
     "json_loads",
     "json_impl_name",
     "fast_hash",
 ]
-
-
-@asynccontextmanager
-async def null_async_cm():
-    """A no-op async context-manager used as a drop-in when no semaphore is set."""
-    yield
-
-
-def extract_error_from_xml(xml_str: str) -> Optional[dict[str, Any]]:  # noqa: D401
-    """Parse *xml_str* for a `<error>` element.
-
-    Returns a structured dict with keys ``code``, ``retryable``, ``detail`` and
-    optional ``meta``.  If the input contains no error element or is malformed
-    XML, ``None`` is returned.
-    """
-    # Fast check to avoid the heavier XML parser when there's clearly no error tag
-    if f"<{XML_ERROR_TAG}" not in xml_str:
-        return None
-
-    try:
-        # Lazy import: XML parsing is relatively rare compared to JSON handling.
-        import xml.etree.ElementTree as ET
-
-        root = ET.fromstring(text=xml_str.strip())
-        error_el = root.find(path=XML_ERROR_TAG)
-        if error_el is None:
-            return None
-
-        code = error_el.attrib.get("code", "UNKNOWN")
-        retryable = error_el.attrib.get("retryable", "false").lower() == "true"
-        detail_text = (error_el.text or "").strip()
-
-        meta_node = error_el.find(path="meta")
-        meta: Any | None = None
-        if meta_node is not None and meta_node.text:
-            try:
-                meta = json_loads(meta_node.text)
-            except Exception:
-                meta = meta_node.text.strip()
-
-        return {"code": code, "retryable": retryable, "detail": detail_text, "meta": meta}
-    except Exception:
-        return None

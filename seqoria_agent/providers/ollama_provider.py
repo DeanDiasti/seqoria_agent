@@ -293,7 +293,7 @@ class _OllamaProviderMixin:
             if isinstance(raw_msg, (ToolCallResult, ToolCallError)):
                 prepared_messages.append({
                     "role": "tool",
-                    "content": str(raw_msg.result),
+                    "content": str(raw_msg.error if isinstance(raw_msg, ToolCallError) else raw_msg.result),
                     "tool_call_id": str(raw_msg.tool_call_id),
                     "tool_name": raw_msg.name or "",
                 })
@@ -472,40 +472,9 @@ class _OllamaProviderMixin:
                         names.append(name)
         return names
 
-    def _validate_model_sync(self, client: Any, model_id: str, auto_pull: bool = True) -> None:  # noqa: ANN401
+    def _validate_model_sync(self, client: httpx.Client, model_id: str, auto_pull: bool = True) -> None:
         """Validate that model is available, with optional auto-pull."""
         try:
-            # Legacy SDK compatibility path used by tests and external callers.
-            if hasattr(client, "list") and callable(client.list):
-                response = client.list()
-                models = response.get("models", []) if isinstance(response, dict) else []
-                full_model_names = [m.get("name", "") for m in models if isinstance(m, dict)]
-                available_model_names = [n.split(":")[0] for n in full_model_names]
-
-                model_base = model_id.split(":")[0]
-                if model_id in full_model_names or model_base in available_model_names:
-                    return
-
-                if auto_pull:
-                    try:
-                        if hasattr(client, "pull") and callable(client.pull):
-                            for _ in client.pull(model_id, stream=True):
-                                pass
-                            return
-                    except Exception as pull_error:
-                        raise ModelNotFoundError(
-                            model_id=model_id,
-                            provider="Ollama",
-                            available_models=full_model_names,
-                        ) from pull_error
-
-                raise ModelNotFoundError(
-                    model_id=model_id,
-                    provider="Ollama",
-                    available_models=full_model_names,
-                )
-
-            # HTTPX path for migrated provider.
             tags_resp = client.get("/api/tags")
             tags_resp.raise_for_status()
             tags_payload = tags_resp.json()
@@ -550,40 +519,9 @@ class _OllamaProviderMixin:
         except Exception as e:
             raise self._handle_error(e)
 
-    async def _validate_model_async(self, client: Any, model_id: str, auto_pull: bool = True) -> None:  # noqa: ANN401
+    async def _validate_model_async(self, client: httpx.AsyncClient, model_id: str, auto_pull: bool = True) -> None:
         """Async model validation with optional auto-pull."""
         try:
-            # Legacy SDK compatibility path used by tests and external callers.
-            if hasattr(client, "list") and callable(client.list):
-                response = await client.list()
-                models = response.get("models", []) if isinstance(response, dict) else []
-                full_model_names = [m.get("name", "") for m in models if isinstance(m, dict)]
-                available_model_names = [n.split(":")[0] for n in full_model_names]
-
-                model_base = model_id.split(":")[0]
-                if model_id in full_model_names or model_base in available_model_names:
-                    return
-
-                if auto_pull:
-                    try:
-                        if hasattr(client, "pull") and callable(client.pull):
-                            async for _ in await client.pull(model_id, stream=True):
-                                pass
-                            return
-                    except Exception as pull_error:
-                        raise ModelNotFoundError(
-                            model_id=model_id,
-                            provider="Ollama",
-                            available_models=full_model_names,
-                        ) from pull_error
-
-                raise ModelNotFoundError(
-                    model_id=model_id,
-                    provider="Ollama",
-                    available_models=full_model_names,
-                )
-
-            # HTTPX path for migrated provider.
             tags_resp = await client.get("/api/tags")
             tags_resp.raise_for_status()
             tags_payload = tags_resp.json()

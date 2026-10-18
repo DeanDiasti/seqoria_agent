@@ -49,15 +49,15 @@ def test_settings_copy_detaches_configuration_containers():
 
     toolbox = LocalToolbox()
     settings = ClientSettings(
-        urls=["https://example.invalid/mcp?secret=credential"],
+        mcp_servers=["https://example.invalid/mcp?secret=credential"],
         local_toolbox=[toolbox],
         retry_policy={"max_attempts": 2},
     )
     copied = settings.copy()
-    copied.urls.clear()
+    copied.mcp_servers.clear()
     copied.local_toolbox.clear()
     copied.retry_policy["max_attempts"] = 3
-    assert settings.urls == ["https://example.invalid/mcp?secret=credential"]
+    assert settings.mcp_servers == ["https://example.invalid/mcp?secret=credential"]
     assert settings.local_toolbox == [toolbox]
     assert settings.retry_policy == {"max_attempts": 2}
     assert "credential" not in repr(settings)

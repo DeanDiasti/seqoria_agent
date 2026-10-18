@@ -41,8 +41,8 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
 
         Each key can be either a string parameter name **or** a subclass of
         :class:`pydantic.BaseModel`.  For BaseModel keys the corresponding
-        parameter name is the *lower-cased* class name (``Address`` →
-        ``"address"``).  This makes it possible to group several related
+        parameter name uses a lower-case first letter (``AddressInfo`` →
+        ``"addressInfo"``).  This makes it possible to group several related
         fields into a single structured object passed to the tool.
         """
 
@@ -93,9 +93,10 @@ class ParameterRegistry:  # noqa: D101 – concise implementation
         """Return the resolved value for *name* or *None* when unresolved.
 
         Resolution order:
-        1.  If *name* not found in the registry mapping → *None*.
-        2.  If the source is **not callable** → return it as-is.
-        3.  If the source **is callable** → inspect its signature and pass the
+        1.  A value in trusted request *context* takes precedence.
+        2.  If *name* is absent from the registry mapping → *None*.
+        3.  If the source is **not callable** → return it as-is.
+        4.  If the source **is callable** → inspect its signature and pass the
             subset of *context* kwargs matching the callable parameters.  Both
             sync and async callables are supported.  Exceptions are caught and
             logged, the method returns *None*.

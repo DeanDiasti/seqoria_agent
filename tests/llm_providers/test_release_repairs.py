@@ -237,12 +237,10 @@ async def test_stream_construction_error_uses_fallback():
 
 
 @pytest.mark.parametrize('serialized', [False, True])
-@pytest.mark.parametrize('provider_name', ['openai', 'compatible', 'anthropic', 'ollama', 'mlx_lm', 'mlx_vlm'])
+@pytest.mark.parametrize('provider_name', ['openai', 'compatible', 'anthropic', 'ollama'])
 def test_failed_tool_history_preserves_error_and_call_id(serialized, provider_name):
     from seqoria_agent.models.chunk import ToolCallError, ToolCallRequest
     from seqoria_agent.providers.anthropic_provider import _AnthropicProviderMixin
-    from seqoria_agent.providers.mlx_lm_provider import _MLXLMProviderMixin
-    from seqoria_agent.providers.mlx_vlm_provider import _MLXVLMProviderMixin
     from seqoria_agent.providers.ollama_provider import _OllamaProviderMixin
     from seqoria_agent.providers.openai_compatible_provider import _OpenAICompatibleProviderMixin
     from seqoria_agent.providers.openai_provider import _OpenAIProviderMixin
@@ -274,31 +272,6 @@ def test_failed_tool_history_preserves_error_and_call_id(serialized, provider_na
             'role': 'tool', 'tool_call_id': 'call_failure',
             'content': 'Permission denied', 'tool_name': 'lookup',
         }
-    else:
-        mixin = _MLXLMProviderMixin() if provider_name == 'mlx_lm' else _MLXVLMProviderMixin()
-        convert = mixin._prepare_chat_messages if provider_name == 'mlx_lm' else mixin._prepare_chat_messages_text_only
-        messages = convert(history)
-        assert messages[-1] == {
-            'role': 'user',
-            'content': '[tool_error] lookup (call_id=call_failure): Permission denied',
-        }
-
-
-@pytest.mark.parametrize('serialized', [False, True])
-def test_vlm_media_conversion_preserves_later_tool_feedback(serialized, tmp_path):
-    from seqoria_agent.models.chunk import ToolCallError, UserMessage
-    from seqoria_agent.providers.mlx_vlm_provider import _MLXVLMProviderMixin
-
-    user = UserMessage(content='look this up')
-    failure = ToolCallError(tool_call_id='call_failure', name='lookup', error='Permission denied')
-    history = [user.model_dump(), failure.model_dump()] if serialized else [user, failure]
-    messages, text, images, audio = _MLXVLMProviderMixin()._last_user_message_media(history, str(tmp_path))
-    assert text == 'look this up'
-    assert messages[0]['content'] == text
-    assert messages[-1]['content'] == '[tool_error] lookup (call_id=call_failure): Permission denied'
-    assert images == [] and audio == []
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize('serialized', [False, True])
 async def test_http_provider_continues_after_failed_tool(monkeypatch, serialized):

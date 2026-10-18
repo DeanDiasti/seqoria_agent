@@ -7,7 +7,7 @@ can interact with any provider in a uniform way.
 """
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field
 
 
 class ToolCall(BaseModel):
@@ -19,7 +19,6 @@ class ToolCall(BaseModel):
     tool-call format to this structure.
     """
 
-    model_config = ConfigDict(slots=True)
     id: str = Field(default=..., description="The ID of the tool call.")
     type: Literal["tool_use", "function_call"] = Field(default="function_call", description="The type of the tool call.")
     function_name: str = Field(default=..., description="The name of the function to call.")
@@ -29,7 +28,6 @@ class ToolCall(BaseModel):
 class LLMUsage(BaseModel):
     """Standardized token usage information."""
 
-    model_config = ConfigDict(slots=True)
     prompt_tokens: int = Field(default=..., description="The number of tokens in the prompt.")
     completion_tokens: int = Field(default=..., description="The number of tokens in the completion.")
     total_tokens: int = Field(default=..., description="The total number of tokens in the call.")
@@ -37,7 +35,6 @@ class LLMUsage(BaseModel):
 
 class ToolCallList(BaseModel):
     """Standardized representation of a list of tool calls."""
-    model_config = ConfigDict(slots=True)
     model_id: str = Field(default=..., description="The actual model ID used for the response.")
     tool_calls: List[ToolCall] = Field(default=..., description="The tool calls of the message.")
     usage: Optional[LLMUsage] = Field(default=..., description="The usage of the message.")
@@ -51,7 +48,6 @@ class LLMResponse(BaseModel):
     is the final object yielded by the `async_stream` method.
     """
 
-    model_config = ConfigDict(slots=True)
     model_id: Optional[str] = Field(default=..., description="The actual model ID used for the response.")
     type: Literal["llm_delta", "llm_response"] = Field(default=..., description="The type of the response.")
     text: Optional[str] = Field(default=..., description="The text of the response.")

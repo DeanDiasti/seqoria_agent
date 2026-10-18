@@ -145,7 +145,7 @@ async def main() -> None:
     async with (
         provider,
         AsyncAIClient(
-            urls=[],
+            mcp_servers=[],
             providers=[provider],
             local_toolbox=box,
         ) as ai,

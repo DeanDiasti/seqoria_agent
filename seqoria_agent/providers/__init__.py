@@ -18,8 +18,7 @@ variants are useful for simple scripts, notebooks, and non-async contexts.
 
 Installation
 ------------
-Most remote providers use HTTPX. MLX-based providers (``mlx-lm``, ``mlx-vlm``) run
-locally on Apple Silicon and are optional extras.
+Providers use HTTPX to communicate with remote APIs or a local Ollama server.
 """
 
 from __future__ import annotations
@@ -51,8 +50,6 @@ if TYPE_CHECKING:
     )
     from seqoria_agent.providers.anthropic_provider import AsyncAnthropicProvider, AnthropicProvider
     from seqoria_agent.providers.ollama_provider import AsyncOllamaProvider, OllamaProvider
-    from seqoria_agent.providers.mlx_lm_provider import AsyncMLXLMProvider, MLXLMProvider
-    from seqoria_agent.providers.mlx_vlm_provider import AsyncMLXVLMProvider, MLXVLMProvider
 
 
 __all__ = [
@@ -71,11 +68,6 @@ __all__ = [
     # Ollama providers (lazy loaded)
     "AsyncOllamaProvider",
     "OllamaProvider",
-    # MLX (Apple Silicon, lazy loaded)
-    "AsyncMLXLMProvider",
-    "MLXLMProvider",
-    "AsyncMLXVLMProvider",
-    "MLXVLMProvider",
     # Errors (always available)
     "LLMError",
     "EnvironmentError",
@@ -114,10 +106,6 @@ _PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
     "AnthropicProvider": ("seqoria_agent.providers.anthropic_provider", "AnthropicProvider"),
     "AsyncOllamaProvider": ("seqoria_agent.providers.ollama_provider", "AsyncOllamaProvider"),
     "OllamaProvider": ("seqoria_agent.providers.ollama_provider", "OllamaProvider"),
-    "AsyncMLXLMProvider": ("seqoria_agent.providers.mlx_lm_provider", "AsyncMLXLMProvider"),
-    "MLXLMProvider": ("seqoria_agent.providers.mlx_lm_provider", "MLXLMProvider"),
-    "AsyncMLXVLMProvider": ("seqoria_agent.providers.mlx_vlm_provider", "AsyncMLXVLMProvider"),
-    "MLXVLMProvider": ("seqoria_agent.providers.mlx_vlm_provider", "MLXVLMProvider"),
 }
 
 # Cache for loaded providers
@@ -194,8 +182,6 @@ def get_provider(name: str, async_variant: bool = True) -> type:
         "openai_compatible": ("AsyncOpenAICompatibleProvider", "OpenAICompatibleProvider"),
         "anthropic": ("AsyncAnthropicProvider", "AnthropicProvider"),
         "ollama": ("AsyncOllamaProvider", "OllamaProvider"),
-        "mlx_lm": ("AsyncMLXLMProvider", "MLXLMProvider"),
-        "mlx_vlm": ("AsyncMLXVLMProvider", "MLXVLMProvider"),
     }
     
     if name_lower not in provider_map:
@@ -219,7 +205,7 @@ def list_available_providers() -> dict[str, bool]:
     Example
     -------
     >>> list_available_providers()
-    {'openai': True, 'anthropic': True, 'ollama': False}
+    {'openai': True, 'openai_compatible': True, 'anthropic': True, 'ollama': True}
     """
     httpx_ok = _check_package_available("httpx")
     return {
@@ -227,6 +213,4 @@ def list_available_providers() -> dict[str, bool]:
         "openai_compatible": httpx_ok,
         "anthropic": httpx_ok,
         "ollama": httpx_ok,
-        "mlx_lm": _check_package_available("mlx_lm"),
-        "mlx_vlm": _check_package_available("mlx_vlm"),
     }
