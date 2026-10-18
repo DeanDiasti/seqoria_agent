@@ -6,10 +6,23 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      development:
-        dependency-type: development
+      # Group only routine minor/patch version updates. Major upgrades remain
+      # individual PRs; all updates still need protected-branch CI.
+      runtime-minor-patch:
+        applies-to: version-updates
+        patterns: ["httpx", "mcp", "pydantic", "orjson", "xxhash", "fastapi"]
+        update-types: [minor, patch]
+      tooling-minor-patch:
+        applies-to: version-updates
+        patterns: ["build", "hatchling", "pytest", "pytest-*", "ruff", "mypy", "twine", "mkdocs*", "mkdocstrings*", "pymdown-extensions"]
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]

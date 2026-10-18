@@ -2,7 +2,12 @@
 
 ## Unreleased
 
+## 0.9.2 — 2026-10-18
+
 - Launch the public alpha with hosted documentation, protected main, private vulnerability reporting, refreshed release/security evidence, and an opt-in live provider check for ordinary and streaming tool roundtrips.
+- Publish the public README and documentation URL on PyPI; use absolute README links and expose issue/changelog links in package metadata.
+- Group minor/patch Dependabot updates for runtime packages, contributor tools, and GitHub Actions; keep major upgrades individually reviewable.
+- Add CODEOWNERS and categorized GitHub release notes, and document the repository maintenance workflow.
 
 ## 0.9.1 — 2026-10-18
 
@@ -99,5 +104,5 @@ Earlier entries below describe historical releases and may refer to removed APIs
 * Executor and AIClient fully integrated with the registry; server-populated parameters are injected via async resolution.
 * Version bumped to `0.4.0`.
 
-[Unreleased]: https://github.com/DeanDiasti/seqoria_agent/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/DeanDiasti/seqoria_agent/compare/v0.9.2...HEAD
 [0.1.0]: https://github.com/DeanDiasti/seqoria_agent/releases/tag/v0.1.0

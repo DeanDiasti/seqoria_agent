@@ -1,7 +1,7 @@
 # Publishing Seqoria Agent
 
 The package name is `seqoria-agent`; consumers import `seqoria_agent`.
-Version 0.9.1 is published on PyPI. Nothing is published by editing the repository or building artifacts locally; the tagged release workflow must succeed. The maintainer approved the public alpha launch separately from package publication; see the [public alpha review](docs/maintainers/public-alpha.md).
+Check the [current PyPI release](https://pypi.org/project/seqoria-agent/); `pyproject.toml` declares the next release target. Nothing is published by editing the repository or building artifacts locally; the tagged release workflow must succeed. The maintainer approved the public alpha launch separately from package publication; see the [public alpha review](docs/maintainers/public-alpha.md).
 
 ## Existing PyPI project setup
 
@@ -44,6 +44,7 @@ See the official PyPI guide for [existing trusted publishers](https://docs.pypi.
 4. Commit and push the reviewed code. Tag that commit with the matching version (`vX.Y.Z` for version `X.Y.Z`), then push the tag when ready to publish.
 5. The release workflow runs the test matrix and package checks, verifies the tag/version match, builds distributions, and publishes through the `pypi` environment. PyPI releases are immutable; fix a failed release by correcting the problem and choosing a new version if files have already been uploaded.
 6. Verify installation in a new environment with `pip install seqoria-agent==X.Y.Z`, using the newly published version.
+   Verify the README and documentation/issue/changelog URLs on PyPI. Create a GitHub release for the existing tag using the curated changelog; `.github/release.yml` also categorizes generated notes when used. Do not move an existing release tag.
 7. Review the documentation artifact before a manual Pages deployment. Confirm the hosted URL works before advertising it. Repository visibility, vulnerability reporting, and documentation deployment are separate launch actions; publishing a tag does not approve any of them.
 
 For API removals and upgrade steps, read the [migration guide](docs/migration.md).
